@@ -172,7 +172,7 @@ fn read_piece_table(clx: &[u8]) -> Result<Vec<Piece>, OfficeError> {
 
 /// `PlcPcd`: `n + 1` character positions, then `n` piece descriptors of eight bytes.
 fn read_pieces(table: &[u8]) -> Result<Vec<Piece>, OfficeError> {
-    if table.len() < 4 || (table.len() - 4) % 12 != 0 {
+    if table.len() < 4 || !(table.len() - 4).is_multiple_of(12) {
         return Err(unreadable("the piece table has an impossible size"));
     }
     let count = (table.len() - 4) / 12;
@@ -222,8 +222,10 @@ fn decode_piece(
             .collect());
     }
     let units = bytes
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]));
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_le_bytes(*pair));
     Ok(char::decode_utf16(units)
         .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER))
         .collect())
