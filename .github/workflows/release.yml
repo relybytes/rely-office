@@ -1,0 +1,65 @@
+name: Release
+
+# A tag v<version> publishes @relybytes/rely-office at that version to npm. The tag must match the
+# version of packages/rely-office-node/package.json and of the Cargo workspace.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  token:
+    name: Check the npm token
+    runs-on: ubuntu-latest
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - id: check
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::warning title=npm publish skipped::The NPM_TOKEN secret is not set, so nothing is published. Add it under Settings, Secrets and variables, Actions, then re-run this workflow."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    name: Publish @relybytes/rely-office to npm
+    needs: token
+    if: needs.token.outputs.present == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # npm provenance: the registry records which workflow run built the package.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Check that the tag matches the package version
+        run: |
+          version=$(node -p "require('./packages/rely-office-node/package.json').version")
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::the tag $GITHUB_REF_NAME does not match the package version $version"
+            exit 1
+          fi
+      - name: Install wasm-bindgen-cli at the version in Cargo.lock
+        run: cargo install wasm-bindgen-cli --version "$(node scripts/build-npm.mjs --print-bindgen-version)" --locked
+      - name: Build the npm package
+        run: node scripts/build-npm.mjs
+      - name: Smoke test the package
+        run: node packages/rely-office-node/test/smoke.cjs
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish dist/*.tgz --access public --provenance

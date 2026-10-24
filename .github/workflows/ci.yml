@@ -25,6 +25,42 @@ jobs:
       - name: Test
         run: cargo test --all-targets
 
+  wasm:
+    name: WebAssembly package and Node smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Lint for WebAssembly
+        run: cargo clippy --package rely-office-wasm --target wasm32-unknown-unknown -- -D warnings
+      - name: Install wasm-bindgen-cli at the version in Cargo.lock
+        run: |
+          version=$(node scripts/build-npm.mjs --print-bindgen-version)
+          if [ "$(wasm-bindgen --version 2>/dev/null)" != "wasm-bindgen $version" ]; then
+            cargo install wasm-bindgen-cli --version "$version" --locked --force
+          fi
+      - name: Build the npm package
+        run: node scripts/build-npm.mjs
+      - name: Smoke test the package folder
+        run: node packages/rely-office-node/test/smoke.cjs
+      - name: Smoke test the packed tarball
+        run: |
+          mkdir -p "$RUNNER_TEMP/packed"
+          tar -xzf dist/*.tgz -C "$RUNNER_TEMP/packed"
+          node packages/rely-office-node/test/smoke.cjs "$RUNNER_TEMP/packed/package"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rely-office-npm
+          path: dist/*.tgz
+          if-no-files-found: error
+
   licenses:
     name: Dependency licences and advisories
     runs-on: ubuntu-latest

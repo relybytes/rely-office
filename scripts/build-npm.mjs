@@ -9,7 +9,7 @@
 // wasm32-unknown-unknown, generate the Node bindings with wasm-bindgen, copy the licence files
 // and pack the package into dist/.
 //
-// Usage: node scripts/build-npm.mjs [--no-pack]
+// Usage: node scripts/build-npm.mjs [--no-pack | --print-bindgen-version]
 // Needs cargo with the wasm32-unknown-unknown target, and wasm-bindgen-cli at exactly the
 // version of the wasm-bindgen crate in Cargo.lock. CARGO and WASM_BINDGEN override the commands.
 
@@ -59,13 +59,18 @@ function workspaceVersion() {
   return match[1];
 }
 
+const expectedBindgen = lockedVersion('wasm-bindgen');
+if (process.argv.includes('--print-bindgen-version')) {
+  console.log(expectedBindgen);
+  process.exit(0);
+}
+
 const packageJson = JSON.parse(readFileSync(join(packageDirectory, 'package.json'), 'utf8'));
 const version = workspaceVersion();
 if (packageJson.version !== version) {
   fail(`package.json says ${packageJson.version}, the workspace says ${version}: align them`);
 }
 
-const expectedBindgen = lockedVersion('wasm-bindgen');
 let installedBindgen;
 try {
   installedBindgen = execFileSync(wasmBindgen, ['--version'], { encoding: 'utf8' }).trim();
