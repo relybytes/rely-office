@@ -20,4 +20,4 @@ name = "rely-office"
 path = "src/main.rs"
 
 [dependencies]
-rely-office-core = { path = "../rely-office-core", version = "0.1.0" }
+rely-office-core = { path = "../rely-office-core", version = "0.2.0" }

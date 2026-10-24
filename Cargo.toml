@@ -1,16 +1,16 @@
 [workspace]
 resolver = "3"
-members = ["crates/rely-office-core", "crates/rely-office-cli"]
+members = ["crates/rely-office-core", "crates/rely-office-cli", "crates/rely-office-wasm"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MPL-2.0"
 authors = ["RelyBytes Consulting"]
 repository = "https://github.com/relybytes/rely-office"
 homepage = "https://relybytes.com"
-keywords = ["docx", "xlsx", "ods", "office", "preview"]
+keywords = ["docx", "xlsx", "pptx", "office", "preview"]
 categories = ["parser-implementations", "text-processing"]
 
 [workspace.lints.rust]
@@ -19,3 +19,11 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
+
+# The WebAssembly package: small to ship and quick to instantiate. A profile of its own, so the
+# native builds and tests keep their usual settings.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1

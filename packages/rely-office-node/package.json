@@ -1,0 +1,53 @@
+{
+  "name": "@relybytes/rely-office",
+  "version": "0.2.0",
+  "description": "Reads office documents in Node through WebAssembly: format detection, text for search, sheet tables and a docx document tree for rich-text import.",
+  "license": "MPL-2.0",
+  "author": "RelyBytes Consulting (https://relybytes.com)",
+  "homepage": "https://github.com/relybytes/rely-office#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/relybytes/rely-office.git",
+    "directory": "packages/rely-office-node"
+  },
+  "bugs": {
+    "url": "https://github.com/relybytes/rely-office/issues"
+  },
+  "keywords": [
+    "docx",
+    "xlsx",
+    "pptx",
+    "office",
+    "text-extraction",
+    "webassembly"
+  ],
+  "type": "commonjs",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "wasm/rely_office_wasm.js",
+    "wasm/rely_office_wasm.d.ts",
+    "wasm/rely_office_wasm_bg.wasm",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node test/smoke.cjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
