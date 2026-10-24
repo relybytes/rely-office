@@ -1,0 +1,16 @@
+rely-office
+Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+
+This product is developed and maintained by RelyBytes Consulting as part of the
+Rely Platform (https://relyplatform.app) and is licensed under the Mozilla
+Public License, v. 2.0 (see LICENSE).
+
+Redistributions of the source code must keep the copyright and licence notices
+at the top of every source file. A modified version of a file of rely-office
+must be made available under the same licence, as the Mozilla Public License
+requires.
+
+Third-party components used as dependencies keep their own licences, all of
+them compatible with the Mozilla Public License 2.0: MIT, Apache-2.0, BSD-3-Clause,
+Zlib, Unicode-3.0, Unlicense and MPL-2.0. The list a release ships with is
+checked by `cargo deny check licenses` (see deny.toml).

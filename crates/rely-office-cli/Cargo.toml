@@ -1,0 +1,23 @@
+[package]
+name = "rely-office-cli"
+description = "Command line front of rely-office: detect a document's format, extract its text, print its sheets."
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "rely-office"
+path = "src/main.rs"
+
+[dependencies]
+rely-office-core = { path = "../rely-office-core", version = "0.1.0" }
