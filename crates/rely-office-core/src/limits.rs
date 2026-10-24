@@ -17,6 +17,13 @@ pub struct Limits {
     pub max_rows: usize,
     /// The most columns of each sheet returned by [`crate::read_workbook`].
     pub max_columns: usize,
+    /// The largest embedded image returned by [`crate::read_document_tree`], in bytes; a larger one
+    /// is reported, not returned.
+    pub max_image_bytes: u64,
+    /// The most embedded images returned by [`crate::read_document_tree`].
+    pub max_images: usize,
+    /// The most bytes of all the images returned by [`crate::read_document_tree`] together.
+    pub max_total_image_bytes: u64,
 }
 
 impl Default for Limits {
@@ -27,6 +34,9 @@ impl Default for Limits {
             max_text_chars: 1_000_000,
             max_rows: 1_000,
             max_columns: 60,
+            max_image_bytes: 10 * 1024 * 1024,
+            max_images: 200,
+            max_total_image_bytes: 100 * 1024 * 1024,
         }
     }
 }

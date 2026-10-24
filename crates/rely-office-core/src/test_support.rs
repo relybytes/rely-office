@@ -16,6 +16,20 @@ const RELATIONSHIP_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const DOCX_CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
 
+/// The namespaces a document part of the tests declares: every prefix Word itself writes.
+const DOCX_NAMESPACES: &str = concat!(
+    r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" "#,
+    r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" "#,
+    r#"xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" "#,
+    r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,
+    r#"xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" "#,
+    r#"xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" "#,
+    r#"xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" "#,
+    r#"xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" "#,
+    r#"xmlns:v="urn:schemas-microsoft-com:vml" "#,
+    r#"xmlns:o="urn:schemas-microsoft-com:office:office""#,
+);
+
 /// A zip holding exactly these members, deflated.
 pub(crate) fn build_zip(members: &[(&str, &[u8])]) -> Vec<u8> {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -87,6 +101,35 @@ fn word_xml(root: &str, container: &str, paragraphs: &[&str]) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?><w:{root} xmlns:w="{WORD_NAMESPACE}">{body}</w:{root}>"#
     )
+}
+
+/// A docx whose body is `body` (raw `WordprocessingML`, every usual prefix declared), with extra
+/// members such as `word/styles.xml`, `word/numbering.xml`, `word/_rels/document.xml.rels` or
+/// images under `word/media/`.
+pub(crate) fn build_docx_from_body(body: &str, extra: &[(&str, &[u8])]) -> Vec<u8> {
+    let document = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {DOCX_NAMESPACES}><w:body>{body}<w:sectPr/></w:body></w:document>"#
+    );
+    let mut members: Vec<(&str, &[u8])> = vec![
+        ("[Content_Types].xml", DOCX_CONTENT_TYPES.as_bytes()),
+        ("word/document.xml", document.as_bytes()),
+    ];
+    members.extend_from_slice(extra);
+    build_zip(&members)
+}
+
+/// A styles part declaring paragraph styles `(id, name, extra XML inside w:style)`.
+pub(crate) fn styles_xml(styles: &[(&str, &str, &str)]) -> String {
+    let mut xml =
+        format!(r#"<?xml version="1.0" encoding="UTF-8"?><w:styles xmlns:w="{WORD_NAMESPACE}">"#);
+    for (id, name, properties) in styles {
+        let _ = write!(
+            xml,
+            r#"<w:style w:type="paragraph" w:styleId="{id}"><w:name w:val="{name}"/>{properties}</w:style>"#
+        );
+    }
+    xml.push_str("</w:styles>");
+    xml
 }
 
 /// An xlsx with two sheets: "Vendite" (header and two rows) and "Clienti".

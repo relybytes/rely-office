@@ -10,13 +10,14 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::process::ExitCode;
 
-use rely_office_core::{Limits, detect_format, extract_text, read_workbook};
+use rely_office_core::{Limits, detect_format, extract_text, read_document_tree, read_workbook};
 
-const USAGE: &str = "usage: rely-office <detect|text|sheets> <file>
+const USAGE: &str = "usage: rely-office <detect|text|sheets|tree> <file>
 
   detect   print the format read from the bytes
   text     print the text a search index would store
-  sheets   print every sheet as tab-separated rows";
+  sheets   print every sheet as tab-separated rows
+  tree     print the document tree of a docx, its images and its import report";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -62,6 +63,20 @@ fn run(command: &str, path: &Path) -> Result<String, String> {
                     output.push('\n');
                 }
             }
+            Ok(output)
+        }
+        "tree" => {
+            let tree = read_document_tree(&bytes, &limits).map_err(|error| error.to_string())?;
+            let mut output = format!("{:#?}\n", tree.blocks);
+            for (index, media) in tree.media.iter().enumerate() {
+                let _ = writeln!(
+                    output,
+                    "media {index}: {} ({} bytes)",
+                    media.content_type,
+                    media.bytes.len()
+                );
+            }
+            let _ = writeln!(output, "{:#?}", tree.report);
             Ok(output)
         }
         other => Err(format!("unknown command {other}\n{USAGE}")),

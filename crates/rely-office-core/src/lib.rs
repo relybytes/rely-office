@@ -6,11 +6,12 @@
 
 //! Reads office documents for previews and search, without an office suite.
 //!
-//! Three entry points, each bounded so an uploaded file can never exhaust memory:
+//! Four entry points, each bounded so an uploaded file can never exhaust memory:
 //!
 //! - [`detect_format`] tells what a file is from its bytes, never from its name alone;
 //! - [`extract_text`] returns the text a search index needs;
-//! - [`read_workbook`] returns the sheets of a spreadsheet as tables of displayed values.
+//! - [`read_workbook`] returns the sheets of a spreadsheet as tables of displayed values;
+//! - [`read_document_tree`] returns a docx as a neutral tree of blocks for a rich-text editor.
 //!
 //! Every input is treated as untrusted: archive members are read through a size cap, and no
 //! function panics on malformed bytes.
@@ -18,6 +19,7 @@
 mod archive;
 mod compound;
 mod doc;
+mod document;
 mod error;
 mod format;
 mod limits;
@@ -29,10 +31,15 @@ mod sheet;
 mod text;
 mod word;
 mod xml_text;
+mod xml_tree;
 
 #[cfg(test)]
 mod test_support;
 
+pub use document::{
+    Block, DocumentTree, ImportReport, Inline, Mark, Media, TableCell, TableRow,
+    read_document_tree, sniff_image_type,
+};
 pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};
 pub use limits::Limits;

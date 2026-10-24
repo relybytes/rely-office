@@ -1,6 +1,6 @@
 [package]
 name = "rely-office-core"
-description = "Reads office documents (docx, xlsx, pptx, odt, ods, odp, doc, xls, ppt, csv) for previews and search: format detection, text extraction and sheet tables."
+description = "Reads office documents (docx, xlsx, pptx, odt, ods, odp, doc, xls, ppt, csv) for previews, search and import: format detection, text extraction, sheet tables and a docx document tree."
 readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
@@ -20,8 +20,13 @@ calamine = "0.37"
 cfb = "0.15.0"
 encoding_rs = "0.8.35"
 quick-xml = "0.42"
+serde = { version = "1.0.228", features = ["derive"], optional = true }
 thiserror = "2.0.21"
 zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[features]
+# Serialize the document tree and its report, for a JSON boundary such as the WebAssembly package.
+serde = ["dep:serde"]
 
 [dev-dependencies]
 rust_xlsxwriter = "0.101"
