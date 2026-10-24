@@ -26,7 +26,15 @@ pub(crate) enum ParagraphRole {
     Heading(u8),
     Quote,
     Code,
+    /// A paragraph drawn as a rule, as `LibreOffice` exports an HTML `hr`.
+    HorizontalRule,
 }
+
+/// Name fragments of each role: the English built-in names, which Word stores whatever the
+/// language of its interface, and the Italian ones `LibreOffice` writes from an Italian interface.
+const QUOTE_NAMES: [&str; 3] = ["quot", "block text", "citazione"];
+const CODE_NAMES: [&str; 4] = ["code", "preformatted", "codice", "preformattato"];
+const RULE_NAMES: [&str; 2] = ["horizontal line", "linea orizzontale"];
 
 /// A reference to a numbering definition: `w:numPr`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,13 +280,16 @@ fn role_from_name(name: &str) -> Option<ParagraphRole> {
     if name == "title" {
         return Some(ParagraphRole::Heading(1));
     }
-    if name.contains("quote") || name.contains("quotation") || name == "block text" {
-        return Some(ParagraphRole::Quote);
+    let matches_any = |fragments: &[&str]| fragments.iter().any(|fragment| name.contains(fragment));
+    if matches_any(&QUOTE_NAMES) {
+        Some(ParagraphRole::Quote)
+    } else if matches_any(&CODE_NAMES) {
+        Some(ParagraphRole::Code)
+    } else if matches_any(&RULE_NAMES) {
+        Some(ParagraphRole::HorizontalRule)
+    } else {
+        None
     }
-    if name.contains("code") || name.contains("preformatted") {
-        return Some(ParagraphRole::Code);
-    }
-    None
 }
 
 /// `w:outlineLvl` of a `w:pPr`, unless it says body text.
@@ -372,12 +383,16 @@ mod tests {
     }
 
     #[test]
-    fn recognises_code_and_quote_styles() {
+    fn recognises_code_quote_and_rule_styles_in_english_and_italian() {
         let styles = styles(&[
             ("Codice", "Source Code", ""),
             ("Pre", "HTML Preformatted", ""),
             ("Blocco", "Block Text", ""),
             ("Q", "Quotations", ""),
+            ("Blocco2", "Citazione in blocco", ""),
+            ("Pre2", "Testo preformattato", ""),
+            ("Linea", "Linea orizzontale", ""),
+            ("Line", "Horizontal Line", ""),
         ]);
         assert_eq!(
             styles.paragraph_style(Some("Codice")).role,
@@ -392,6 +407,22 @@ mod tests {
             ParagraphRole::Quote
         );
         assert_eq!(styles.paragraph_style(Some("Q")).role, ParagraphRole::Quote);
+        assert_eq!(
+            styles.paragraph_style(Some("Blocco2")).role,
+            ParagraphRole::Quote
+        );
+        assert_eq!(
+            styles.paragraph_style(Some("Pre2")).role,
+            ParagraphRole::Code
+        );
+        assert_eq!(
+            styles.paragraph_style(Some("Linea")).role,
+            ParagraphRole::HorizontalRule
+        );
+        assert_eq!(
+            styles.paragraph_style(Some("Line")).role,
+            ParagraphRole::HorizontalRule
+        );
     }
 
     #[test]

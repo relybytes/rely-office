@@ -54,6 +54,8 @@ pub(super) struct Converter<'a, 'p> {
     media_by_target: HashMap<String, Option<usize>>,
     remaining_chars: usize,
     fields: Vec<OpenField>,
+    /// How many `w:hyperlink` elements enclose the current run, a dropped link's included.
+    hyperlink_depth: usize,
 }
 
 impl<'a, 'p> Converter<'a, 'p> {
@@ -80,6 +82,7 @@ impl<'a, 'p> Converter<'a, 'p> {
             media_by_target: HashMap::new(),
             remaining_chars: limits.max_text_chars,
             fields: Vec::new(),
+            hyperlink_depth: 0,
         }
     }
 
@@ -151,7 +154,8 @@ impl<'a, 'p> Converter<'a, 'p> {
             .and_then(|properties| properties.child(W, "pBdr"))
             .and_then(|borders| borders.child(W, "bottom"))
             .is_some();
-        if blank && (scan.horizontal_rule || bottom_border) {
+        let rule_style = style.role == ParagraphRole::HorizontalRule;
+        if blank && (scan.horizontal_rule || bottom_border || rule_style) {
             blocks.push(Block::HorizontalRule);
             return;
         }
@@ -210,7 +214,9 @@ impl<'a, 'p> Converter<'a, 'p> {
                 (W, "r") => self.append_run(element, link, content, scan),
                 (W, "hyperlink") => {
                     let target = self.hyperlink_target(element);
+                    self.hyperlink_depth += 1;
                     self.append_inlines(element, target.as_deref().or(link), content, scan);
+                    self.hyperlink_depth -= 1;
                 }
                 (W, "ins" | "moveTo") => {
                     self.report.tracked_insertions += 1;
@@ -336,7 +342,7 @@ impl<'a, 'p> Converter<'a, 'p> {
         }
 
         let link = link.or_else(|| self.current_field_link());
-        let marks = marks_of(format, link);
+        let marks = marks_of(format, link, self.hyperlink_depth > 0);
         if let Some(Inline::Text {
             text: previous,
             marks: previous_marks,
@@ -750,12 +756,16 @@ fn plain_text(content: &[Inline]) -> String {
     text
 }
 
-/// The marks of a run; a link carries its own underline, so the run's is not repeated.
-fn marks_of(format: RunFormat, link: Option<&str>) -> Vec<Mark> {
+/// The marks of a run. A link carries its own underline, so the run's is not repeated; nor is it
+/// kept on a link that was dropped, whose underline only said it was a link.
+fn marks_of(format: RunFormat, link: Option<&str>, in_hyperlink: bool) -> Vec<Mark> {
     let flags = [
         (format.bold, Mark::Bold),
         (format.italic, Mark::Italic),
-        (format.underline.filter(|_| link.is_none()), Mark::Underline),
+        (
+            format.underline.filter(|_| link.is_none() && !in_hyperlink),
+            Mark::Underline,
+        ),
         (format.strike, Mark::Strike),
         (format.code, Mark::Code),
         (format.superscript, Mark::Superscript),
@@ -893,9 +903,13 @@ mod tests {
             code: Some(false),
             ..RunFormat::default()
         };
-        assert_eq!(marks_of(format, None), vec![Mark::Bold, Mark::Underline]);
         assert_eq!(
-            marks_of(format, Some("https://x")),
+            marks_of(format, None, false),
+            vec![Mark::Bold, Mark::Underline]
+        );
+        assert_eq!(marks_of(format, None, true), vec![Mark::Bold]);
+        assert_eq!(
+            marks_of(format, Some("https://x"), false),
             vec![
                 Mark::Bold,
                 Mark::Link {

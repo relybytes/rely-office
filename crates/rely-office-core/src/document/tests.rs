@@ -180,7 +180,7 @@ fn keeps_web_and_mail_links_and_reports_the_others() {
         "<w:p>",
         r#"<w:hyperlink r:id="rId1"><w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t>sito</w:t></w:r></w:hyperlink>"#,
         r#"<w:hyperlink r:id="rId2"><w:r><w:t>posta</w:t></w:r></w:hyperlink>"#,
-        r#"<w:hyperlink r:id="rId3"><w:r><w:t>script</w:t></w:r></w:hyperlink>"#,
+        r#"<w:hyperlink r:id="rId3"><w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t>script</w:t></w:r></w:hyperlink>"#,
         r#"<w:hyperlink r:id="rId4"><w:r><w:t>file</w:t></w:r></w:hyperlink>"#,
         r#"<w:hyperlink w:anchor="_Toc1"><w:r><w:t>indice</w:t></w:r></w:hyperlink>"#,
         r#"<w:hyperlink r:id="rId9"><w:r><w:t>perso</w:t></w:r></w:hyperlink>"#,
@@ -459,9 +459,11 @@ fn reads_horizontal_rules_and_ignores_page_breaks() {
         r#"<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6"/></w:pBdr></w:pPr></w:p>"#,
         r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#,
         r#"<w:p><w:r><w:t>prima</w:t></w:r><w:r><w:br w:type="page"/><w:t>dopo</w:t></w:r><w:r><w:br/><w:t>riga</w:t></w:r><w:r><w:cr/></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="Linea"/></w:pPr></w:p>"#,
     );
+    let styles = styles_xml(&[("Linea", "Linea orizzontale", "")]);
     assert_eq!(
-        tree(body).blocks,
+        tree_with(body, &[("word/styles.xml", styles.as_bytes())]).blocks,
         vec![
             Block::HorizontalRule,
             Block::HorizontalRule,
@@ -473,6 +475,7 @@ fn reads_horizontal_rules_and_ignores_page_breaks() {
                     Inline::HardBreak
                 ]
             },
+            Block::HorizontalRule,
         ]
     );
 }

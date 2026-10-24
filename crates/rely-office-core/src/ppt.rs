@@ -104,19 +104,21 @@ fn append_record_text(stream: &[u8], buffer: &mut TextBuffer) -> Result<(), Offi
 }
 
 /// One text atom: `\r` ends a paragraph and `\v` breaks a line; the atom ends a line itself.
+/// An atom that is only `*` is the stand-in of a slide number or date field, not text.
 fn append_atom(characters: impl Iterator<Item = char>, buffer: &mut TextBuffer) {
-    let mut wrote_any = false;
-    for character in characters {
-        let translated = match character {
-            '\r' | '\u{0B}' => '\n',
-            '\t' => '\t',
-            control if control.is_control() => continue,
-            other => other,
-        };
-        buffer.push(translated);
-        wrote_any = true;
+    let text: String = characters
+        .filter_map(|character| match character {
+            '\r' | '\u{0B}' => Some('\n'),
+            '\t' => Some('\t'),
+            control if control.is_control() => None,
+            other => Some(other),
+        })
+        .collect();
+    if text.is_empty() || text.trim() == "*" {
+        return;
     }
-    if wrote_any && !buffer.ends_with_newline() {
+    buffer.push_str(&text);
+    if !buffer.ends_with_newline() {
         buffer.push('\n');
     }
 }
@@ -134,7 +136,7 @@ mod tests {
 
     #[test]
     fn reads_bytes_and_chars_atoms_and_skips_the_masters() {
-        let bytes = build_ppt(&["Titolo citt\u{e0}", "Punto \u{20ac}\rSecondo", "Fine"]);
+        let bytes = build_ppt(&["Titolo citt\u{e0}", "Punto \u{20ac}\rSecondo", "*", "Fine"]);
         assert_eq!(
             extract(&bytes, &Limits::default()).unwrap(),
             "Titolo citt\u{e0}\nPunto \u{20ac}\nSecondo\nFine\n"
