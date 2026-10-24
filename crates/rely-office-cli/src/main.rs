@@ -44,7 +44,9 @@ fn run(command: &str, path: &Path) -> Result<String, String> {
 
     match command {
         "detect" => Ok(format!("{:?}\n", detect_format(&bytes, file_name))),
-        "text" => extract_text(&bytes, file_name, &limits).map_err(|error| error.to_string()),
+        "text" => extract_text(&bytes, file_name, &limits)
+            .map(|extracted| extracted.text)
+            .map_err(|error| error.to_string()),
         "sheets" => {
             let workbook =
                 read_workbook(&bytes, file_name, &limits).map_err(|error| error.to_string())?;

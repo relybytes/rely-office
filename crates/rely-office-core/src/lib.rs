@@ -15,12 +15,20 @@
 //! Every input is treated as untrusted: archive members are read through a size cap, and no
 //! function panics on malformed bytes.
 
+mod archive;
+mod compound;
+mod doc;
 mod error;
 mod format;
 mod limits;
+mod opendocument;
+mod ppt;
+mod presentation;
+mod relationships;
 mod sheet;
 mod text;
 mod word;
+mod xml_text;
 
 #[cfg(test)]
 mod test_support;
@@ -29,4 +37,4 @@ pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};
 pub use limits::Limits;
 pub use sheet::{Sheet, Workbook, read_workbook};
-pub use text::extract_text;
+pub use text::{ExtractedText, extract_text};

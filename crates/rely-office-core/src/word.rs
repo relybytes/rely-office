@@ -4,43 +4,53 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
-use std::io::{Cursor, Read};
-
-use quick_xml::Reader;
-use quick_xml::events::Event;
-
+use crate::archive::{member_names, open_package, read_text_member};
+use crate::text::TextBuffer;
+use crate::xml_text::{TextRules, append_xml_text};
 use crate::{Limits, OfficeError};
 
 /// The main part of a docx package; headers, footers and notes are separate parts read after it.
 const MAIN_PART: &str = "word/document.xml";
 
+/// `WordprocessingML`: text runs (`w:t`), tabs and breaks inside a paragraph (`w:p`); the
+/// fallback of `mc:AlternateContent` repeats its choice, so only the choice is read.
+const WORD_RULES: TextRules<'static> = TextRules {
+    text_containers: &["t"],
+    newline_after: &["p"],
+    tab_after: &["tc"],
+    tab_elements: &["tab"],
+    break_elements: &["br", "cr"],
+    skipped: &["Fallback"],
+    space_element: None,
+};
+
 /// The paragraphs of a docx in reading order: the body, then headers, footers, footnotes and
 /// endnotes, each paragraph ending with a newline and a table cell with a tab.
-pub(crate) fn extract_docx_text(bytes: &[u8], limits: &Limits) -> Result<String, OfficeError> {
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-        .map_err(|error| OfficeError::DamagedContainer(error.to_string()))?;
+pub(crate) fn extract_docx_text(
+    bytes: &[u8],
+    limits: &Limits,
+    buffer: &mut TextBuffer,
+) -> Result<(), OfficeError> {
+    let mut package = open_package(bytes)?;
 
-    let mut part_names: Vec<String> = archive
-        .file_names()
-        .filter_map(Result::ok)
+    let mut part_names: Vec<String> = member_names(&package)
+        .into_iter()
         .filter(|name| is_secondary_text_part(name))
-        .map(std::borrow::Cow::into_owned)
         .collect();
     part_names.sort();
     part_names.insert(0, MAIN_PART.to_owned());
 
-    let mut text = String::new();
     for part_name in part_names {
-        let Some(xml) = read_member(&mut archive, &part_name, limits)? else {
+        let Some(xml) = read_text_member(&mut package, &part_name, limits)? else {
             continue;
         };
-        append_word_xml_text(&xml, &mut text, limits.max_text_chars)?;
-        if text.chars().count() >= limits.max_text_chars {
+        append_xml_text(&xml, &WORD_RULES, buffer)?;
+        if buffer.is_truncated() {
             break;
         }
     }
 
-    Ok(truncate_chars(text, limits.max_text_chars))
+    Ok(())
 }
 
 fn is_secondary_text_part(name: &str) -> bool {
@@ -57,86 +67,16 @@ fn is_secondary_text_part(name: &str) -> bool {
         && !file.contains('/')
 }
 
-/// A member read whole through the member cap; a missing member is `None`, not an error.
-fn read_member(
-    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
-    name: &str,
-    limits: &Limits,
-) -> Result<Option<String>, OfficeError> {
-    let member = match archive.by_name(name) {
-        Ok(member) => member,
-        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(error) => return Err(OfficeError::DamagedContainer(error.to_string())),
-    };
-
-    let mut xml = String::new();
-    // One byte past the cap tells a member at the limit from one above it.
-    member
-        .take(limits.max_member_bytes + 1)
-        .read_to_string(&mut xml)
-        .map_err(|error| OfficeError::DamagedContainer(error.to_string()))?;
-    if xml.len() as u64 > limits.max_member_bytes {
-        return Err(OfficeError::TooLarge {
-            what: name.to_owned(),
-            limit: limits.max_member_bytes,
-        });
-    }
-
-    Ok(Some(xml))
-}
-
-/// Walk `WordprocessingML`: text runs (`w:t`), tabs and breaks inside a paragraph (`w:p`).
-fn append_word_xml_text(xml: &str, text: &mut String, max_chars: usize) -> Result<(), OfficeError> {
-    let mut reader = Reader::from_str(xml);
-    let mut in_text_run = false;
-
-    loop {
-        let event = reader
-            .read_event()
-            .map_err(|error| OfficeError::MalformedXml(error.to_string()))?;
-        match event {
-            Event::Start(element) if element.local_name().as_ref() == "t" => in_text_run = true,
-            Event::End(element) => match element.local_name().as_ref() {
-                "t" => in_text_run = false,
-                "p" => text.push('\n'),
-                "tc" => text.push('\t'),
-                _ => {}
-            },
-            Event::Empty(element) => match element.local_name().as_ref() {
-                "tab" => text.push('\t'),
-                "br" | "cr" => text.push('\n'),
-                _ => {}
-            },
-            Event::Text(run) if in_text_run => text.push_str(&run.xml10_content()),
-            Event::GeneralRef(reference) if in_text_run => {
-                if let Ok(Some(character)) = reference.resolve_char_ref() {
-                    text.push(character);
-                } else if let Some(resolved) = quick_xml::escape::resolve_xml_entity(&reference) {
-                    text.push_str(resolved);
-                }
-            }
-            Event::Eof => break,
-            _ => {}
-        }
-        if text.len() >= max_chars.saturating_mul(4) {
-            break;
-        }
-    }
-
-    Ok(())
-}
-
-fn truncate_chars(text: String, max_chars: usize) -> String {
-    match text.char_indices().nth(max_chars) {
-        Some((byte_index, _)) => text[..byte_index].to_owned(),
-        None => text,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::{build_docx, build_docx_with_parts};
+
+    fn extract_docx_text(bytes: &[u8], limits: &Limits) -> Result<String, OfficeError> {
+        let mut buffer = TextBuffer::new(limits.max_text_chars);
+        super::extract_docx_text(bytes, limits, &mut buffer)?;
+        Ok(buffer.into_text())
+    }
 
     #[test]
     fn reads_paragraphs_in_order() {
@@ -168,6 +108,18 @@ mod tests {
         assert_eq!(
             extract_docx_text(&bytes, &Limits::default()).unwrap(),
             "Corpo\nPagina\nIntestazione\n"
+        );
+    }
+
+    #[test]
+    fn reads_the_choice_of_alternate_content_once() {
+        let bytes = build_docx(&[concat!(
+            "Prima</w:t></w:r><w:r><mc:AlternateContent><mc:Choice><w:t>casella</w:t></mc:Choice>",
+            "<mc:Fallback><w:t>casella</w:t></mc:Fallback></mc:AlternateContent></w:r><w:r><w:t>"
+        )]);
+        assert_eq!(
+            extract_docx_text(&bytes, &Limits::default()).unwrap(),
+            "Primacasella\n"
         );
     }
 

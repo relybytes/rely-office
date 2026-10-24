@@ -1,6 +1,6 @@
 [package]
 name = "rely-office-core"
-description = "Reads office documents (docx, xlsx, xls, ods, csv) for previews and search: format detection, text extraction and sheet tables."
+description = "Reads office documents (docx, xlsx, pptx, odt, ods, odp, doc, xls, ppt, csv) for previews and search: format detection, text extraction and sheet tables."
 readme = "../../README.md"
 version.workspace = true
 edition.workspace = true

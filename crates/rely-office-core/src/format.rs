@@ -35,6 +35,28 @@ pub enum DocumentFormat {
     Unknown,
 }
 
+impl DocumentFormat {
+    /// The lowercase name of the format, as its usual file extension spells it (`unknown` for
+    /// anything else): the stable value a caller across a language boundary compares against.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Docx => "docx",
+            Self::Xlsx => "xlsx",
+            Self::Pptx => "pptx",
+            Self::Odt => "odt",
+            Self::Ods => "ods",
+            Self::Odp => "odp",
+            Self::Doc => "doc",
+            Self::Xls => "xls",
+            Self::Ppt => "ppt",
+            Self::Csv => "csv",
+            Self::Tsv => "tsv",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 const ZIP_SIGNATURE: &[u8] = b"PK\x03\x04";
 const COMPOUND_FILE_SIGNATURE: &[u8] = &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 
@@ -126,7 +148,9 @@ fn looks_like_text(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{build_docx, build_ods, build_xlsx};
+    use crate::test_support::{
+        build_doc, build_docx, build_odp, build_ods, build_odt, build_ppt, build_pptx, build_xlsx,
+    };
 
     #[test]
     fn detects_a_docx_from_its_content_types() {
@@ -147,6 +171,45 @@ mod tests {
             detect_format(&build_ods(), Some("x.zip")),
             DocumentFormat::Ods
         );
+    }
+
+    #[test]
+    fn detects_a_pptx_from_its_content_types() {
+        assert_eq!(
+            detect_format(&build_pptx(&[&["Titolo"]], &[]), Some("a.docx")),
+            DocumentFormat::Pptx
+        );
+    }
+
+    #[test]
+    fn detects_odt_and_odp_from_their_mimetype_member() {
+        assert_eq!(
+            detect_format(&build_odt("<text:p>Ciao</text:p>"), None),
+            DocumentFormat::Odt
+        );
+        assert_eq!(
+            detect_format(&build_odp(&["Ciao"]), None),
+            DocumentFormat::Odp
+        );
+    }
+
+    #[test]
+    fn tells_compound_files_apart_by_their_streams() {
+        assert_eq!(
+            detect_format(&build_doc(&[("Ciao\r", true)]), Some("a.xls")),
+            DocumentFormat::Doc
+        );
+        assert_eq!(
+            detect_format(&build_ppt(&["Ciao"]), None),
+            DocumentFormat::Ppt
+        );
+    }
+
+    #[test]
+    fn names_every_format_in_lowercase() {
+        assert_eq!(DocumentFormat::Docx.as_str(), "docx");
+        assert_eq!(DocumentFormat::Ppt.as_str(), "ppt");
+        assert_eq!(DocumentFormat::Unknown.as_str(), "unknown");
     }
 
     #[test]
