@@ -111,7 +111,7 @@ pub(crate) fn build_xlsx_with_uncached_formula() -> Vec<u8> {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for index in 0..source.len() {
         let mut member = source.by_index(index).unwrap();
-        let name = member.name().to_owned();
+        let name = member.name().unwrap().into_owned();
         let mut content = Vec::new();
         std::io::Read::read_to_end(&mut member, &mut content).unwrap();
         if name == "xl/worksheets/sheet1.xml" {

@@ -22,8 +22,9 @@ pub(crate) fn extract_docx_text(bytes: &[u8], limits: &Limits) -> Result<String,
 
     let mut part_names: Vec<String> = archive
         .file_names()
+        .filter_map(Result::ok)
         .filter(|name| is_secondary_text_part(name))
-        .map(str::to_owned)
+        .map(std::borrow::Cow::into_owned)
         .collect();
     part_names.sort();
     part_names.insert(0, MAIN_PART.to_owned());
@@ -94,30 +95,23 @@ fn append_word_xml_text(xml: &str, text: &mut String, max_chars: usize) -> Resul
             .read_event()
             .map_err(|error| OfficeError::MalformedXml(error.to_string()))?;
         match event {
-            Event::Start(element) if element.local_name().as_ref() == b"t" => in_text_run = true,
+            Event::Start(element) if element.local_name().as_ref() == "t" => in_text_run = true,
             Event::End(element) => match element.local_name().as_ref() {
-                b"t" => in_text_run = false,
-                b"p" => text.push('\n'),
-                b"tc" => text.push('\t'),
+                "t" => in_text_run = false,
+                "p" => text.push('\n'),
+                "tc" => text.push('\t'),
                 _ => {}
             },
             Event::Empty(element) => match element.local_name().as_ref() {
-                b"tab" => text.push('\t'),
-                b"br" | b"cr" => text.push('\n'),
+                "tab" => text.push('\t'),
+                "br" | "cr" => text.push('\n'),
                 _ => {}
             },
-            Event::Text(run) if in_text_run => {
-                let decoded = run
-                    .xml10_content()
-                    .map_err(|error| OfficeError::MalformedXml(error.to_string()))?;
-                text.push_str(&decoded);
-            }
+            Event::Text(run) if in_text_run => text.push_str(&run.xml10_content()),
             Event::GeneralRef(reference) if in_text_run => {
                 if let Ok(Some(character)) = reference.resolve_char_ref() {
                     text.push(character);
-                } else if let Ok(name) = reference.decode()
-                    && let Some(resolved) = quick_xml::escape::resolve_xml_entity(&name)
-                {
+                } else if let Some(resolved) = quick_xml::escape::resolve_xml_entity(&reference) {
                     text.push_str(resolved);
                 }
             }
