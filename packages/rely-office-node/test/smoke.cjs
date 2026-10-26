@@ -190,6 +190,35 @@ test('throws coded errors', () => {
   );
 });
 
+test('renders a document to PDF and PNG', () => {
+  const rendered = office.render(docx, 'contratto.docx', {
+    thumbnailWidth: 160,
+    pageImages: { pixelsPerPoint: 0.5, maxPages: 1 },
+  });
+  assert.equal(rendered.format, 'docx');
+  assert.equal(rendered.fidelity, 'layout');
+  assert.equal(rendered.pageCount, 1);
+  assert.equal(rendered.truncated, false);
+  assert.equal(Buffer.from(rendered.pdf.subarray(0, 5)).toString('latin1'), '%PDF-');
+  assert.equal(Buffer.from(rendered.thumbnail).readUInt32BE(16), 160);
+  assert.equal(rendered.pageImages.length, 1);
+  const sheet = office.render(Buffer.from('Nome;Importo\nMario;10\n'), 'clienti.csv', {
+    pdf: false,
+    limits: { maxRows: 1 },
+  });
+  assert.equal(sheet.pdf, null);
+  assert.equal(sheet.thumbnail, null);
+  assert.equal(sheet.truncated, true);
+  assert.throws(
+    () => office.render(docx, undefined, { colour: 'red' }),
+    (error) => error.code === 'INVALID_OPTIONS',
+  );
+  assert.throws(
+    () => office.render(Buffer.from('testo'), 'nota.txt'),
+    (error) => error.code === 'UNSUPPORTED_FORMAT',
+  );
+});
+
 test('survives many calls without leaking handles', () => {
   for (let round = 0; round < 200; round += 1) {
     office.readDocumentTree(docx);

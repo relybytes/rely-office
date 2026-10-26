@@ -9,6 +9,8 @@
 
 use std::collections::HashMap;
 
+use super::Alignment;
+use super::look::{ParagraphLook, RunLook};
 use crate::OfficeError;
 use crate::xml_tree::{Element, Namespace, parse_tree};
 
@@ -50,6 +52,7 @@ pub(crate) struct ParagraphStyle {
     /// The outline level, 0 for a top heading; `None` for body text.
     pub outline_level: Option<u8>,
     pub numbering: Option<NumberingReference>,
+    pub alignment: Option<Alignment>,
 }
 
 /// Run formatting where every property may be unset, so a run's own properties can override a
@@ -153,7 +156,22 @@ struct StyleDefinition {
     based_on: Option<String>,
     outline_level: Option<u8>,
     numbering: Option<NumberingReference>,
+    alignment: Option<Alignment>,
     run_format: RunFormat,
+    look: ParagraphLook,
+    font: RunLook,
+}
+
+/// `w:jc` of a `w:pPr`.
+pub(crate) fn alignment(properties: &Element) -> Option<Alignment> {
+    match properties.child(W, "jc")?.attribute(W, "val")? {
+        "left" | "start" => Some(Alignment::Left),
+        "center" => Some(Alignment::Center),
+        "right" | "end" => Some(Alignment::Right),
+        "both" | "distribute" | "lowKashida" | "mediumKashida" | "highKashida"
+        | "thaiDistribute" => Some(Alignment::Justify),
+        _ => None,
+    }
 }
 
 /// The styles of a document, by id.
@@ -161,6 +179,8 @@ struct StyleDefinition {
 pub(crate) struct Styles {
     by_id: HashMap<String, StyleDefinition>,
     default_paragraph: Option<String>,
+    document_look: ParagraphLook,
+    document_font: RunLook,
 }
 
 impl Styles {
@@ -170,7 +190,20 @@ impl Styles {
             return Ok(Self::default());
         };
         let root = parse_tree(xml, |_, _| false)?;
-        let mut styles = Self::default();
+        let defaults = root.child(W, "docDefaults");
+        let mut styles = Self {
+            document_look: defaults
+                .and_then(|defaults| defaults.child(W, "pPrDefault"))
+                .and_then(|default| default.child(W, "pPr"))
+                .map(ParagraphLook::parse)
+                .unwrap_or_default(),
+            document_font: defaults
+                .and_then(|defaults| defaults.child(W, "rPrDefault"))
+                .and_then(|default| default.child(W, "rPr"))
+                .map(RunLook::parse)
+                .unwrap_or_default(),
+            ..Self::default()
+        };
         for style in root.elements().filter(|element| element.is(W, "style")) {
             let Some(id) = style.attribute(W, "styleId") else {
                 continue;
@@ -203,9 +236,17 @@ impl Styles {
                         .map(str::to_owned),
                     outline_level: paragraph_properties.and_then(outline_level),
                     numbering: paragraph_properties.and_then(numbering_reference),
+                    alignment: paragraph_properties.and_then(alignment),
                     run_format: style
                         .child(W, "rPr")
                         .map(RunFormat::parse)
+                        .unwrap_or_default(),
+                    look: paragraph_properties
+                        .map(ParagraphLook::parse)
+                        .unwrap_or_default(),
+                    font: style
+                        .child(W, "rPr")
+                        .map(RunLook::parse)
                         .unwrap_or_default(),
                 },
             );
@@ -219,6 +260,7 @@ impl Styles {
             role: ParagraphRole::Normal,
             outline_level: None,
             numbering: None,
+            alignment: None,
         };
         let mut role = None;
         for definition in self.chain(style_id.or(self.default_paragraph.as_deref())) {
@@ -228,6 +270,7 @@ impl Styles {
             role = role.or_else(|| role_from_name(&definition.name));
             resolved.outline_level = resolved.outline_level.or(definition.outline_level);
             resolved.numbering = resolved.numbering.or(definition.numbering);
+            resolved.alignment = resolved.alignment.or(definition.alignment);
         }
         resolved.role = role.unwrap_or(ParagraphRole::Normal);
         resolved
@@ -252,6 +295,42 @@ impl Styles {
                 .overridden_by(definition.run_format);
         }
         format
+    }
+
+    /// The font of a paragraph with no direct formatting: the default paragraph style over the
+    /// document defaults.
+    pub(crate) fn body_font(&self) -> RunLook {
+        self.paragraph_look(None).font
+    }
+
+    /// The spacing, indents and font of a paragraph of this style, over the document defaults;
+    /// `None` means the default paragraph style.
+    pub(crate) fn paragraph_look(&self, style_id: Option<&str>) -> ParagraphLook {
+        let mut look = ParagraphLook::default();
+        for definition in self.chain(style_id.or(self.default_paragraph.as_deref())) {
+            if !definition.paragraph {
+                continue;
+            }
+            look = look.or(ParagraphLook {
+                font: definition.font.clone(),
+                ..definition.look.clone()
+            });
+        }
+        look.or(ParagraphLook {
+            font: self.document_font.clone(),
+            ..self.document_look.clone()
+        })
+    }
+
+    /// The font a character style gives its runs.
+    pub(crate) fn character_look(&self, style_id: &str) -> RunLook {
+        let mut look = RunLook::default();
+        for definition in self.chain(Some(style_id)) {
+            if !definition.paragraph {
+                look = look.or(definition.font.clone());
+            }
+        }
+        look
     }
 
     /// The style and the styles it is based on, nearest first, at most [`MAX_STYLE_CHAIN`].

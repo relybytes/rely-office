@@ -1,0 +1,7 @@
+Codice;Ragione sociale;Partita IVA;Indirizzo;CAP;Città;Provincia;Telefono;Email;Referente;Settore;Fido;Condizioni di pagamento;Note
+C001;Edilizia Lago S.n.c.;01122334455;Piazza del Popolo 3;28921;Verbania;VB;0323 401122;amministrazione@edilizialago.example;Mario Galli;Edilizia;25.000,00;Bonifico 60 gg d.f.;Cliente dal 2015
+C002;Ristorante La Darsena;02233445566;Lungolago 14;28041;Arona;NO;0322 445566;info@ladarsena.example;Mauro Galli;Ristorazione;5.000,00;Bonifico 30 gg d.f.;Stagionale, chiuso a gennaio
+C003;Beta Commerciale S.p.A.;09876543210;Corso Magenta 45;20123;Milano;MI;02 87654321;acquisti@betacommerciale.example;Laura Neri;Commercio;80.000,00;Ri.Ba. 90 gg f.m.;Richiede ordine di acquisto
+C004;Studio Tecnico Verdi;03344556677;Via Roma 8;21100;Varese;VA;0332 112233;info@studioverdi.example;Paolo Verdi;Servizi;10.000,00;Bonifico 30 gg d.f.;
+C005;Hotel Bellavista S.r.l.;04455667788;Via Panoramica 21;28838;Stresa;VB;0323 998877;direzione@bellavista.example;Chiara Fontana;Turismo;30.000,00;Bonifico 60 gg d.f.;Fatturazione elettronica con codice SDI
+C006;Officina Meccanica Riva;05566778899;Via dell'Industria 5;28100;Novara;NO;0321 556677;officina@riva.example;Stefano Riva;Industria;15.000,00;Ri.Ba. 60 gg d.f.;

@@ -5,22 +5,30 @@
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
 //! The numbering part (`word/numbering.xml`): whether a numbered paragraph shows a bullet or a
-//! number.
+//! number, and how far each level is indented.
 
 use std::collections::HashMap;
 
+use super::look::ParagraphLook;
 use crate::OfficeError;
 use crate::xml_tree::{Element, Namespace, parse_tree};
 
 const W: Namespace = Namespace::Word;
 
-/// The number format of each level of each list definition.
+/// One level of a list definition.
+#[derive(Debug, Clone, Default)]
+struct Level {
+    format: Option<String>,
+    look: ParagraphLook,
+}
+
+/// The number format and indents of each level of each list definition.
 #[derive(Debug, Default)]
 pub(crate) struct Numbering {
-    /// `w:abstractNum` id to its level formats.
-    abstract_formats: HashMap<u32, HashMap<u8, String>>,
+    /// `w:abstractNum` id to its levels.
+    abstract_levels: HashMap<u32, HashMap<u8, Level>>,
     /// `w:num` id to its abstract definition and the levels it overrides.
-    instances: HashMap<u32, (u32, HashMap<u8, String>)>,
+    instances: HashMap<u32, (u32, HashMap<u8, Level>)>,
 }
 
 impl Numbering {
@@ -34,9 +42,7 @@ impl Numbering {
         for element in root.elements() {
             if element.is(W, "abstractNum") {
                 if let Some(id) = number_attribute(element, "abstractNumId") {
-                    numbering
-                        .abstract_formats
-                        .insert(id, level_formats(element));
+                    numbering.abstract_levels.insert(id, levels(element));
                 }
             } else if element.is(W, "num")
                 && let Some(id) = number_attribute(element, "numId")
@@ -47,7 +53,7 @@ impl Numbering {
                 let overrides = element
                     .elements()
                     .filter(|child| child.is(W, "lvlOverride"))
-                    .flat_map(level_formats)
+                    .flat_map(levels)
                     .collect();
                 numbering.instances.insert(id, (abstract_id, overrides));
             }
@@ -61,8 +67,15 @@ impl Numbering {
         let (abstract_id, overrides) = self.instances.get(&num_id)?;
         let format = overrides
             .get(&level)
-            .or_else(|| self.abstract_formats.get(abstract_id)?.get(&level))
-            .map_or("decimal", String::as_str);
+            .and_then(|level| level.format.as_deref())
+            .or_else(|| {
+                self.abstract_levels
+                    .get(abstract_id)?
+                    .get(&level)?
+                    .format
+                    .as_deref()
+            })
+            .unwrap_or("decimal");
         match format {
             "none" => None,
             "bullet" => Some(false),
@@ -71,19 +84,46 @@ impl Numbering {
     }
 }
 
+impl Numbering {
+    /// The indents level `level` of list `num_id` gives its paragraphs, an override first.
+    pub(crate) fn level_look(&self, num_id: u32, level: u8) -> ParagraphLook {
+        let Some((abstract_id, overrides)) = self.instances.get(&num_id) else {
+            return ParagraphLook::default();
+        };
+        let overridden = overrides
+            .get(&level)
+            .map(|level| level.look.clone())
+            .unwrap_or_default();
+        let defined = self
+            .abstract_levels
+            .get(abstract_id)
+            .and_then(|levels| levels.get(&level))
+            .map(|level| level.look.clone())
+            .unwrap_or_default();
+        overridden.or(defined)
+    }
+}
+
 fn number_attribute(element: &Element, name: &str) -> Option<u32> {
     element.attribute(W, name)?.parse().ok()
 }
 
-/// The `w:numFmt` of every `w:lvl` under the element.
-fn level_formats(element: &Element) -> HashMap<u8, String> {
+/// The `w:numFmt` and the `w:pPr` indents of every `w:lvl` under the element.
+fn levels(element: &Element) -> HashMap<u8, Level> {
     element
         .elements()
         .filter(|child| child.is(W, "lvl"))
         .filter_map(|level| {
             let index = level.attribute(W, "ilvl")?.parse::<u8>().ok()?;
-            let format = level.child(W, "numFmt")?.attribute(W, "val")?;
-            Some((index, format.to_owned()))
+            let format = level
+                .child(W, "numFmt")
+                .and_then(|format| format.attribute(W, "val"))
+                .map(str::to_owned);
+            let look = level
+                .child(W, "pPr")
+                .map(ParagraphLook::parse)
+                .unwrap_or_default();
+            Some((index, Level { format, look }))
         })
         .collect()
 }
@@ -126,6 +166,36 @@ mod tests {
         assert_eq!(numbering.is_ordered(0, 0), None);
         assert_eq!(numbering.is_ordered(99, 0), None);
         assert_eq!(Numbering::parse(None).unwrap().is_ordered(1, 0), None);
+    }
+
+    #[test]
+    fn reads_the_indents_of_each_level_an_override_first() {
+        let numbering = Numbering::parse(Some(concat!(
+            r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+            r#"<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/>"#,
+            r#"<w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>"#,
+            r#"<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>"#,
+            r#"<w:num w:numId="2"><w:abstractNumId w:val="0"/><w:lvlOverride w:ilvl="0">"#,
+            r#"<w:lvl w:ilvl="0"><w:pPr><w:ind w:left="1440"/></w:pPr></w:lvl></w:lvlOverride></w:num>"#,
+            "</w:numbering>",
+        )))
+        .unwrap();
+        let look = numbering.level_look(1, 0);
+        assert_eq!(
+            (look.indent_left_twips, look.indent_first_line_twips),
+            (Some(720), Some(-360))
+        );
+        let overridden = numbering.level_look(2, 0);
+        assert_eq!(
+            (
+                overridden.indent_left_twips,
+                overridden.indent_first_line_twips
+            ),
+            (Some(1_440), Some(-360))
+        );
+        assert_eq!(numbering.is_ordered(2, 0), Some(true));
+        assert_eq!(numbering.level_look(9, 0), ParagraphLook::default());
+        assert_eq!(numbering.level_look(1, 4), ParagraphLook::default());
     }
 
     #[test]

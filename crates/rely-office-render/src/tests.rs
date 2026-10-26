@@ -1,0 +1,344 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+
+use std::fmt::Write as _;
+use std::io::{Cursor, Write};
+use std::path::Path;
+use std::sync::LazyLock;
+
+use zip::write::SimpleFileOptions;
+
+use super::*;
+
+const DOCX_CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+const DOCX_NAMESPACES: &str = concat!(
+    r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" "#,
+    r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" "#,
+    r#"xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" "#,
+    r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,
+    r#"xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture""#,
+);
+
+static RENDERER: LazyLock<Renderer> = LazyLock::new(|| {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fonts");
+    let fonts = std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "ttf"))
+        .map(|path| std::fs::read(path).unwrap());
+    Renderer::new(fonts)
+});
+
+fn zip(members: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, bytes) in members {
+        writer
+            .start_file(*name, SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    writer.finish().unwrap().into_inner()
+}
+
+fn docx(body: &str, extra: &[(&str, &[u8])]) -> Vec<u8> {
+    let document = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><w:document {DOCX_NAMESPACES}><w:body>{body}</w:body></w:document>"#
+    );
+    let mut members: Vec<(&str, &[u8])> = vec![
+        ("[Content_Types].xml", DOCX_CONTENT_TYPES.as_bytes()),
+        ("word/document.xml", document.as_bytes()),
+    ];
+    members.extend_from_slice(extra);
+    zip(&members)
+}
+
+fn paragraphs(count: usize) -> String {
+    let mut body = String::new();
+    for index in 0..count {
+        let _ = write!(
+            body,
+            "<w:p><w:r><w:t>Paragrafo {index}: il contratto si rinnova tacitamente di anno in anno salvo disdetta.</w:t></w:r></w:p>"
+        );
+    }
+    body
+}
+
+fn image_docx(image: &[u8]) -> Vec<u8> {
+    let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/a.png"/></Relationships>"#;
+    let body = concat!(
+        r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="952500" cy="476250"/><wp:docPr id="1" name="logo"/>"#,
+        r#"<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+        r#"<pic:pic><pic:blipFill><a:blip r:embed="rId1"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>"#,
+        r#"</wp:inline></w:drawing></w:r></w:p>"#
+    );
+    docx(
+        body,
+        &[
+            ("word/_rels/document.xml.rels", rels.as_bytes()),
+            ("word/media/a.png", image),
+        ],
+    )
+}
+
+fn thumbnail_request(width: u32) -> RenderRequest {
+    RenderRequest {
+        pdf: true,
+        thumbnail_width: Some(width),
+        ..RenderRequest::default()
+    }
+}
+
+fn png_size(png: &[u8]) -> (u32, u32) {
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    let width = u32::from_be_bytes(png[16..20].try_into().unwrap());
+    let height = u32::from_be_bytes(png[20..24].try_into().unwrap());
+    (width, height)
+}
+
+#[test]
+fn holds_the_bundled_fonts() {
+    assert_eq!(RENDERER.font_count(), 18);
+    assert_eq!(bundled_font_families().len(), 5);
+}
+
+#[test]
+fn renders_a_docx_to_a_pdf_and_a_thumbnail_of_its_page_size() {
+    let body = format!(
+        "{}<w:sectPr><w:pgSz w:w=\"16838\" w:h=\"11906\"/></w:sectPr>",
+        paragraphs(3)
+    );
+    let rendered = RENDERER
+        .render(
+            &docx(&body, &[]),
+            Some("contratto.docx"),
+            &thumbnail_request(300),
+        )
+        .unwrap();
+    assert_eq!(rendered.format, DocumentFormat::Docx);
+    assert_eq!(rendered.fidelity, Fidelity::Layout);
+    assert_eq!(rendered.page_count, 1);
+    assert!(rendered.pdf.unwrap().starts_with(b"%PDF-"));
+    let (width, height) = png_size(&rendered.thumbnail.unwrap());
+    assert_eq!(width, 300);
+    assert_eq!(height, 212, "landscape A4 at 300 pixels wide");
+    assert_eq!(rendered.page_images.len(), 0);
+    assert!(!rendered.truncated);
+}
+
+#[test]
+fn flows_a_long_docx_over_several_pages_and_images_each() {
+    let request = RenderRequest {
+        pdf: false,
+        page_images: Some(PageImages {
+            pixels_per_point: 0.5,
+            max_pages: 2,
+        }),
+        ..RenderRequest::default()
+    };
+    let rendered = RENDERER
+        .render(&docx(&paragraphs(200), &[]), None, &request)
+        .unwrap();
+    assert!(rendered.page_count >= 3, "{} pages", rendered.page_count);
+    assert!(rendered.pdf.is_none());
+    assert!(rendered.thumbnail.is_none());
+    assert_eq!(rendered.page_images.len(), 2);
+    assert_eq!(png_size(&rendered.page_images[0]), (298, 421));
+}
+
+#[test]
+fn renders_the_structures_of_a_document() {
+    let body = concat!(
+        r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Contratto</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Oggetto</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">Testo </w:t></w:r><w:r><w:rPr><w:i/><w:u w:val="single"/></w:rPr><w:t>sottolineato</w:t></w:r><w:r><w:br/></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>1</w:t></w:r></w:p>"#,
+        r#"<w:tbl><w:tr><w:trPr><w:tblHeader/></w:trPr><w:tc><w:p><w:r><w:t>Voce</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Importo</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Totale</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p><w:pPr><w:pBdr><w:bottom w:val="single"/></w:pBdr></w:pPr></w:p>"#,
+        r#"<w:p/>"#,
+    );
+    let rendered = RENDERER
+        .render(&docx(body, &[]), None, &RenderRequest::default())
+        .unwrap();
+    assert_eq!(rendered.page_count, 1);
+}
+
+#[test]
+fn draws_a_frame_for_an_image_typst_cannot_decode() {
+    let blank = RENDERER
+        .render_source(
+            &TypstSource {
+                format: DocumentFormat::Unknown,
+                fidelity: Fidelity::Layout,
+                source: "#set page(width: 20pt, height: 10pt)".to_owned(),
+                files: Vec::new(),
+                truncated: false,
+            },
+            &RenderRequest {
+                pdf: false,
+                page_images: Some(PageImages {
+                    pixels_per_point: 1.0,
+                    max_pages: 1,
+                }),
+                ..RenderRequest::default()
+            },
+        )
+        .unwrap()
+        .page_images
+        .remove(0);
+    assert_eq!(png_size(&blank), (20, 10));
+
+    let good = image_docx(&blank);
+    assert_eq!(
+        typst_source(&good, None, &render_limits())
+            .unwrap()
+            .files
+            .len(),
+        1
+    );
+    assert_eq!(
+        RENDERER
+            .render(&good, None, &RenderRequest::default())
+            .unwrap()
+            .page_count,
+        1
+    );
+
+    let mut damaged = b"\x89PNG\r\n\x1a\n".to_vec();
+    damaged.extend_from_slice(&[0; 64]);
+    let rendered = RENDERER
+        .render(&image_docx(&damaged), None, &RenderRequest::default())
+        .unwrap();
+    assert_eq!(rendered.page_count, 1);
+}
+
+#[test]
+fn renders_the_sheets_of_a_workbook() {
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sales = workbook.add_worksheet().set_name("Vendite").unwrap();
+    sales.write(0, 0, "Mese").unwrap();
+    sales.write(0, 1, "Ricavi").unwrap();
+    for row in 1..80 {
+        sales.write(row, 0, format!("Riga {row}")).unwrap();
+        sales.write(row, 1, f64::from(row) * 10.5).unwrap();
+    }
+    workbook
+        .add_worksheet()
+        .set_name("Clienti")
+        .unwrap()
+        .write(0, 0, "Acme")
+        .unwrap();
+    let bytes = workbook.save_to_buffer().unwrap();
+
+    let rendered = RENDERER
+        .render(&bytes, Some("vendite.xlsx"), &thumbnail_request(200))
+        .unwrap();
+    assert_eq!(rendered.format, DocumentFormat::Xlsx);
+    assert_eq!(rendered.fidelity, Fidelity::Layout);
+    assert!(rendered.page_count >= 3, "{} pages", rendered.page_count);
+    assert_eq!(png_size(&rendered.thumbnail.unwrap()).0, 200);
+
+    let csv = RENDERER
+        .render(b"a,b\n1,2\n", Some("dati.csv"), &RenderRequest::default())
+        .unwrap();
+    assert_eq!((csv.format, csv.page_count), (DocumentFormat::Csv, 1));
+}
+
+#[test]
+fn says_a_sheet_was_cut_to_the_limits() {
+    let request = RenderRequest {
+        limits: Limits {
+            max_rows: 2,
+            ..render_limits()
+        },
+        ..RenderRequest::default()
+    };
+    let rendered = RENDERER
+        .render(b"a\n1\n2\n3\n", Some("dati.csv"), &request)
+        .unwrap();
+    assert!(rendered.truncated);
+}
+
+#[test]
+fn sets_the_text_of_a_format_with_no_layout_reader() {
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    writer.start_file("mimetype", stored).unwrap();
+    writer
+        .write_all(b"application/vnd.oasis.opendocument.text")
+        .unwrap();
+    writer
+        .start_file("content.xml", SimpleFileOptions::default())
+        .unwrap();
+    writer
+        .write_all(concat!(
+            r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content "#,
+            r#"xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" "#,
+            r#"xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2">"#,
+            r#"<office:body><office:text><text:p>Verbale #1 [bozza]</text:p></office:text></office:body>"#,
+            r#"</office:document-content>"#
+        ).as_bytes())
+        .unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+
+    let source = typst_source(&bytes, Some("verbale.odt"), &render_limits()).unwrap();
+    assert_eq!(source.fidelity, Fidelity::Text);
+    assert!(source.source.contains(r#"#par("Verbale #1 [bozza]")"#));
+    let rendered = RENDERER
+        .render(&bytes, Some("verbale.odt"), &RenderRequest::default())
+        .unwrap();
+    assert_eq!(
+        (rendered.format, rendered.page_count),
+        (DocumentFormat::Odt, 1)
+    );
+}
+
+#[test]
+fn refuses_what_it_cannot_read() {
+    assert!(matches!(
+        RENDERER.render(b"not an office file", None, &RenderRequest::default()),
+        Err(RenderError::UnsupportedFormat(DocumentFormat::Unknown))
+    ));
+    assert!(matches!(
+        RENDERER.render(
+            &docx("<w:p", &[]),
+            Some("a.docx"),
+            &RenderRequest::default()
+        ),
+        Err(RenderError::Office(_))
+    ));
+}
+
+#[test]
+fn reports_a_source_typst_refuses() {
+    let error = RENDERER
+        .render_source(
+            &TypstSource {
+                format: DocumentFormat::Unknown,
+                fidelity: Fidelity::Layout,
+                source: "#undefined-function()".to_owned(),
+                files: Vec::new(),
+                truncated: false,
+            },
+            &RenderRequest::default(),
+        )
+        .unwrap_err();
+    assert!(matches!(error, RenderError::Typeset(message) if message.contains("unknown variable")));
+}
+
+#[test]
+fn caps_the_thumbnail_width() {
+    let rendered = RENDERER
+        .render(
+            &docx(&paragraphs(1), &[]),
+            None,
+            &thumbnail_request(u32::MAX),
+        )
+        .unwrap();
+    assert_eq!(
+        png_size(&rendered.thumbnail.unwrap()).0,
+        MAX_THUMBNAIL_WIDTH
+    );
+}

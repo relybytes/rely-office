@@ -8,18 +8,23 @@
 //! and inline runs, the embedded images, and a report of what the tree could not carry.
 
 mod convert;
+mod look;
 mod media;
 mod numbering;
 mod styles;
 
 use crate::archive::{open_package, read_text_member};
 use crate::relationships::{main_part_path, read_relationships};
-use crate::xml_tree::{Namespace, parse_tree};
+use crate::xml_tree::{Element, Namespace, parse_tree};
 use crate::{DocumentFormat, Limits, OfficeError, detect_format};
 
+pub use look::{LineSpacing, ParagraphLook, RunLook, TableLook};
 pub use media::sniff_image_type;
 
 const MAIN_PART: &str = "word/document.xml";
+/// A page side shorter than an inch is damaged; one longer than 22 inches is Word's own maximum.
+const MIN_PAGE_TWIPS: u32 = 1_440;
+const MAX_PAGE_TWIPS: u64 = 31_680;
 
 /// A document read for an editor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +33,49 @@ pub struct DocumentTree {
     /// The embedded images, referenced from [`Inline::Image`] by their index in this list.
     pub media: Vec<Media>,
     pub report: ImportReport,
+    /// The page and body font the document is laid out with, for rendering.
+    pub layout: PageLayout,
+}
+
+/// The page geometry of the last section and the font of body text, in the units Word stores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageLayout {
+    /// Page width and height in twentieths of a point.
+    pub width_twips: u32,
+    pub height_twips: u32,
+    /// Margins in twentieths of a point: top, right, bottom, left.
+    pub margins_twips: [u32; 4],
+    /// The typeface of body text, as the document names it.
+    pub font_family: Option<String>,
+    /// The size of body text in half points.
+    pub font_size_half_points: Option<u32>,
+}
+
+impl Default for PageLayout {
+    /// A4 with Word's default margins of 2.5 cm.
+    fn default() -> Self {
+        Self {
+            width_twips: 11_906,
+            height_twips: 16_838,
+            margins_twips: [1_417; 4],
+            font_family: None,
+            font_size_half_points: None,
+        }
+    }
+}
+
+/// How a paragraph's lines sit between the margins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize),
+    serde(rename_all = "camelCase")
+)]
+pub enum Alignment {
+    Left,
+    Center,
+    Right,
+    Justify,
 }
 
 /// A block of the document.
@@ -46,9 +94,18 @@ pub enum Block {
     Heading {
         level: u8,
         content: Vec<Inline>,
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        align: Option<Alignment>,
+        #[cfg_attr(feature = "serde", serde(skip))]
+        look: ParagraphLook,
     },
     Paragraph {
         content: Vec<Inline>,
+        /// The alignment the paragraph or its style sets; `None` is the start of the line.
+        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+        align: Option<Alignment>,
+        #[cfg_attr(feature = "serde", serde(skip))]
+        look: ParagraphLook,
     },
     /// One item of a list. Consecutive items with the same `list_id` belong to one list; `level`
     /// is the nesting depth, 0 for the outermost.
@@ -57,9 +114,13 @@ pub enum Block {
         level: u8,
         list_id: u32,
         content: Vec<Inline>,
+        #[cfg_attr(feature = "serde", serde(skip))]
+        look: ParagraphLook,
     },
     Table {
         rows: Vec<TableRow>,
+        #[cfg_attr(feature = "serde", serde(skip))]
+        look: TableLook,
     },
     /// Consecutive quote paragraphs, together.
     Blockquote {
@@ -114,6 +175,8 @@ pub enum Inline {
         text: String,
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty"))]
         marks: Vec<Mark>,
+        #[cfg_attr(feature = "serde", serde(skip))]
+        look: RunLook,
     },
     /// A line break inside the block.
     HardBreak,
@@ -270,12 +333,54 @@ pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree,
     );
     let blocks = converter.convert_blocks(body);
     let media = converter.into_media();
+    let font = styles.body_font();
+    let mut layout = page_layout(body);
+    layout.font_family = font.family;
+    layout.font_size_half_points = font.size_half_points;
 
     Ok(DocumentTree {
         blocks,
         media,
         report,
+        layout,
     })
+}
+
+/// The page size and margins of the body's own section, the last one; A4 when it says nothing.
+fn page_layout(body: &Element) -> PageLayout {
+    let mut layout = PageLayout::default();
+    let Some(section) = body.child(Namespace::Word, "sectPr") else {
+        return layout;
+    };
+    let twips = |element: &Element, name: &str| {
+        element
+            .attribute(Namespace::Word, name)
+            .and_then(|value| value.parse::<i64>().ok())
+            .map(|value| u32::try_from(value.unsigned_abs().min(MAX_PAGE_TWIPS)).unwrap_or(0))
+    };
+    if let Some(size) = section.child(Namespace::Word, "pgSz") {
+        if let Some(width) = twips(size, "w").filter(|width| *width >= MIN_PAGE_TWIPS) {
+            layout.width_twips = width;
+        }
+        if let Some(height) = twips(size, "h").filter(|height| *height >= MIN_PAGE_TWIPS) {
+            layout.height_twips = height;
+        }
+    }
+    if let Some(margins) = section.child(Namespace::Word, "pgMar") {
+        for (index, name) in ["top", "right", "bottom", "left"].iter().enumerate() {
+            if let Some(margin) = twips(margins, name) {
+                layout.margins_twips[index] = margin;
+            }
+        }
+    }
+    // Margins that leave no room for text are damaged, not a layout.
+    let [top, right, bottom, left] = layout.margins_twips;
+    if left + right + MIN_PAGE_TWIPS > layout.width_twips
+        || top + bottom + MIN_PAGE_TWIPS > layout.height_twips
+    {
+        layout.margins_twips = PageLayout::default().margins_twips;
+    }
+    layout
 }
 
 /// Text runs and field instructions keep their spaces; everywhere else whitespace is layout.

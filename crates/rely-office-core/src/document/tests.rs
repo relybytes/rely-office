@@ -20,6 +20,7 @@ fn tree_with(body: &str, extra: &[(&str, &[u8])]) -> DocumentTree {
 
 fn text(value: &str) -> Inline {
     Inline::Text {
+        look: RunLook::default(),
         text: value.to_owned(),
         marks: Vec::new(),
     }
@@ -27,6 +28,7 @@ fn text(value: &str) -> Inline {
 
 fn marked(value: &str, marks: Vec<Mark>) -> Inline {
     Inline::Text {
+        look: RunLook::default(),
         text: value.to_owned(),
         marks,
     }
@@ -34,8 +36,39 @@ fn marked(value: &str, marks: Vec<Mark>) -> Inline {
 
 fn paragraph(value: &str) -> Block {
     Block::Paragraph {
+        look: ParagraphLook::default(),
+        align: None,
         content: vec![text(value)],
     }
+}
+
+/// The blocks with every look reset, for the tests about structure.
+fn without_looks(blocks: &[Block]) -> Vec<Block> {
+    blocks
+        .iter()
+        .map(|block| match block.clone() {
+            Block::Paragraph { content, align, .. } => Block::Paragraph {
+                content: inlines_without_looks(&content),
+                align,
+                look: ParagraphLook::default(),
+            },
+            other => other,
+        })
+        .collect()
+}
+
+fn inlines_without_looks(content: &[Inline]) -> Vec<Inline> {
+    content
+        .iter()
+        .map(|inline| match inline.clone() {
+            Inline::Text { text, marks, .. } => Inline::Text {
+                text,
+                marks,
+                look: RunLook::default(),
+            },
+            other => other,
+        })
+        .collect()
 }
 
 fn styled_paragraph(style: &str, value: &str) -> String {
@@ -66,7 +99,14 @@ fn reads_plain_paragraphs_and_empty_ones() {
     let read = tree("<w:p><w:r><w:t>Ciao</w:t></w:r></w:p><w:p/>");
     assert_eq!(
         read.blocks,
-        vec![paragraph("Ciao"), Block::Paragraph { content: vec![] }]
+        vec![
+            paragraph("Ciao"),
+            Block::Paragraph {
+                look: ParagraphLook::default(),
+                align: None,
+                content: vec![]
+            }
+        ]
     );
     assert_eq!(read.report, ImportReport::default());
 }
@@ -120,8 +160,10 @@ fn reads_marks_and_merges_runs_that_share_them() {
     );
     let read = tree(body);
     assert_eq!(
-        read.blocks,
+        without_looks(&read.blocks),
         vec![Block::Paragraph {
+            look: ParagraphLook::default(),
+            align: None,
             content: vec![
                 marked("grassetto", vec![Mark::Bold]),
                 marked(" corsivo ", vec![Mark::Italic, Mark::Underline]),
@@ -149,6 +191,8 @@ fn applies_character_styles_under_direct_formatting() {
     assert_eq!(
         read.blocks,
         vec![Block::Paragraph {
+            look: ParagraphLook::default(),
+            align: None,
             content: vec![marked("forte", vec![Mark::Bold]), text("no")]
         }]
     );
@@ -163,6 +207,8 @@ fn ignores_the_old_formatting_of_a_tracked_format_change() {
     assert_eq!(
         tree(body).blocks,
         vec![Block::Paragraph {
+            look: ParagraphLook::default(),
+            align: None,
             content: vec![marked("nuovo", vec![Mark::Italic])]
         }]
     );
@@ -190,6 +236,8 @@ fn keeps_web_and_mail_links_and_reports_the_others() {
     assert_eq!(
         read.blocks,
         vec![Block::Paragraph {
+            look: ParagraphLook::default(),
+            align: None,
             content: vec![
                 marked(
                     "sito",
@@ -218,6 +266,8 @@ fn adds_the_anchor_of_an_external_link() {
     assert_eq!(
         read.blocks,
         vec![Block::Paragraph {
+            look: ParagraphLook::default(),
+            align: None,
             content: vec![marked(
                 "a",
                 vec![Mark::Link {
@@ -248,6 +298,8 @@ fn keeps_field_results_and_links_hyperlink_fields() {
     assert_eq!(
         read.blocks,
         vec![Block::Paragraph {
+            look: ParagraphLook::default(),
+            align: None,
             content: vec![
                 marked(
                     "esempio",
@@ -271,7 +323,14 @@ fn closes_a_field_left_without_a_separator_at_the_paragraph_end() {
     );
     assert_eq!(
         tree(body).blocks,
-        vec![Block::Paragraph { content: vec![] }, paragraph("dopo")]
+        vec![
+            Block::Paragraph {
+                look: ParagraphLook::default(),
+                align: None,
+                content: vec![]
+            },
+            paragraph("dopo")
+        ]
     );
 }
 
@@ -302,18 +361,21 @@ fn reads_bullet_and_numbered_lists_with_their_levels() {
         read.blocks,
         vec![
             Block::ListItem {
+                look: ParagraphLook::default(),
                 ordered: false,
                 level: 0,
                 list_id: 1,
                 content: vec![text("punto")]
             },
             Block::ListItem {
+                look: ParagraphLook::default(),
                 ordered: true,
                 level: 1,
                 list_id: 1,
                 content: vec![text("sotto")]
             },
             Block::ListItem {
+                look: ParagraphLook::default(),
                 ordered: true,
                 level: 0,
                 list_id: 2,
@@ -346,6 +408,7 @@ fn takes_list_numbering_from_the_paragraph_style() {
     assert_eq!(
         read.blocks,
         vec![Block::ListItem {
+            look: ParagraphLook::default(),
             ordered: false,
             level: 0,
             list_id: 4,
@@ -380,7 +443,7 @@ fn reads_tables_with_header_rows_spans_merges_and_nesting() {
     ]
     .concat();
     let read = tree(&body);
-    let Block::Table { rows } = &read.blocks[0] else {
+    let Block::Table { rows, .. } = &read.blocks[0] else {
         panic!("not a table: {:?}", read.blocks);
     };
     assert_eq!(rows.len(), 3);
@@ -391,7 +454,7 @@ fn reads_tables_with_header_rows_spans_merges_and_nesting() {
     assert_eq!(rows[1].cells[0].row_span, 2);
     assert_eq!(rows[2].cells.len(), 2);
     assert_eq!(rows[2].cells[0].blocks, vec![paragraph("B3")]);
-    let Block::Table { rows: inner } = &rows[1].cells[2].blocks[1] else {
+    let Block::Table { rows: inner, .. } = &rows[1].cells[2].blocks[1] else {
         panic!("no nested table: {:?}", rows[1].cells[2].blocks);
     };
     assert_eq!(inner[0].cells[0].blocks, vec![paragraph("interna")]);
@@ -400,7 +463,7 @@ fn reads_tables_with_header_rows_spans_merges_and_nesting() {
 #[test]
 fn keeps_a_continued_merge_without_an_origin_as_a_cell() {
     let body = r"<w:tbl><w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t>solo</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
-    let Block::Table { rows } = &tree(body).blocks[0] else {
+    let Block::Table { rows, .. } = &tree(body).blocks[0] else {
         panic!("not a table");
     };
     assert_eq!(rows[0].cells[0].blocks, vec![paragraph("solo")]);
@@ -413,7 +476,7 @@ fn skips_a_deleted_table_row() {
         "<w:tr><w:tc><w:p><w:r><w:t>resta</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
     );
     let read = tree(body);
-    let Block::Table { rows } = &read.blocks[0] else {
+    let Block::Table { rows, .. } = &read.blocks[0] else {
         panic!("not a table");
     };
     assert_eq!(rows.len(), 1);
@@ -462,12 +525,19 @@ fn reads_horizontal_rules_and_ignores_page_breaks() {
         r#"<w:p><w:pPr><w:pStyle w:val="Linea"/></w:pPr></w:p>"#,
     );
     let styles = styles_xml(&[("Linea", "Linea orizzontale", "")]);
+    let read = tree_with(body, &[("word/styles.xml", styles.as_bytes())]);
+    assert!(
+        matches!(&read.blocks[2], Block::Paragraph { look, .. } if look.page_break_before),
+        "the page break of the empty paragraph moves to the next one"
+    );
     assert_eq!(
-        tree_with(body, &[("word/styles.xml", styles.as_bytes())]).blocks,
+        without_looks(&read.blocks),
         vec![
             Block::HorizontalRule,
             Block::HorizontalRule,
             Block::Paragraph {
+                look: ParagraphLook::default(),
+                align: None,
                 content: vec![
                     text("primadopo"),
                     Inline::HardBreak,
@@ -506,6 +576,8 @@ fn returns_images_once_with_their_alt_text_size_and_type() {
     assert_eq!(
         read.blocks,
         vec![Block::Paragraph {
+            look: ParagraphLook::default(),
+            align: None,
             content: vec![
                 image.clone(),
                 image,
@@ -773,4 +845,182 @@ fn refuses_malformed_document_xml() {
         read_document_tree(&bad_styles, &Limits::default()).unwrap_err(),
         OfficeError::MalformedXml(_)
     ));
+}
+
+#[test]
+fn reads_the_alignment_of_a_paragraph_and_of_its_style() {
+    let styles = styles_xml(&[(
+        "Titolo",
+        "Title centred",
+        r#"<w:pPr><w:jc w:val="center"/></w:pPr>"#,
+    )]);
+    let read = tree_with(
+        concat!(
+            r#"<w:p><w:pPr><w:jc w:val="both"/></w:pPr><w:r><w:t>a</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:pStyle w:val="Titolo"/></w:pPr><w:r><w:t>b</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:pStyle w:val="Titolo"/><w:jc w:val="end"/></w:pPr><w:r><w:t>c</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:jc w:val="bogus"/></w:pPr><w:r><w:t>d</w:t></w:r></w:p>"#,
+        ),
+        &[("word/styles.xml", styles.as_bytes())],
+    );
+    let alignments: Vec<Option<Alignment>> = read
+        .blocks
+        .iter()
+        .map(|block| match block {
+            Block::Paragraph { align, .. } | Block::Heading { align, .. } => *align,
+            _ => panic!("unexpected block {block:?}"),
+        })
+        .collect();
+    assert_eq!(
+        alignments,
+        vec![
+            Some(Alignment::Justify),
+            Some(Alignment::Center),
+            Some(Alignment::Right),
+            None
+        ]
+    );
+}
+
+#[test]
+fn reads_the_page_size_and_margins_of_the_last_section() {
+    let read = tree(concat!(
+        "<w:p/>",
+        r#"<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>"#,
+        r#"<w:pgMar w:top="720" w:right="1080" w:bottom="-720" w:left="1080"/></w:sectPr>"#,
+    ));
+    assert_eq!(read.layout.width_twips, 16_838);
+    assert_eq!(read.layout.height_twips, 11_906);
+    assert_eq!(read.layout.margins_twips, [720, 1_080, 720, 1_080]);
+}
+
+#[test]
+fn keeps_a4_when_the_section_is_missing_or_damaged() {
+    assert_eq!(tree("<w:p/>").layout, PageLayout::default());
+    let read = tree(concat!(
+        r#"<w:sectPr><w:pgSz w:w="10" w:h="99999999"/>"#,
+        r#"<w:pgMar w:top="1" w:right="9000" w:bottom="1" w:left="9000"/></w:sectPr>"#,
+    ));
+    assert_eq!(read.layout.width_twips, PageLayout::default().width_twips);
+    assert_eq!(read.layout.height_twips, 31_680);
+    assert_eq!(
+        read.layout.margins_twips,
+        PageLayout::default().margins_twips
+    );
+}
+
+#[test]
+fn reads_the_body_font_from_the_default_style_over_the_document_defaults() {
+    let styles = styles_xml(&[]).replace(
+        "</w:styles>",
+        concat!(
+            r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi"/>"#,
+            r#"<w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>"#,
+            r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normale"><w:name w:val="Normal"/>"#,
+            r#"<w:rPr><w:sz w:val="24"/></w:rPr></w:style></w:styles>"#,
+        ),
+    );
+    let read = tree_with("<w:p/>", &[("word/styles.xml", styles.as_bytes())]);
+    assert_eq!(read.layout.font_family.as_deref(), Some("Calibri"));
+    assert_eq!(read.layout.font_size_half_points, Some(24));
+
+    let named = styles_xml(&[]).replace(
+        "</w:styles>",
+        r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Garamond" w:asciiTheme="majorHAnsi"/><w:sz w:val="0"/></w:rPr></w:rPrDefault></w:docDefaults></w:styles>"#,
+    );
+    let read = tree_with("<w:p/>", &[("word/styles.xml", named.as_bytes())]);
+    assert_eq!(read.layout.font_family.as_deref(), Some("Garamond"));
+    assert_eq!(read.layout.font_size_half_points, None);
+}
+
+#[test]
+fn gives_each_block_the_look_of_its_style_list_and_direct_formatting() {
+    let styles = styles_xml(&[
+        (
+            "Corpo",
+            "Body Text",
+            r#"<w:pPr><w:spacing w:after="140" w:line="276"/></w:pPr><w:rPr><w:sz w:val="22"/></w:rPr>"#,
+        ),
+        (
+            "Titolo1",
+            "heading 1",
+            r#"<w:basedOn w:val="Corpo"/><w:pPr><w:spacing w:before="240"/></w:pPr><w:rPr><w:b/><w:color w:val="2F5496"/></w:rPr>"#,
+        ),
+    ])
+    .replace(
+        "</w:styles>",
+        r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Liberation Serif"/></w:rPr></w:rPrDefault></w:docDefaults></w:styles>"#,
+    );
+    let numbering = concat!(
+        r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+        r#"<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/>"#,
+        r#"<w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>"#,
+        r#"<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+    );
+    let body = concat!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Titolo1"/></w:pPr><w:r><w:t>Titolo</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="Corpo"/><w:spacing w:after="0"/></w:pPr>"#,
+        r#"<w:r><w:rPr><w:sz w:val="30"/><w:color w:val="FF0000"/><w:b/></w:rPr><w:t>grande</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>voce</w:t></w:r></w:p>"#,
+        r#"<w:tbl><w:tblPr><w:tblBorders><w:insideH w:val="single"/></w:tblBorders></w:tblPr>"#,
+        r#"<w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="6000"/></w:tblGrid>"#,
+        r#"<w:tr><w:tc><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl>"#,
+    );
+    let read = tree_with(
+        body,
+        &[
+            ("word/styles.xml", styles.as_bytes()),
+            ("word/numbering.xml", numbering.as_bytes()),
+        ],
+    );
+
+    let Block::Heading { look, .. } = &read.blocks[0] else {
+        panic!("not a heading: {:?}", read.blocks[0]);
+    };
+    assert_eq!(look.space_before_twips, Some(240));
+    assert_eq!(look.space_after_twips, Some(140));
+    assert_eq!(look.line_spacing, Some(LineSpacing::Auto(276)));
+    assert_eq!(look.font.size_half_points, Some(22));
+    assert_eq!(look.font.bold, Some(true));
+    assert_eq!(look.font.colour.as_deref(), Some("2F5496"));
+    assert_eq!(look.font.family.as_deref(), Some("Liberation Serif"));
+
+    let Block::Paragraph { look, content, .. } = &read.blocks[1] else {
+        panic!("not a paragraph: {:?}", read.blocks[1]);
+    };
+    assert_eq!(look.space_after_twips, Some(0));
+    assert_eq!(look.font.bold, None);
+    let Inline::Text {
+        look: run, marks, ..
+    } = &content[0]
+    else {
+        panic!("not text");
+    };
+    assert_eq!(marks, &vec![Mark::Bold]);
+    assert_eq!(
+        run,
+        &RunLook {
+            size_half_points: Some(30),
+            colour: Some("FF0000".to_owned()),
+            ..RunLook::default()
+        }
+    );
+
+    let Block::ListItem { look, .. } = &read.blocks[2] else {
+        panic!("not a list item: {:?}", read.blocks[2]);
+    };
+    assert_eq!(look.indent_left_twips, Some(720));
+    assert_eq!(look.indent_first_line_twips, Some(-360));
+
+    let Block::Table { look, .. } = &read.blocks[3] else {
+        panic!("not a table: {:?}", read.blocks[3]);
+    };
+    assert_eq!(
+        look,
+        &TableLook {
+            column_widths_twips: vec![3_000, 6_000],
+            borders: true,
+            cell_margins_twips: [None; 4],
+        }
+    );
 }

@@ -1,11 +1,19 @@
 [workspace]
 resolver = "3"
-members = ["crates/rely-office-core", "crates/rely-office-cli", "crates/rely-office-wasm"]
+members = [
+  "crates/rely-office-core",
+  "crates/rely-office-render",
+  "crates/rely-office-cli",
+  "crates/rely-office-wasm",
+  "crates/rely-office-render-wasm",
+  "crates/rely-office-corpus",
+]
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.92"
 license = "MPL-2.0"
 authors = ["RelyBytes Consulting"]
 repository = "https://github.com/relybytes/rely-office"
@@ -27,3 +35,5 @@ inherits = "release"
 opt-level = "s"
 lto = true
 codegen-units = 1
+# Function names and debug sections are a third of the module, and nothing reads them.
+strip = true

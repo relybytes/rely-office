@@ -127,6 +127,7 @@ fn serializes_every_block_kind_in_camel_case() {
             level: 1,
             list_id: 4,
             content: vec![rely_office_core::Inline::HardBreak],
+            look: rely_office_core::ParagraphLook::default(),
         },
         Block::Table {
             rows: vec![rely_office_core::TableRow {
@@ -137,6 +138,7 @@ fn serializes_every_block_kind_in_camel_case() {
                     blocks: vec![Block::HorizontalRule],
                 }],
             }],
+            look: rely_office_core::TableLook::default(),
         },
         Block::Blockquote { blocks: vec![] },
         Block::CodeBlock {

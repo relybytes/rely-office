@@ -11,13 +11,19 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use rely_office_core::{Limits, detect_format, extract_text, read_document_tree, read_workbook};
+use rely_office_render::{PageImages, RenderRequest, Renderer, render_limits};
 
-const USAGE: &str = "usage: rely-office <detect|text|sheets|tree> <file>
+const USAGE: &str = "usage: rely-office <detect|text|sheets|tree|typst|pdf|png> <file>
 
   detect   print the format read from the bytes
   text     print the text a search index would store
   sheets   print every sheet as tab-separated rows
-  tree     print the document tree of a docx, its images and its import report";
+  tree     print the document tree of a docx, its images and its import report
+  typst    print the Typst source a render typesets
+  pdf      write <file>.pdf next to the file
+  png      write <file>-<page>.png next to the file, at 144 dpi
+
+The renders use the fonts of the folder RELY_OFFICE_FONTS names, by default ./fonts.";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -79,6 +85,82 @@ fn run(command: &str, path: &Path) -> Result<String, String> {
             let _ = writeln!(output, "{:#?}", tree.report);
             Ok(output)
         }
+        "typst" | "pdf" | "png" => render(command, path, &bytes, file_name),
         other => Err(format!("unknown command {other}\n{USAGE}")),
     }
+}
+
+/// The renderer with every font file of the fonts folder.
+fn renderer() -> Result<Renderer, String> {
+    let folder = std::env::var_os("RELY_OFFICE_FONTS").unwrap_or_else(|| "fonts".into());
+    let folder = Path::new(&folder);
+    let entries =
+        std::fs::read_dir(folder).map_err(|error| format!("{}: {error}", folder.display()))?;
+    let mut fonts = Vec::new();
+    for path in entries.flatten().map(|entry| entry.path()) {
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "ttf" || extension == "otf" || extension == "ttc")
+        {
+            fonts.push(
+                std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?,
+            );
+        }
+    }
+    Ok(Renderer::new(fonts))
+}
+
+fn render(
+    command: &str,
+    path: &Path,
+    bytes: &[u8],
+    file_name: Option<&str>,
+) -> Result<String, String> {
+    let typesetter = renderer()?;
+    if command == "typst" {
+        return typesetter
+            .typst_source(bytes, file_name, &render_limits())
+            .map(|source| source.source)
+            .map_err(|error| error.to_string());
+    }
+    let request = RenderRequest {
+        pdf: command == "pdf",
+        page_images: (command == "png").then_some(PageImages {
+            pixels_per_point: 2.0,
+            max_pages: usize::MAX,
+        }),
+        ..RenderRequest::default()
+    };
+    let rendered = typesetter
+        .render(bytes, file_name, &request)
+        .map_err(|error| error.to_string())?;
+    let name = file_name.unwrap_or("document");
+    let mut written = Vec::new();
+    if let Some(pdf) = rendered.pdf {
+        written.push((path.with_file_name(format!("{name}.pdf")), pdf));
+    }
+    for (index, page) in rendered.page_images.into_iter().enumerate() {
+        written.push((
+            path.with_file_name(format!("{name}-{}.png", index + 1)),
+            page,
+        ));
+    }
+    let mut output = String::new();
+    for (target, content) in written {
+        std::fs::write(&target, content)
+            .map_err(|error| format!("{}: {error}", target.display()))?;
+        let _ = writeln!(output, "{}", target.display());
+    }
+    let _ = writeln!(
+        output,
+        "{} pages, {:?}{}",
+        rendered.page_count,
+        rendered.fidelity,
+        if rendered.truncated {
+            ", cut to the limits"
+        } else {
+            ""
+        }
+    );
+    Ok(output)
 }

@@ -28,6 +28,7 @@ mod ppt;
 mod presentation;
 mod relationships;
 mod sheet;
+mod sheet_layout;
 mod text;
 mod word;
 mod xml_text;
@@ -37,11 +38,12 @@ mod xml_tree;
 mod test_support;
 
 pub use document::{
-    Block, DocumentTree, ImportReport, Inline, Mark, Media, TableCell, TableRow,
-    read_document_tree, sniff_image_type,
+    Alignment, Block, DocumentTree, ImportReport, Inline, LineSpacing, Mark, Media, PageLayout,
+    ParagraphLook, RunLook, TableCell, TableLook, TableRow, read_document_tree, sniff_image_type,
 };
 pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};
 pub use limits::Limits;
 pub use sheet::{Sheet, Workbook, read_workbook};
+pub use sheet_layout::SheetLayout;
 pub use text::{ExtractedText, extract_text};

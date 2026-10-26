@@ -70,13 +70,21 @@ struct LimitsInput {
 
 /// Parse the limits JSON over the defaults; no JSON, or `null`, means the defaults.
 fn parse_limits(limits_json: Option<&str>) -> Result<Limits, Failure> {
+    parse_limits_over(limits_json, Limits::default())
+}
+
+/// Parse the limits JSON over `defaults`; no JSON, or `null`, means `defaults`.
+///
+/// # Errors
+///
+/// `INVALID_LIMITS` for JSON that is not an object of known limits.
+pub fn parse_limits_over(limits_json: Option<&str>, defaults: Limits) -> Result<Limits, Failure> {
     let Some(json) = limits_json.map(str::trim).filter(|json| !json.is_empty()) else {
-        return Ok(Limits::default());
+        return Ok(defaults);
     };
     let input: Option<LimitsInput> =
         serde_json::from_str(json).map_err(|error| Failure::invalid_limits(&error.to_string()))?;
     let input = input.unwrap_or_default();
-    let defaults = Limits::default();
     Ok(Limits {
         max_input_bytes: input.max_input_bytes.unwrap_or(defaults.max_input_bytes),
         max_member_bytes: input.max_member_bytes.unwrap_or(defaults.max_member_bytes),
@@ -234,6 +242,7 @@ pub fn document_tree(
         blocks,
         media,
         report,
+        ..
     } = read_document_tree(bytes, &limits)?;
     let json = to_json(&DocumentTreeOutput {
         blocks: &blocks,

@@ -8,6 +8,7 @@ use std::io::Cursor;
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 
+use crate::sheet_layout::{SheetLayout, read_xlsx_layouts};
 use crate::{DocumentFormat, Limits, OfficeError, detect_format};
 
 /// One sheet as a table of displayed values, cut to the limits.
@@ -20,6 +21,8 @@ pub struct Sheet {
     pub total_rows: usize,
     /// How many columns the sheet holds, before the cut.
     pub total_columns: usize,
+    /// How the sheet is printed, read from an xlsx; the defaults for every other format.
+    pub layout: SheetLayout,
 }
 
 /// The sheets of a workbook, in the order the file declares them.
@@ -50,9 +53,15 @@ pub fn read_workbook(
 
     let format = detect_format(bytes, file_name);
     let sheets = match format {
-        DocumentFormat::Xlsx | DocumentFormat::Xls | DocumentFormat::Ods => {
-            read_binary_workbook(bytes, limits)?
+        DocumentFormat::Xlsx => {
+            let mut sheets = read_binary_workbook(bytes, limits)?;
+            let mut layouts = read_xlsx_layouts(bytes, limits);
+            for sheet in &mut sheets {
+                sheet.layout = layouts.remove(&sheet.name).unwrap_or_default();
+            }
+            sheets
         }
+        DocumentFormat::Xls | DocumentFormat::Ods => read_binary_workbook(bytes, limits)?,
         DocumentFormat::Csv => vec![read_delimited(bytes, b',', limits)],
         DocumentFormat::Tsv => vec![read_delimited(bytes, b'\t', limits)],
         other => return Err(OfficeError::UnsupportedFormat(other)),
@@ -96,6 +105,7 @@ fn read_binary_workbook(bytes: &[u8], limits: &Limits) -> Result<Vec<Sheet>, Off
             rows,
             total_rows,
             total_columns,
+            layout: SheetLayout::default(),
         });
     }
 
@@ -182,6 +192,7 @@ fn read_delimited(bytes: &[u8], separator: u8, limits: &Limits) -> Sheet {
         rows,
         total_rows,
         total_columns,
+        layout: SheetLayout::default(),
     }
 }
 
@@ -258,6 +269,30 @@ mod tests {
         let bytes = build_xlsx_with_uncached_formula();
         let read = read_workbook(&bytes, None, &Limits::default()).unwrap();
         assert_eq!(read.sheets[0].rows[0], vec!["2", "3", "=A1+B1"]);
+    }
+
+    #[test]
+    fn reads_how_each_sheet_of_an_xlsx_is_printed() {
+        let mut workbook = rust_xlsxwriter::Workbook::new();
+        let sheet = workbook.add_worksheet().set_name("Vendite").unwrap();
+        sheet.write(0, 0, "Mese").unwrap();
+        sheet.set_column_width(1, 20).unwrap();
+        sheet.set_landscape();
+        sheet.set_header("&CVendite");
+        workbook.add_worksheet().set_name("Altro").unwrap();
+        let bytes = workbook.save_to_buffer().unwrap();
+        let read = read_workbook(&bytes, None, &Limits::default()).unwrap();
+        let layout = &read.sheets[0].layout;
+        assert!(layout.landscape);
+        assert_eq!(layout.header.as_deref(), Some("&CVendite"));
+        assert_eq!(
+            layout.column_widths.get(1).copied().flatten(),
+            Some(20 * 256 + 182)
+        );
+        assert_eq!(layout.font_family.as_deref(), Some("Calibri"));
+        assert_eq!(layout.font_size_tenths, Some(110));
+        assert!(!read.sheets[1].layout.landscape);
+        assert_eq!(read_xlsx_layouts(b"not a zip", &Limits::default()).len(), 0);
     }
 
     #[test]

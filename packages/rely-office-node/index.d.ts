@@ -52,6 +52,9 @@ export type ErrorCode =
   | 'UNREADABLE_DOCUMENT'
   | 'ENCRYPTED'
   | 'INVALID_LIMITS'
+  | 'INVALID_OPTIONS'
+  | 'TYPESET_FAILED'
+  | 'EXPORT_FAILED'
   | 'INTERNAL';
 
 /** Thrown by every function but `detectFormat` when a document cannot be read. */
@@ -113,9 +116,12 @@ export interface TableRow {
   cells: TableCell[];
 }
 
+/** How a paragraph's lines sit between the margins; absent means the start of the line. */
+export type Alignment = 'left' | 'center' | 'right' | 'justify';
+
 export type Block =
-  | { type: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; content: Inline[] }
-  | { type: 'paragraph'; content: Inline[] }
+  | { type: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; content: Inline[]; align?: Alignment }
+  | { type: 'paragraph'; content: Inline[]; align?: Alignment }
   /**
    * One list item. Consecutive items with the same `listId` form one list; `level` is the
    * nesting depth, 0 for the outermost.
@@ -185,6 +191,44 @@ export function readSheets(bytes: DocumentBytes, fileName?: string, limits?: Lim
 
 /** A docx as a neutral tree of blocks for a rich-text editor, with its images and a report. */
 export function readDocumentTree(bytes: DocumentBytes, limits?: Limits): DocumentTree;
+
+/** What to produce from one render. */
+export interface RenderOptions {
+  /** Write the PDF. Default true. */
+  pdf?: boolean;
+  /** A PNG of the first page this many pixels wide, at most 2,000. */
+  thumbnailWidth?: number;
+  /** A PNG of each of the first `maxPages` pages, at `pixelsPerPoint` (at most 8). */
+  pageImages?: { pixelsPerPoint: number; maxPages: number };
+  /**
+   * Reading limits; the defaults are those of `Limits` except `maxTextChars`, 200,000, so a
+   * render stays within a request.
+   */
+  limits?: Limits;
+}
+
+export interface Rendered {
+  format: DocumentFormat;
+  /**
+   * `layout`: the document's own structure and page (docx, spreadsheets); `text`: its text on
+   * A4, for the formats with no layout reader yet (pptx, odt, odp, doc, ppt).
+   */
+  fidelity: 'layout' | 'text';
+  pageCount: number;
+  /** Whether the document held more than the limits let through. */
+  truncated: boolean;
+  pdf: Uint8Array | null;
+  /** PNG. */
+  thumbnail: Uint8Array | null;
+  /** PNG, one per page. */
+  pageImages: Uint8Array[];
+}
+
+/**
+ * A document (docx, xlsx, xls, ods, csv, tsv, pptx, odt, odp, doc, ppt) typeset through Typst
+ * with the fonts of the package, to PDF and PNG. The typesetter loads on the first call.
+ */
+export function render(bytes: DocumentBytes, fileName?: string, options?: RenderOptions): Rendered;
 
 /** The version of the library inside the package. */
 export const version: string;

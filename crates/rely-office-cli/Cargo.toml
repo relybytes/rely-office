@@ -1,6 +1,6 @@
 [package]
 name = "rely-office-cli"
-description = "Command line front of rely-office: detect a document's format, extract its text, print its sheets."
+description = "Command line front of rely-office: detect a document's format, extract its text, print its sheets, render it to PDF and PNG."
 readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
@@ -21,3 +21,4 @@ path = "src/main.rs"
 
 [dependencies]
 rely-office-core = { path = "../rely-office-core", version = "0.2.0" }
+rely-office-render = { path = "../rely-office-render", version = "0.2.0" }

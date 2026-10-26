@@ -8,8 +8,11 @@
 
 use std::collections::HashMap;
 
+use super::look::{ParagraphLook, RunLook, TableLook};
 use super::numbering::Numbering;
-use super::styles::{ParagraphRole, RunFormat, Styles, numbering_reference, on_off, outline_level};
+use super::styles::{
+    ParagraphRole, RunFormat, Styles, alignment, numbering_reference, on_off, outline_level,
+};
 use super::{Block, ImportReport, Inline, Mark, Media, TableCell, TableRow, sniff_image_type};
 use crate::archive::{ZipPackage, read_member_bytes};
 use crate::relationships::Relationship;
@@ -39,7 +42,10 @@ struct OpenField {
 #[derive(Debug, Default)]
 struct ParagraphScan {
     horizontal_rule: bool,
-    page_break: bool,
+    /// A page break before the paragraph's first text.
+    page_break_before: bool,
+    /// A page break after some of the paragraph's text: the next paragraph starts the page.
+    page_break_after: bool,
 }
 
 pub(super) struct Converter<'a, 'p> {
@@ -56,6 +62,8 @@ pub(super) struct Converter<'a, 'p> {
     fields: Vec<OpenField>,
     /// How many `w:hyperlink` elements enclose the current run, a dropped link's included.
     hyperlink_depth: usize,
+    /// A page break the next paragraph starts with.
+    pending_page_break: bool,
 }
 
 impl<'a, 'p> Converter<'a, 'p> {
@@ -83,6 +91,7 @@ impl<'a, 'p> Converter<'a, 'p> {
             remaining_chars: limits.max_text_chars,
             fields: Vec::new(),
             hyperlink_depth: 0,
+            pending_page_break: false,
         }
     }
 
@@ -142,6 +151,18 @@ impl<'a, 'p> Converter<'a, 'p> {
         let style = self.styles.paragraph_style(style_id);
         let outline = properties.and_then(outline_level).or(style.outline_level);
         let numbering = properties.and_then(numbering_reference).or(style.numbering);
+        let align = properties.and_then(alignment).or(style.alignment);
+        let list_look = numbering
+            .map(|reference| {
+                self.numbering
+                    .level_look(reference.num_id, reference.level.unwrap_or(0))
+            })
+            .unwrap_or_default();
+        let mut look = properties
+            .map(ParagraphLook::parse)
+            .unwrap_or_default()
+            .or(list_look)
+            .or(self.styles.paragraph_look(style_id));
 
         let mut scan = ParagraphScan::default();
         let mut content = Vec::new();
@@ -159,9 +180,13 @@ impl<'a, 'p> Converter<'a, 'p> {
             blocks.push(Block::HorizontalRule);
             return;
         }
-        if blank && scan.page_break {
+        if blank && (scan.page_break_before || scan.page_break_after) {
+            self.pending_page_break = true;
             return;
         }
+        look.page_break_before |=
+            std::mem::take(&mut self.pending_page_break) || scan.page_break_before;
+        self.pending_page_break = scan.page_break_after;
 
         let block = match style.role {
             ParagraphRole::Code => Block::CodeBlock {
@@ -170,6 +195,8 @@ impl<'a, 'p> Converter<'a, 'p> {
             ParagraphRole::Heading(level) => Block::Heading {
                 level: level.min(MAX_HEADING_LEVEL),
                 content,
+                align,
+                look,
             },
             _ if outline.is_some() => Block::Heading {
                 level: outline
@@ -177,6 +204,8 @@ impl<'a, 'p> Converter<'a, 'p> {
                     .saturating_add(1)
                     .min(MAX_HEADING_LEVEL),
                 content,
+                align,
+                look,
             },
             role => {
                 let list = numbering.and_then(|reference| {
@@ -191,11 +220,20 @@ impl<'a, 'p> Converter<'a, 'p> {
                         level,
                         list_id,
                         content,
+                        look,
                     },
                     (None, ParagraphRole::Quote) => Block::Blockquote {
-                        blocks: vec![Block::Paragraph { content }],
+                        blocks: vec![Block::Paragraph {
+                            content,
+                            align,
+                            look,
+                        }],
                     },
-                    (None, _) => Block::Paragraph { content },
+                    (None, _) => Block::Paragraph {
+                        content,
+                        align,
+                        look,
+                    },
                 }
             }
         };
@@ -260,13 +298,15 @@ impl<'a, 'p> Converter<'a, 'p> {
             self.report.hidden_runs += 1;
             return;
         }
-        self.append_run_content(run, format, link, content, scan);
+        let look = self.run_look(run.child(W, "rPr"));
+        self.append_run_content(run, format, &look, link, content, scan);
     }
 
     fn append_run_content(
         &mut self,
         container: &Element,
         format: RunFormat,
+        look: &RunLook,
         link: Option<&str>,
         content: &mut Vec<Inline>,
         scan: &mut ParagraphScan,
@@ -283,11 +323,14 @@ impl<'a, 'p> Converter<'a, 'p> {
                     }
                 }
                 _ if self.in_field_code() => {}
-                (W, "t") => self.push_text(content, &element.text(), format, link),
-                (W, "tab" | "ptab") => self.push_text(content, "\t", format, link),
-                (W, "noBreakHyphen") => self.push_text(content, "-", format, link),
+                (W, "t") => self.push_text(content, &element.text(), format, look, link),
+                (W, "tab" | "ptab") => self.push_text(content, "\t", format, look, link),
+                (W, "noBreakHyphen") => self.push_text(content, "-", format, look, link),
                 (W, "br") => match element.attribute(W, "type") {
-                    Some("page" | "column") => scan.page_break = true,
+                    Some("page" | "column") if content.is_empty() => {
+                        scan.page_break_before = true;
+                    }
+                    Some("page" | "column") => scan.page_break_after = true,
                     _ => content.push(Inline::HardBreak),
                 },
                 (W, "cr") => content.push(Inline::HardBreak),
@@ -299,7 +342,7 @@ impl<'a, 'p> Converter<'a, 'p> {
                 (W, "object") => self.report.embedded_objects += 1,
                 (MC, "AlternateContent") => {
                     if let Some(choice) = alternate_choice(element) {
-                        self.append_run_content(choice, format, link, content, scan);
+                        self.append_run_content(choice, format, look, link, content, scan);
                     }
                 }
                 _ => {}
@@ -320,11 +363,30 @@ impl<'a, 'p> Converter<'a, 'p> {
         style.overridden_by(RunFormat::parse(properties))
     }
 
+    /// A run's font: its own properties over its character style.
+    fn run_look(&self, properties: Option<&Element>) -> RunLook {
+        let Some(properties) = properties else {
+            return RunLook::default();
+        };
+        let style = properties
+            .child(W, "rStyle")
+            .and_then(|style| style.attribute(W, "val"))
+            .map(|style_id| self.styles.character_look(style_id))
+            .unwrap_or_default();
+        // Bold and italic are marks of the run already.
+        RunLook {
+            bold: None,
+            italic: None,
+            ..RunLook::parse(properties).or(style)
+        }
+    }
+
     fn push_text(
         &mut self,
         content: &mut Vec<Inline>,
         text: &str,
         format: RunFormat,
+        look: &RunLook,
         link: Option<&str>,
     ) {
         if text.is_empty() {
@@ -346,13 +408,19 @@ impl<'a, 'p> Converter<'a, 'p> {
         if let Some(Inline::Text {
             text: previous,
             marks: previous_marks,
+            look: previous_look,
         }) = content.last_mut()
             && *previous_marks == marks
+            && previous_look == look
         {
             previous.push_str(&taken);
             return;
         }
-        content.push(Inline::Text { text: taken, marks });
+        content.push(Inline::Text {
+            text: taken,
+            marks,
+            look: look.clone(),
+        });
     }
 
     fn field_character(&mut self, element: &Element) {
@@ -687,7 +755,10 @@ impl<'a, 'p> Converter<'a, 'p> {
             rows.push(TableRow { header, cells });
         }
 
-        Block::Table { rows }
+        Block::Table {
+            rows,
+            look: TableLook::parse(table),
+        }
     }
 }
 

@@ -1,0 +1,46 @@
+[package]
+name = "rely-office-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MPL-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rely-office-core = { path = "../crates/rely-office-core" }
+rely-office-render = { path = "../crates/rely-office-render" }
+
+# A workspace of its own: cargo-fuzz builds on nightly with sanitizers, the library on stable.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "extract_text"
+path = "fuzz_targets/extract_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "read_workbook"
+path = "fuzz_targets/read_workbook.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "read_document_tree"
+path = "fuzz_targets/read_document_tree.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "render"
+path = "fuzz_targets/render.rs"
+test = false
+doc = false
+bench = false

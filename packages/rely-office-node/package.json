@@ -1,7 +1,7 @@
 {
   "name": "@relybytes/rely-office",
   "version": "0.2.0",
-  "description": "Reads office documents in Node through WebAssembly: format detection, text for search, sheet tables and a docx document tree for rich-text import.",
+  "description": "Reads office documents in Node through WebAssembly: format detection, text for search, sheet tables, a docx document tree for rich-text import, and PDF and PNG rendering through Typst.",
   "license": "MPL-2.0",
   "author": "RelyBytes Consulting (https://relybytes.com)",
   "homepage": "https://github.com/relybytes/rely-office#readme",
@@ -19,7 +19,9 @@
     "pptx",
     "office",
     "text-extraction",
-    "webassembly"
+    "webassembly",
+    "pdf",
+    "typst"
   ],
   "type": "commonjs",
   "main": "index.js",
@@ -37,6 +39,11 @@
     "wasm/rely_office_wasm.js",
     "wasm/rely_office_wasm.d.ts",
     "wasm/rely_office_wasm_bg.wasm",
+    "wasm/rely_office_render_wasm.js",
+    "wasm/rely_office_render_wasm.d.ts",
+    "wasm/rely_office_render_wasm_bg.wasm",
+    "fonts/*.ttf",
+    "fonts/OFL-*.txt",
     "README.md",
     "LICENSE",
     "NOTICE"

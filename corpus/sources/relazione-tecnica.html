@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8"><title>Relazione tecnica</title></head>
+<body>
+<h1>Relazione tecnica sulla migrazione dei sistemi</h1>
+<p><i>Documento ad uso interno, versione 1.3 del 2 ottobre 2026</i></p>
+<h2>1. Premessa</h2>
+<p style="text-align:justify">La presente relazione descrive l'attuale configurazione dei sistemi informativi dell'azienda, le criticità emerse nel corso dell'ultimo anno e il piano di migrazione verso un'infrastruttura in cloud con sede nell'Unione europea. Il documento è destinato alla direzione e ai responsabili dei reparti coinvolti.</p>
+<p style="text-align:justify">Le valutazioni si basano sull'inventario aggiornato a settembre 2026, sulle interviste svolte con i referenti di ciascun reparto e sui dati di monitoraggio raccolti negli ultimi dodici mesi. Dove i dati non erano disponibili, le stime sono indicate come tali.</p>
+<h2>2. Situazione attuale</h2>
+<h3>2.1 Server e archiviazione</h3>
+<p style="text-align:justify">L'infrastruttura comprende quattro server fisici installati nella sala tecnica della sede di Arona, acquistati tra il 2017 e il 2019. Due di essi ospitano le macchine virtuali del gestionale e della posta, uno il file server e l'ultimo i backup. Lo spazio di archiviazione complessivo è di dodici terabyte, occupato al settantotto per cento.</p>
+<h3>2.2 Rete e connettività</h3>
+<p style="text-align:justify">La sede è collegata con una linea in fibra da un gigabit e una linea di riserva in tecnologia radio. Le due filiali di Novara e Verbania accedono ai sistemi centrali attraverso una rete privata virtuale, con prestazioni giudicate insufficienti nelle ore di maggiore utilizzo.</p>
+<h3>2.3 Criticità rilevate</h3>
+<ul>
+<li>I server hanno superato il periodo di garanzia e due dischi sono stati sostituiti nel corso dell'anno.</li>
+<li>Il sistema di backup non prevede una copia fuori sede.</li>
+<li>Gli aggiornamenti di sicurezza del sistema operativo del file server sono fermi da otto mesi.</li>
+<li>Non esiste una procedura scritta di ripristino in caso di guasto della sala tecnica.</li>
+</ul>
+<h2>3. Obiettivi</h2>
+<ol>
+<li>Eliminare i punti singoli di guasto dell'infrastruttura.</li>
+<li>Garantire una copia dei dati in una seconda sede, a non meno di cento chilometri.</li>
+<li>Ridurre i tempi di ripristino a meno di quattro ore per i servizi critici.</li>
+<li>Migliorare l'accesso delle filiali ai sistemi centrali.</li>
+</ol>
+<h2>4. Soluzione proposta</h2>
+<p style="text-align:justify">Si propone di trasferire le macchine virtuali del gestionale e della posta su un fornitore di servizi cloud con centri di elaborazione in Italia e in Germania, mantenendo in sede soltanto il file server per i documenti di grandi dimensioni dell'ufficio tecnico, sincronizzato ogni notte con lo spazio di archiviazione in cloud.</p>
+<p style="text-align:justify">La migrazione avverrà in tre fasi, ciascuna seguita da un periodo di osservazione di due settimane. In ogni fase i sistemi attuali resteranno disponibili fino al collaudo positivo dei nuovi, in modo da poter tornare indietro senza perdita di dati.</p>
+<table border="1" style="border-collapse:collapse;width:100%">
+<tr><th>Fase</th><th>Attività</th><th>Durata</th><th>Fermo previsto</th></tr>
+<tr><td>1</td><td>Posta elettronica e calendari</td><td>3 settimane</td><td>Nessuno</td></tr>
+<tr><td>2</td><td>Gestionale e database</td><td>5 settimane</td><td>Un fine settimana</td></tr>
+<tr><td>3</td><td>Sincronizzazione file server e backup fuori sede</td><td>2 settimane</td><td>Nessuno</td></tr>
+</table>
+<h2>5. Costi stimati</h2>
+<p style="text-align:justify">Il costo una tantum della migrazione è stimato in euro 28.000, comprensivo delle attività di analisi, configurazione, trasferimento dei dati e formazione del personale. Il canone annuo dei servizi in cloud è stimato in euro 14.400, a fronte di un costo attuale di manutenzione e rinnovo dell'hardware valutato in euro 19.000 l'anno sui prossimi cinque anni.</p>
+<h2>6. Rischi</h2>
+<p style="text-align:justify">Il rischio principale riguarda la compatibilità della versione attuale del gestionale con l'ambiente di destinazione: il produttore ha confermato il supporto, ma richiede un aggiornamento preliminare che sarà svolto nella prima fase. Un secondo rischio riguarda la banda delle filiali, che sarà verificata con una prova di carico prima della fase due.</p>
+<h2>7. Conclusioni</h2>
+<p style="text-align:justify">La migrazione proposta risolve le criticità rilevate, riduce i costi complessivi nel medio periodo e porta i tempi di ripristino entro gli obiettivi. Si chiede alla direzione di approvare il piano entro il 31 ottobre 2026, così da avviare la prima fase entro la fine dell'anno.</p>
+</body></html>

@@ -5,9 +5,9 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
-// Build the npm package @relybytes/rely-office: compile rely-office-wasm for
-// wasm32-unknown-unknown, generate the Node bindings with wasm-bindgen, copy the licence files
-// and pack the package into dist/.
+// Build the npm package @relybytes/rely-office: compile rely-office-wasm (reading) and
+// rely-office-render-wasm (rendering) for wasm32-unknown-unknown, generate the Node bindings with
+// wasm-bindgen, copy the licence files and the fonts, and pack the package into dist/.
 //
 // Usage: node scripts/build-npm.mjs [--no-pack | --print-bindgen-version]
 // Needs cargo with the wasm32-unknown-unknown target, and wasm-bindgen-cli at exactly the
@@ -86,10 +86,15 @@ if (installedBindgen !== `wasm-bindgen ${expectedBindgen}`) {
   );
 }
 
+// Two modules, so a process that only reads documents never loads the typesetter.
+const modules = ['rely_office_wasm', 'rely_office_render_wasm'];
+
 run(cargo, [
   'build',
   '--package',
   'rely-office-wasm',
+  '--package',
+  'rely-office-render-wasm',
   '--target',
   'wasm32-unknown-unknown',
   '--profile',
@@ -98,22 +103,33 @@ run(cargo, [
 ]);
 
 rmSync(bindingsDirectory, { recursive: true, force: true });
-run(wasmBindgen, [
-  '--target',
-  'nodejs',
-  '--out-dir',
-  bindingsDirectory,
-  '--out-name',
-  'rely_office_wasm',
-  join(root, 'target', 'wasm32-unknown-unknown', 'wasm-release', 'rely_office_wasm.wasm'),
-]);
+for (const module of modules) {
+  run(wasmBindgen, [
+    '--target',
+    'nodejs',
+    '--out-dir',
+    bindingsDirectory,
+    '--out-name',
+    module,
+    join(root, 'target', 'wasm32-unknown-unknown', 'wasm-release', `${module}.wasm`),
+  ]);
+}
 
 for (const file of ['LICENSE', 'NOTICE']) {
   copyFileSync(join(root, file), join(packageDirectory, file));
 }
 
-const wasmSize = statSync(join(bindingsDirectory, 'rely_office_wasm_bg.wasm')).size;
-console.log(`wasm module: ${(wasmSize / 1024).toFixed(0)} KiB`);
+const fontsDirectory = join(packageDirectory, 'fonts');
+rmSync(fontsDirectory, { recursive: true, force: true });
+mkdirSync(fontsDirectory, { recursive: true });
+for (const font of readdirSync(join(root, 'fonts'))) {
+  copyFileSync(join(root, 'fonts', font), join(fontsDirectory, font));
+}
+
+for (const module of modules) {
+  const size = statSync(join(bindingsDirectory, `${module}_bg.wasm`)).size;
+  console.log(`wasm module ${module}: ${(size / 1024).toFixed(0)} KiB`);
+}
 
 if (pack) {
   mkdirSync(distDirectory, { recursive: true });
