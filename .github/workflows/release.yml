@@ -1,11 +1,13 @@
 name: Release
 
 # A tag v<version> publishes @relybytes/rely-office at that version to GitHub Packages. The tag must
-# match the version of packages/rely-office-node/package.json and of the Cargo workspace.
+# match the version of packages/rely-office-node/package.json and of the Cargo workspace. A manual
+# run publishes the version on the branch it runs from.
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -28,6 +30,7 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: '@relybytes'
       - name: Check that the tag matches the package version
+        if: github.ref_type == 'tag'
         run: |
           version=$(node -p "require('./packages/rely-office-node/package.json').version")
           if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
@@ -43,4 +46,4 @@ jobs:
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm publish dist/*.tgz
+        run: npm publish ./dist/*.tgz
