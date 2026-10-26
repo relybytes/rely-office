@@ -104,10 +104,10 @@ match the `wasm-bindgen` crate exactly, which is why the crate is pinned with `=
 the module would abort the instance, so the same rule as everywhere holds: malformed input is an
 error, never a panic.
 
-The npm package is published by `.github/workflows/release.yml` on a `v*` tag that matches its
-version, with npm provenance; without the `NPM_TOKEN` secret the workflow skips the publish with a
-warning. Until it is published, the Rely Platform vendors the tarball that the build leaves in
-`dist/`.
+The npm package is published to GitHub Packages by `.github/workflows/release.yml` on a `v*` tag
+that matches its version, with the workflow's own `GITHUB_TOKEN`, so no secret is needed. GitHub
+Packages has no npm provenance and asks for a token even to install; the public npm registry is
+tracked in the issues.
 
 ## Licence and attribution
 

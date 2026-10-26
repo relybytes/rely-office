@@ -10,11 +10,20 @@ program to call. Every read is bounded by limits, so an uploaded file cannot exh
 
 ## Install
 
+The package is published to GitHub Packages, which asks for a token even to install a public
+package. Point the `@relybytes` scope at it and give it a token with `read:packages`:
+
+```ini
+# .npmrc
+@relybytes:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NPM_GITHUB_TOKEN}
+```
+
 ```sh
 npm install @relybytes/rely-office
 ```
 
-Node 18 or later.
+Node 18 or later. Publishing to the public npm registry is tracked in the issues.
 
 ## Use
 
