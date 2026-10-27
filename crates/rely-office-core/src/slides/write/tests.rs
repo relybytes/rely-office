@@ -228,7 +228,7 @@ fn presentation() -> Presentation {
                 bytes: PNG.to_vec(),
             },
             Media {
-                content_type: "image/emf",
+                content_type: "application/octet-stream",
                 bytes: vec![1, 2, 3],
             },
         ],
@@ -453,7 +453,7 @@ fn writes_gradients_and_pictures_that_read_back_as_they_were() {
                 bytes: png,
             },
             Media {
-                content_type: "image/emf",
+                content_type: "application/octet-stream",
                 bytes: vec![1, 2, 3],
             },
         ],

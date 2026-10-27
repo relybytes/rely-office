@@ -29,8 +29,8 @@ mod slides;
 mod world;
 
 use rely_office_core::{
-    DocumentFormat, Limits, NumberLocale, OfficeError, detect_format, extract_text,
-    read_document_tree, read_presentation, read_workbook_in,
+    DocumentFormat, Limits, Media, NumberLocale, OfficeError, convert_metafile_to_svg,
+    detect_format, extract_text, read_document_tree, read_presentation, read_workbook_in,
 };
 use typst::LibraryExt;
 use typst::diag::SourceDiagnostic;
@@ -163,12 +163,13 @@ fn source_with(
     let format = detect_format(bytes, file_name);
     match format {
         DocumentFormat::Docx | DocumentFormat::Odt | DocumentFormat::Doc => {
-            let tree = match read_document_tree(bytes, limits) {
+            let mut tree = match read_document_tree(bytes, limits) {
                 Err(OfficeError::UnreadableDocument(_)) if format == DocumentFormat::Doc => {
                     return text_only(bytes, file_name, limits, format);
                 }
                 read => read?,
             };
+            draw_metafiles(&mut tree.media);
             let truncated = tree.report.truncated;
             let (source, files) = docx::document_source(&tree, with_images, lines);
             Ok(TypstSource {
@@ -185,7 +186,17 @@ fn source_with(
         | DocumentFormat::Csv
         | DocumentFormat::Tsv => {
             // Sheets show their numbers and dates in Italian, the language the pages are set in.
-            let workbook = read_workbook_in(bytes, file_name, limits, NumberLocale::Italian)?;
+            let mut workbook = read_workbook_in(bytes, file_name, limits, NumberLocale::Italian)?;
+            for drawing in workbook
+                .sheets
+                .iter_mut()
+                .flat_map(|sheet| sheet.layout.drawings.iter_mut())
+            {
+                if let Some(svg) = metafile_svg(drawing.content_type, &drawing.bytes) {
+                    drawing.content_type = "image/svg+xml";
+                    drawing.bytes = svg;
+                }
+            }
             let (source, files) = sheet::workbook_source(&workbook, with_images);
             let truncated = workbook.sheets.iter().any(|sheet| {
                 sheet.total_rows > sheet.rows.len()
@@ -200,12 +211,13 @@ fn source_with(
             })
         }
         DocumentFormat::Pptx | DocumentFormat::Odp | DocumentFormat::Ppt => {
-            let presentation = match read_presentation(bytes, limits) {
+            let mut presentation = match read_presentation(bytes, limits) {
                 Err(OfficeError::UnreadableDocument(_)) if format == DocumentFormat::Ppt => {
                     return text_only(bytes, file_name, limits, format);
                 }
                 read => read?,
             };
+            draw_metafiles(&mut presentation.media);
             let truncated = presentation.truncated;
             let (source, files) = slides::presentation_source(&presentation, with_images, lines);
             Ok(TypstSource {
@@ -218,6 +230,23 @@ fn source_with(
         }
         DocumentFormat::Unknown => Err(RenderError::UnsupportedFormat(format)),
     }
+}
+
+/// Turn the EMF and WMF pictures of a document into SVG, which Typst draws.
+fn draw_metafiles(media: &mut [Media]) {
+    for item in media {
+        if let Some(svg) = metafile_svg(item.content_type, &item.bytes) {
+            item.content_type = "image/svg+xml";
+            item.bytes = svg;
+        }
+    }
+}
+
+/// A metafile's SVG; `None` for any other picture, or a metafile that draws nothing.
+fn metafile_svg(content_type: &str, bytes: &[u8]) -> Option<Vec<u8>> {
+    matches!(content_type, "image/emf" | "image/wmf")
+        .then(|| convert_metafile_to_svg(bytes))
+        .flatten()
 }
 
 /// The text of a document whose structure cannot be read, set on A4.

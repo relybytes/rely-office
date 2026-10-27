@@ -11,13 +11,13 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use rely_office_core::{
-    Limits, detect_format, extract_text, read_document_tree, read_presentation, read_workbook,
-    write_docx, write_pptx,
+    Limits, convert_metafile_to_svg, detect_format, extract_text, read_document_tree,
+    read_presentation, read_workbook, write_docx, write_pptx,
 };
 use rely_office_render::{PageImages, RenderRequest, Renderer, render_limits};
 use rely_office_sheet::{Locale, read_spreadsheet, write_xlsx};
 
-const USAGE: &str = "usage: rely-office <detect|text|sheets|tree|rewrite|typst|pdf|png> <file>
+const USAGE: &str = "usage: rely-office <detect|text|sheets|tree|rewrite|svg|typst|pdf|png> <file>
 
   detect   print the format read from the bytes
   text     print the text a search index would store
@@ -26,6 +26,7 @@ const USAGE: &str = "usage: rely-office <detect|text|sheets|tree|rewrite|typst|p
   rewrite  write a document back from its document tree as <file>.rewritten.docx, a
            presentation from its slides as <file>.rewritten.pptx, a spreadsheet from its
            editable model as <file>.rewritten.xlsx
+  svg      write an EMF or WMF picture as <file>.svg
   typst    print the Typst source a render typesets
   pdf      write <file>.pdf next to the file
   png      write <file>-<page>.png next to the file, at 144 dpi
@@ -126,6 +127,18 @@ fn run(command: &str, path: &Path) -> Result<String, String> {
             std::fs::write(&target, written)
                 .map_err(|error| format!("{}: {error}", target.display()))?;
             Ok(format!("{}\n", target.display()))
+        }
+        "svg" => {
+            let svg = convert_metafile_to_svg(&bytes)
+                .ok_or_else(|| "not an EMF or WMF picture, or one that draws nothing".to_owned())?;
+            let target = path.with_file_name(format!("{}.svg", file_name.unwrap_or("picture")));
+            std::fs::write(&target, svg)
+                .map_err(|error| format!("{}: {error}", target.display()))?;
+            Ok(format!(
+                "{}
+",
+                target.display()
+            ))
         }
         "rewrite" => {
             let tree = read_document_tree(&bytes, &limits).map_err(|error| error.to_string())?;

@@ -1187,6 +1187,8 @@ pub(crate) fn image_extension(content_type: &str) -> Option<&'static str> {
         "image/tiff" => Some("tiff"),
         "image/webp" => Some("webp"),
         "image/svg+xml" => Some("svg"),
+        "image/emf" => Some("emf"),
+        "image/wmf" => Some("wmf"),
         _ => None,
     }
 }
@@ -1305,6 +1307,8 @@ fn content_types(header_parts: &[String]) -> String {
         ("tiff", "image/tiff"),
         ("webp", "image/webp"),
         ("svg", "image/svg+xml"),
+        ("emf", "image/x-emf"),
+        ("wmf", "image/x-wmf"),
     ] {
         let _ = write!(
             xml,

@@ -555,3 +555,39 @@ fn writes_floating_pictures_and_text_boxes_where_they_float() {
     let column = frame_of(&read.blocks[1]).unwrap();
     assert_eq!(column.anchor, above_and_below.anchor);
 }
+
+#[test]
+fn keeps_metafile_pictures_word_shows() {
+    let media = vec![
+        Media {
+            content_type: "image/emf",
+            bytes: vec![1, 0, 0, 0],
+        },
+        Media {
+            content_type: "image/wmf",
+            bytes: vec![0xD7, 0xCD, 0xC6, 0x9A],
+        },
+    ];
+    let image = |media: usize| Inline::Image {
+        media,
+        alt: None,
+        width: Some(10),
+        height: Some(10),
+        anchor: None,
+    };
+    let bytes = write_docx(&tree(
+        vec![paragraph(vec![image(0), image(1)], None)],
+        media,
+    ))
+    .unwrap();
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    assert!(archive.by_name("word/media/image1.emf").is_ok());
+    assert!(archive.by_name("word/media/image2.wmf").is_ok());
+    let mut types = String::new();
+    std::io::Read::read_to_string(
+        &mut archive.by_name("[Content_Types].xml").unwrap(),
+        &mut types,
+    )
+    .unwrap();
+    assert!(types.contains(r#"<Default Extension="emf" ContentType="image/x-emf"/>"#));
+}

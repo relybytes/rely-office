@@ -557,3 +557,40 @@ fn draws_the_pages_of_an_odp() {
         "a 4:3 page without a master"
     );
 }
+
+#[test]
+fn draws_metafile_pictures_as_svg_and_leaves_the_rest() {
+    let mut wmf: Vec<u8> = [1_u16, 9, 0x0300, 0, 0, 0, 0, 0, 0]
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect();
+    for (function, parameters) in [(0x041B_u16, vec![5_i16, 5, 0, 0]), (0, Vec::new())] {
+        let size = u32::try_from(3 + parameters.len()).unwrap();
+        wmf.extend_from_slice(&size.to_le_bytes());
+        wmf.extend_from_slice(&function.to_le_bytes());
+        wmf.extend(parameters.iter().flat_map(|word| word.to_le_bytes()));
+    }
+    let mut media = vec![
+        Media {
+            content_type: "image/wmf",
+            bytes: wmf,
+        },
+        Media {
+            content_type: "image/emf",
+            bytes: vec![1, 2, 3],
+        },
+        Media {
+            content_type: "image/png",
+            bytes: vec![1],
+        },
+    ];
+    draw_metafiles(&mut media);
+    assert_eq!(media[0].content_type, "image/svg+xml");
+    assert!(media[0].bytes.starts_with(b"<svg"));
+    assert_eq!(
+        media[1].content_type, "image/emf",
+        "a metafile that draws nothing stays"
+    );
+    assert_eq!(media[2].bytes, vec![1]);
+    assert_eq!(metafile_svg("image/png", b"x"), None);
+}

@@ -186,6 +186,8 @@ fn content_types(slides: usize) -> String {
         ("tiff", "image/tiff"),
         ("webp", "image/webp"),
         ("svg", "image/svg+xml"),
+        ("emf", "image/x-emf"),
+        ("wmf", "image/x-wmf"),
     ] {
         let _ = write!(
             xml,

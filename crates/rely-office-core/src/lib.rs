@@ -25,6 +25,7 @@ mod error;
 mod format;
 mod geometry;
 mod limits;
+mod metafile;
 mod number_format;
 mod office_art;
 mod opendocument;
@@ -56,6 +57,7 @@ pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};
 pub use geometry::{FillShade, PathCommand, PathPoint, ShapePath};
 pub use limits::Limits;
+pub use metafile::convert_metafile_to_svg;
 pub use number_format::{
     FormattedNumber, NumberLocale, builtin_format_code, format_number, format_text, general_number,
     is_date_code,
