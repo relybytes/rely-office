@@ -22,7 +22,7 @@ use super::{
     TrackedChanges, sniff_image_type,
 };
 use crate::archive::{ZipPackage, read_member_bytes, read_text_member};
-use crate::chart::{chart_picture, no_cells};
+use crate::chart::{chart_picture, chart_reference, no_cells};
 use crate::relationships::Relationship;
 use crate::theme::Theme;
 use crate::theme::colour_in;
@@ -1036,7 +1036,7 @@ impl<'a, 'p> Converter<'a, 'p> {
                 return;
             };
             let Some(index) = graphic_data
-                .and_then(|data| data.descendant(Namespace::Chart, "chart"))
+                .and_then(chart_reference)
                 .and_then(|chart| chart.attribute(Namespace::Relationships, "id"))
                 .and_then(|id| self.chart(id, width, height))
             else {

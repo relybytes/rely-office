@@ -7,8 +7,11 @@
 //! A chart drawn as SVG, in points, with the look of Office's default chart style: grey labels,
 //! light gridlines, the series in their colours.
 
+mod extended;
+
 use std::fmt::Write;
 
+pub(crate) use self::extended::extended_svg;
 use super::{Chart, Grouping, LegendPosition, Plot, PlotKind, Series, ValueAxis};
 use crate::number_format::format_number;
 
@@ -131,6 +134,8 @@ pub(crate) fn chart_svg(chart: &Chart, width: f64, height: f64) -> String {
     }
     if pies {
         pie(&mut svg, chart, &chart.plots[0], area);
+    } else if is_surface(chart) {
+        surface(&mut svg, chart, area);
     } else if chart
         .plots
         .iter()
@@ -152,6 +157,9 @@ pub(crate) fn chart_svg(chart: &Chart, width: f64, height: f64) -> String {
 
 /// The entries of the legend: a pie names its points, every other chart its series.
 fn legend_entries(chart: &Chart, pies: bool) -> Vec<(String, String)> {
+    if is_surface(chart) {
+        return surface_scale(chart).map_or_else(Vec::new, |scale| surface_bands(chart, scale));
+    }
     if pies {
         let plot = &chart.plots[0];
         let Some(series) = plot.series.first() else {
@@ -182,12 +190,24 @@ fn legend(
     area: Area,
 ) -> Area {
     let entries = legend_entries(chart, pies);
+    legend_layout(svg, &entries, chart.label_size, position, area)
+}
+
+/// A legend of `entries`, label and colour, placed at a side of `area`; what remains of the area
+/// beside it.
+fn legend_layout(
+    svg: &mut String,
+    entries: &[(String, String)],
+    label_size: f64,
+    position: LegendPosition,
+    area: Area,
+) -> Area {
     if entries.is_empty() {
         return area;
     }
-    let row = chart.label_size * 1.7;
-    let swatch = chart.label_size * 0.8;
-    let entry_width = |label: &str| swatch + 4.0 + text_width(label, chart.label_size);
+    let row = label_size * 1.7;
+    let swatch = label_size * 0.8;
+    let entry_width = |label: &str| swatch + 4.0 + text_width(label, label_size);
     match position {
         LegendPosition::Right | LegendPosition::Left => {
             let widest = entries
@@ -209,7 +229,7 @@ fn legend(
                     x,
                     y + row / 2.0,
                     swatch,
-                    chart.label_size,
+                    label_size,
                     label,
                     colour,
                     widest,
@@ -230,7 +250,7 @@ fn legend(
         LegendPosition::Top | LegendPosition::Bottom => {
             let mut lines: Vec<Vec<(&str, &str, f64)>> = vec![Vec::new()];
             let mut line_width = 0.0;
-            for (label, colour) in &entries {
+            for (label, colour) in entries {
                 let width = entry_width(label).min(area.width) + PAD * 2.0;
                 if line_width + width > area.width && !lines.last().is_none_or(Vec::is_empty) {
                     lines.push(Vec::new());
@@ -258,7 +278,7 @@ fn legend(
                         x,
                         y,
                         swatch,
-                        chart.label_size,
+                        label_size,
                         label,
                         colour,
                         width - PAD * 2.0,
@@ -591,6 +611,7 @@ fn categories(svg: &mut String, chart: &Chart, area: Area) {
                     | PlotKind::Scatter
                     | PlotKind::Bubble
                     | PlotKind::Radar { .. }
+                    | PlotKind::Surface
             )
         })
         .collect();
@@ -1074,7 +1095,8 @@ fn categories(svg: &mut String, chart: &Chart, area: Area) {
             | PlotKind::Doughnut { .. }
             | PlotKind::Scatter
             | PlotKind::Bubble
-            | PlotKind::Radar { .. } => {}
+            | PlotKind::Radar { .. }
+            | PlotKind::Surface => {}
         }
     }
 
@@ -1556,6 +1578,184 @@ fn radar_axes(
             size * 0.35
         };
         text(svg, x, y + below, size, anchor, &fit(label, widest, size));
+    }
+}
+
+/// The colours of a surface's bands, Office's accents in order.
+const BANDS: [&str; 6] = ["4472C4", "ED7D31", "A5A5A5", "FFC000", "5B9BD5", "70AD47"];
+/// How finely each cell of a surface's grid is shaded between its corners.
+const SURFACE_STEPS: usize = 6;
+
+fn is_surface(chart: &Chart) -> bool {
+    !chart.plots.is_empty()
+        && chart
+            .plots
+            .iter()
+            .all(|plot| plot.kind == PlotKind::Surface)
+}
+
+/// The scale a surface's bands follow, over every value of its grid.
+fn surface_scale(chart: &Chart) -> Option<Scale> {
+    let values = chart
+        .plots
+        .iter()
+        .flat_map(|plot| plot.series.iter())
+        .flat_map(|series| series.values.iter().flatten().copied());
+    let (low, high) = values.fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), value| {
+        (low.min(value), high.max(value))
+    });
+    (low.is_finite() && high.is_finite()).then(|| scale_of(low, high, &chart.primary, false))
+}
+
+/// The band of each tick interval of the scale, labelled `from-to`, in its colour.
+fn surface_bands(chart: &Chart, scale: Scale) -> Vec<(String, String)> {
+    let code = chart.primary.format_code.as_deref();
+    let ticks = scale.ticks();
+    ticks
+        .windows(2)
+        .enumerate()
+        .map(|(index, pair)| {
+            (
+                format!(
+                    "{}-{}",
+                    format_value(chart, code, pair[0]),
+                    format_value(chart, code, pair[1])
+                ),
+                BANDS[index % BANDS.len()].to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// A surface seen from above: each cell of the grid shaded by the band its value falls in,
+/// blended between the cell's corners, the categories under it and the series at its left.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the grid, its shading and its labels are laid out together"
+)]
+fn surface(svg: &mut String, chart: &Chart, area: Area) {
+    let Some(plot) = chart.plots.first() else {
+        return;
+    };
+    let Some(scale) = surface_scale(chart) else {
+        return;
+    };
+    let rows = plot.series.len();
+    let columns = plot
+        .series
+        .iter()
+        .map(|series| series.values.len())
+        .max()
+        .unwrap_or(0);
+    if rows == 0 || columns == 0 {
+        return;
+    }
+    let size = chart.label_size;
+    let left = plot
+        .series
+        .iter()
+        .map(|series| text_width(&series.name, size))
+        .fold(0.0, f64::max)
+        .min(area.width * 0.3);
+    let grid = Area {
+        x: area.x + left + 6.0,
+        y: area.y,
+        width: (area.width - left - 6.0).max(1.0),
+        height: (area.height - size * 1.8).max(1.0),
+    };
+    let value = |row: usize, column: usize| {
+        plot.series
+            .get(row)
+            .and_then(|series| series.values.get(column).copied().flatten())
+    };
+    let band_of = |value: f64| {
+        let index = usize_of(((value - scale.minimum) / scale.step).floor());
+        BANDS[index.min(usize_of((scale.maximum - scale.minimum) / scale.step).saturating_sub(1))
+            % BANDS.len()]
+    };
+    // A grid of one row or column has no cells between points: each point is its own cell.
+    let (cells_across, cells_down) = (
+        columns.saturating_sub(1).max(1),
+        rows.saturating_sub(1).max(1),
+    );
+    let (cell_width, cell_height) = (
+        grid.width / count(cells_across),
+        grid.height / count(cells_down),
+    );
+    let step_width = cell_width / count(SURFACE_STEPS);
+    let step_height = cell_height / count(SURFACE_STEPS);
+    for row in 0..cells_down {
+        for column in 0..cells_across {
+            let corner = |down: usize, across: usize| {
+                value(
+                    (row + down).min(rows - 1),
+                    (column + across).min(columns - 1),
+                )
+            };
+            let (Some(near_left), Some(near_right), Some(far_left), Some(far_right)) =
+                (corner(0, 0), corner(0, 1), corner(1, 0), corner(1, 1))
+            else {
+                continue;
+            };
+            for down in 0..SURFACE_STEPS {
+                for across in 0..SURFACE_STEPS {
+                    let (across_share, down_share) = (
+                        (count(across) + 0.5) / count(SURFACE_STEPS),
+                        (count(down) + 0.5) / count(SURFACE_STEPS),
+                    );
+                    let shade = near_left * (1.0 - across_share) * (1.0 - down_share)
+                        + near_right * across_share * (1.0 - down_share)
+                        + far_left * (1.0 - across_share) * down_share
+                        + far_right * across_share * down_share;
+                    // The first series is the front row, drawn at the bottom.
+                    let top =
+                        grid.bottom() - cell_height * count(row) - step_height * count(down + 1);
+                    let _ = write!(
+                        svg,
+                        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"#{}\"/>",
+                        number(grid.x + cell_width * count(column) + step_width * count(across)),
+                        number(top),
+                        number(step_width + 0.3),
+                        number(step_height + 0.3),
+                        band_of(shade)
+                    );
+                }
+            }
+        }
+    }
+    let across = |column: usize| {
+        if columns == 1 {
+            grid.x + grid.width / 2.0
+        } else {
+            grid.x + cell_width * count(column)
+        }
+    };
+    let down = |row: usize| {
+        if rows == 1 {
+            grid.bottom() - grid.height / 2.0
+        } else {
+            grid.bottom() - cell_height * count(row)
+        }
+    };
+    for (column, label) in plot.categories.iter().enumerate().take(columns) {
+        text(
+            svg,
+            across(column),
+            grid.bottom() + size * 1.3,
+            size,
+            "middle",
+            &fit(label, cell_width.max(size * 3.0), size),
+        );
+    }
+    for (row, series) in plot.series.iter().enumerate() {
+        text(
+            svg,
+            grid.x - 4.0,
+            down(row) + size * 0.35,
+            size,
+            "end",
+            &fit(&series.name, left, size),
+        );
     }
 }
 

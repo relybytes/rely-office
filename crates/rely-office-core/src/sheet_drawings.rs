@@ -14,7 +14,7 @@ use std::io::Cursor;
 use calamine::{Data, Range, Reader, Sheets, open_workbook_auto_from_rs};
 
 use crate::archive::{ZipPackage, read_member_bytes, read_text_member};
-use crate::chart::{CellSource, ChartCell, chart_picture};
+use crate::chart::{CellSource, ChartCell, chart_picture, chart_reference};
 use crate::document::sniff_image_type;
 use crate::relationships::{Relationship, read_relationships};
 use crate::sheet_layout::{CellRange, SheetLayout};
@@ -424,7 +424,15 @@ pub(crate) fn sheet_drawings(
             picture_of(package, picture, &relationships, limits, budget)
         } else if let Some(chart) = anchor
             .child(XDR, "graphicFrame")
-            .and_then(|frame| frame.descendant(Namespace::Chart, "chart"))
+            .or_else(|| {
+                // A chart of the 2016 kinds stands in the first choice, a note for older
+                // readers in the fallback.
+                anchor
+                    .child(Namespace::MarkupCompatibility, "AlternateContent")?
+                    .child(Namespace::MarkupCompatibility, "Choice")?
+                    .child(XDR, "graphicFrame")
+            })
+            .and_then(chart_reference)
         {
             let frame = (width_emu, height_emu);
             chart_of(

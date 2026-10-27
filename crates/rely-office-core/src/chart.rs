@@ -8,6 +8,7 @@
 //! drawn as SVG: a chart in a docx, an xlsx or a pptx shows what the application last computed,
 //! with no workbook to evaluate.
 
+mod extended;
 mod odf;
 mod svg;
 
@@ -15,7 +16,8 @@ use crate::number_format::{NumberLocale, general_number};
 use crate::theme::{Theme, colour_in};
 use crate::xml_tree::{Element, Namespace, parse_tree};
 
-use svg::chart_svg;
+use extended::read_extended_chart;
+use svg::{chart_svg, extended_svg};
 
 const C: Namespace = Namespace::Chart;
 const A: Namespace = Namespace::Drawing;
@@ -44,6 +46,9 @@ pub(crate) enum PlotKind {
     Radar {
         filled: bool,
     },
+    /// A grid of values, the series by rows and the categories by columns, seen from above as
+    /// bands of colour.
+    Surface,
 }
 
 /// How the series of a plot share a category.
@@ -180,14 +185,29 @@ pub(crate) fn chart_picture(
     height_emu: i64,
     cells: CellSource<'_>,
 ) -> Option<(Vec<u8>, Option<String>)> {
-    let chart = read_chart(xml, theme, NumberLocale::default(), cells)?;
     #[expect(clippy::cast_precision_loss, reason = "frame sizes fit in f64")]
     let (width, height) = (
         width_emu as f64 / EMU_PER_POINT,
         height_emu as f64 / EMU_PER_POINT,
     );
+    let root = parse_tree(xml, |namespace, name| namespace == A && name == "t").ok()?;
+    if root.is(Namespace::ChartEx, "chartSpace") {
+        let chart = read_extended_chart(&root, theme, NumberLocale::default())?;
+        let svg = extended_svg(&chart, width, height);
+        return Some((svg.into_bytes(), chart.title));
+    }
+    drop(root);
+    let chart = read_chart(xml, theme, NumberLocale::default(), cells)?;
     let svg = chart_svg(&chart, width, height);
     Some((svg.into_bytes(), chart.title))
+}
+
+/// The element that names a chart part in a graphic frame: `c:chart`, or `cx:chart` for the
+/// kinds Office 2016 added.
+pub(crate) fn chart_reference(frame: &Element) -> Option<&Element> {
+    frame
+        .descendant(C, "chart")
+        .or_else(|| frame.descendant(Namespace::ChartEx, "chart"))
 }
 
 /// An `OpenDocument` chart object drawn into a frame: the SVG and the chart's title.
@@ -272,6 +292,7 @@ pub(crate) fn read_chart(
             },
             "scatterChart" => PlotKind::Scatter,
             "bubbleChart" => PlotKind::Bubble,
+            "surfaceChart" | "surface3DChart" => PlotKind::Surface,
             "radarChart" => PlotKind::Radar {
                 filled: value(plot, "radarStyle") == Some("filled"),
             },

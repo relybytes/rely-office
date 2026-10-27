@@ -20,7 +20,7 @@ use super::{
     SlideTableCell, SlideTableRow, TextAnchor, TextBody,
 };
 use crate::archive::{ZipPackage, open_package, read_member_bytes, read_text_member};
-use crate::chart::{chart_picture, no_cells};
+use crate::chart::{chart_picture, chart_reference, no_cells};
 use crate::document::{
     Alignment, Media, image_pixel_size, smart_art_drawing, smart_art_svg, sniff_image_type,
 };
@@ -592,7 +592,7 @@ impl Reader<'_, '_> {
         transform: &Transform,
     ) -> Option<SlideShape> {
         let (bounds, _, _) = frame.child(P, "xfrm").and_then(read_frame)?;
-        if let Some(chart) = frame.descendant(Namespace::Chart, "chart") {
+        if let Some(chart) = chart_reference(frame) {
             let bounds = transform.apply(bounds);
             let media = self.chart(chart.attribute(R, "id")?, relationships, context, bounds)?;
             return Some(picture_shape(bounds, media));

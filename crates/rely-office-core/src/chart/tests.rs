@@ -408,3 +408,55 @@ fn reads_the_high_low_lines_and_up_down_bars_of_a_stock_chart() {
         Some(("00FF00".to_owned(), "000000".to_owned()))
     );
 }
+
+#[test]
+fn reads_and_draws_a_surface_as_bands() {
+    let chart = read(&chart_space(
+        &format!(
+            "<c:plotArea><c:surfaceChart>{}{}</c:surfaceChart>{AXES}</c:plotArea><c:legend><c:legendPos val=\"r\"/></c:legend>",
+            series(0, "Basso", &["10", "20", "30"], ""),
+            series(1, "Alto", &["40", "", "60"], "")
+        ),
+        "",
+    ));
+    assert_eq!(chart.plots[0].kind, PlotKind::Surface);
+    let svg = svg::chart_svg(&chart, 400.0, 300.0);
+    assert!(
+        svg.contains(">0,0-100,0</text>"),
+        "a band of the axis, in its format"
+    );
+    assert!(svg.contains(">Basso</text>") && svg.contains(">Gen</text>"));
+    assert_eq!(
+        svg.matches("<rect").count(),
+        6,
+        "the background and the five bands of the legend: each cell touches the blank"
+    );
+    let one_row = read(&chart_space(
+        &format!(
+            "<c:plotArea><c:surface3DChart>{}</c:surface3DChart>{AXES}</c:plotArea>",
+            series(0, "Solo", &["1", "2", "3"], "")
+        ),
+        "",
+    ));
+    assert!(svg::chart_svg(&one_row, 300.0, 200.0).contains("<rect"));
+}
+
+#[test]
+fn draws_a_chart_of_the_2016_kinds_from_its_part() {
+    let xml = extended::tests::chart_xml(
+        r#"<cx:data id="0"><cx:numDim type="val"><cx:lvl ptCount="2"><cx:pt idx="0">4</cx:pt><cx:pt idx="1">-1</cx:pt></cx:lvl></cx:numDim></cx:data>"#,
+        r#"<cx:series layoutId="waterfall"><cx:dataId val="0"/></cx:series>"#,
+        "",
+    );
+    let (svg, title) =
+        chart_picture(&xml, &Theme::default(), 1_270_000, 635_000, &no_cells).unwrap();
+    assert_eq!(title.as_deref(), Some("Risultato"));
+    assert!(String::from_utf8(svg).unwrap().starts_with("<svg"));
+    let frame = crate::xml_tree::parse_tree(
+        r#"<f xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex"><g><cx:chart/></g></f>"#,
+        |_, _| false,
+    )
+    .unwrap();
+    assert!(chart_reference(&frame).is_some());
+    assert!(chart_picture("<c:chartSpace", &Theme::default(), 1, 1, &no_cells).is_none());
+}

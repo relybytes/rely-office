@@ -32,6 +32,8 @@ pub(crate) enum Namespace {
     Drawing,
     Presentation,
     Chart,
+    /// The charts Office 2016 added, `cx:chartSpace`: waterfall, treemap, histogram and the rest.
+    ChartEx,
     SpreadsheetDrawing,
     Picture,
     Math,
@@ -85,6 +87,7 @@ impl Namespace {
             | "http://purl.oclc.org/ooxml/drawingml/diagram" => Self::Diagram,
             "http://schemas.openxmlformats.org/presentationml/2006/main"
             | "http://purl.oclc.org/ooxml/presentationml/main" => Self::Presentation,
+            "http://schemas.microsoft.com/office/drawing/2014/chartex" => Self::ChartEx,
             "http://schemas.openxmlformats.org/drawingml/2006/chart"
             | "http://purl.oclc.org/ooxml/drawingml/chart" => Self::Chart,
             "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
