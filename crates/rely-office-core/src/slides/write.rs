@@ -12,11 +12,13 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 
 use super::{
-    Bullet, Frame, Presentation, ShapeContent, ShapeGeometry, ShapeLine, Slide, SlideParagraph,
-    SlideRun, SlideShape, SlideTable, TextAnchor, TextBody,
+    Bullet, Frame, Gradient, GradientKind, Paint, Presentation, ShapeContent, ShapeGeometry,
+    ShapeLine, Slide, SlideParagraph, SlideRun, SlideShape, SlideTable, TextAnchor, TextBody,
 };
 use crate::OfficeError;
-use crate::document::{Alignment, escape_xml as escape, image_extension, zip_members};
+use crate::document::{
+    Alignment, escape_xml as escape, image_extension, image_pixel_size, zip_members,
+};
 use crate::geometry::{FillShade, PathCommand, PathPoint, ShapePath};
 
 const PRESENTATION_NAMESPACES: &str = concat!(
@@ -214,12 +216,17 @@ struct SlideWriter<'a> {
 
 impl SlideWriter<'_> {
     fn slide(&mut self, slide: &Slide) -> String {
-        let background = slide.background.as_ref().map_or_else(String::new, |colour| {
-            format!(
-                r#"<p:bg><p:bgPr><a:solidFill><a:srgbClr val="{}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>"#,
-                escape(colour)
-            )
-        });
+        let background = match slide.background.as_ref() {
+            Some(paint) => {
+                let fill = self.fill(Some(paint));
+                if fill == "<a:noFill/>" {
+                    String::new()
+                } else {
+                    format!(r"<p:bg><p:bgPr>{fill}<a:effectLst/></p:bgPr></p:bg>")
+                }
+            }
+            None => String::new(),
+        };
         let mut shapes = String::new();
         for shape in &slide.shapes {
             self.shape(shape, &mut shapes);
@@ -241,12 +248,13 @@ impl SlideWriter<'_> {
             ShapeContent::Picture { media } => self.picture(shape, *media, id, xml),
             ShapeContent::Table(table) => table_frame(shape, table, id, xml),
             ShapeContent::Text(_) | ShapeContent::None => {
+                let fill = self.fill(shape.fill.as_ref());
                 let _ = write!(
                     xml,
                     r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="Forma {id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr>{}{}{}{}</p:spPr>"#,
                     transform(shape),
                     geometry(&shape.geometry, shape.frame),
-                    fill(shape.fill.as_deref()),
+                    fill,
                     line(
                         shape.line.as_ref(),
                         matches!(shape.geometry, ShapeGeometry::Line { .. })
@@ -262,13 +270,72 @@ impl SlideWriter<'_> {
         }
     }
 
-    fn picture(&mut self, shape: &SlideShape, media: usize, id: u32, xml: &mut String) {
+    /// The `DrawingML` fill of a paint; a picture `PowerPoint` cannot show is no fill.
+    fn fill(&mut self, paint: Option<&Paint>) -> String {
+        match paint {
+            None => "<a:noFill/>".to_owned(),
+            Some(Paint::Solid(colour)) => solid_fill(colour),
+            Some(Paint::Gradient(gradient)) => gradient_fill(gradient),
+            Some(Paint::Picture { media, tile_emu }) => {
+                let Some(relationship) = self.image_relationship(*media) else {
+                    return "<a:noFill/>".to_owned();
+                };
+                let mode = match tile_emu {
+                    Some((width, height)) => {
+                        let scale = |side: i64, pixels: Option<u32>| {
+                            pixels.map_or(100_000, |pixels| {
+                                let natural = i64::from(pixels.max(1)) * 9_525;
+                                (side.max(1) * 100_000 / natural).clamp(1, 100_000_000)
+                            })
+                        };
+                        let pixels = self
+                            .presentation
+                            .media
+                            .get(*media)
+                            .and_then(|item| image_pixel_size(&item.bytes));
+                        format!(
+                            r#"<a:tile tx="0" ty="0" sx="{}" sy="{}" flip="none" algn="tl"/>"#,
+                            scale(*width, pixels.map(|(width, _)| width)),
+                            scale(*height, pixels.map(|(_, height)| height))
+                        )
+                    }
+                    None => "<a:stretch><a:fillRect/></a:stretch>".to_owned(),
+                };
+                format!(r#"<a:blipFill><a:blip r:embed="{relationship}"/>{mode}</a:blipFill>"#)
+            }
+        }
+    }
+
+    /// The relationship of the slide to an image's part, the part written once; `None` for an
+    /// image `PowerPoint` cannot show.
+    fn image_relationship(&mut self, media: usize) -> Option<String> {
         let extension = self
             .presentation
             .media
             .get(media)
-            .and_then(|item| image_extension(item.content_type));
-        let Some(extension) = extension else {
+            .and_then(|item| image_extension(item.content_type))?;
+        let count = self.media_parts.len();
+        let part = self
+            .media_parts
+            .entry(media)
+            .or_insert_with(|| format!("media/image{}.{extension}", count + 1))
+            .clone();
+        let target = format!("../{part}");
+        if let Some((known, _, _)) = self
+            .relationships
+            .iter()
+            .find(|(_, kind, existing)| *kind == "image" && *existing == target)
+        {
+            return Some(known.clone());
+        }
+        let relationship = format!("rId{}", self.relationships.len() + 1);
+        self.relationships
+            .push((relationship.clone(), "image", target));
+        Some(relationship)
+    }
+
+    fn picture(&mut self, shape: &SlideShape, media: usize, id: u32, xml: &mut String) {
+        let Some(relationship) = self.image_relationship(media) else {
             let empty = SlideShape {
                 content: ShapeContent::None,
                 line: shape.line.clone().or(Some(ShapeLine {
@@ -281,15 +348,6 @@ impl SlideWriter<'_> {
             self.shape(&empty, xml);
             return;
         };
-        let count = self.media_parts.len();
-        let part = self
-            .media_parts
-            .entry(media)
-            .or_insert_with(|| format!("media/image{}.{extension}", count + 1))
-            .clone();
-        let relationship = format!("rId{}", self.relationships.len() + 1);
-        self.relationships
-            .push((relationship.clone(), "image", format!("../{part}")));
         let _ = write!(
             xml,
             r#"<p:pic><p:nvPicPr><p:cNvPr id="{id}" name="Immagine {id}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="{relationship}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>{}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>{}</p:spPr></p:pic>"#,
@@ -371,16 +429,50 @@ fn custom_geometry(paths: &[ShapePath], width: i64, height: i64) -> String {
     xml
 }
 
-fn fill(colour: Option<&str>) -> String {
-    colour.map_or_else(
-        || "<a:noFill/>".to_owned(),
-        |colour| {
-            format!(
-                r#"<a:solidFill><a:srgbClr val="{}"/></a:solidFill>"#,
-                escape(colour)
-            )
-        },
+fn solid_fill(colour: &str) -> String {
+    format!(
+        r#"<a:solidFill><a:srgbClr val="{}"/></a:solidFill>"#,
+        escape(colour)
     )
+}
+
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "offsets are fractions and angles a turn at most"
+)]
+fn gradient_fill(gradient: &Gradient) -> String {
+    let mut xml = String::from(r#"<a:gradFill rotWithShape="1"><a:gsLst>"#);
+    for stop in &gradient.stops {
+        let _ = write!(
+            xml,
+            r#"<a:gs pos="{}"><a:srgbClr val="{}"/></a:gs>"#,
+            (stop.offset.clamp(0.0, 1.0) * 100_000.0).round() as i64,
+            escape(&stop.colour)
+        );
+    }
+    xml.push_str("</a:gsLst>");
+    match gradient.kind {
+        GradientKind::Linear { angle } => {
+            let _ = write!(
+                xml,
+                r#"<a:lin ang="{}" scaled="0"/>"#,
+                (angle.rem_euclid(360.0) * 60_000.0).round() as i64
+            );
+        }
+        GradientKind::Radial { centre: (x, y) } => {
+            let inset = |value: f64| (value.clamp(0.0, 1.0) * 100_000.0).round() as i64;
+            let _ = write!(
+                xml,
+                r#"<a:path path="circle"><a:fillToRect l="{}" t="{}" r="{}" b="{}"/></a:path>"#,
+                inset(x),
+                inset(y),
+                inset(1.0 - x),
+                inset(1.0 - y)
+            );
+        }
+    }
+    xml.push_str("</a:gradFill>");
+    xml
 }
 
 fn line(line: Option<&ShapeLine>, is_line: bool) -> String {
@@ -510,7 +602,9 @@ fn table_frame(shape: &SlideShape, table: &SlideTable, id: u32, xml: &mut String
             let _ = write!(
                 xml,
                 "</a:txBody><a:tcPr>{}</a:tcPr></a:tc>",
-                fill(cell.fill.as_deref())
+                cell.fill
+                    .as_deref()
+                    .map_or_else(|| "<a:noFill/>".to_owned(), solid_fill)
             );
         }
         xml.push_str("</a:tr>");

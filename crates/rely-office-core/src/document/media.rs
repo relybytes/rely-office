@@ -38,6 +38,48 @@ pub fn sniff_image_type(bytes: &[u8]) -> &'static str {
     "application/octet-stream"
 }
 
+/// The width and height of a PNG, JPEG, GIF or BMP image in pixels, from its header; `None` for
+/// any other format or a header cut short.
+pub(crate) fn image_pixel_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    let be16 = |at: usize| {
+        Some(u32::from(u16::from_be_bytes(
+            bytes.get(at..at + 2)?.try_into().ok()?,
+        )))
+    };
+    let le16 = |at: usize| {
+        Some(u32::from(u16::from_le_bytes(
+            bytes.get(at..at + 2)?.try_into().ok()?,
+        )))
+    };
+    let be32 = |at: usize| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    let le32 = |at: usize| Some(i32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    let size = match sniff_image_type(bytes) {
+        "image/png" if bytes.get(12..16) == Some(b"IHDR".as_slice()) => (be32(16)?, be32(20)?),
+        "image/gif" => (le16(6)?, le16(8)?),
+        "image/bmp" => (le32(18)?.unsigned_abs(), le32(22)?.unsigned_abs()),
+        "image/jpeg" => {
+            let mut at = 2;
+            loop {
+                if *bytes.get(at)? != 0xFF {
+                    return None;
+                }
+                let marker = *bytes.get(at + 1)?;
+                if marker == 0xFF {
+                    at += 1;
+                    continue;
+                }
+                // A start-of-frame marker, but not the huffman, arithmetic or JPEG-LS ones.
+                if (0xC0..=0xCF).contains(&marker) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
+                    break (be16(at + 7)?, be16(at + 5)?);
+                }
+                at += 2 + usize::try_from(be16(at + 2)?).ok()?;
+            }
+        }
+        _ => return None,
+    };
+    (size.0 > 0 && size.1 > 0).then_some(size)
+}
+
 fn looks_like_svg(bytes: &[u8]) -> bool {
     let head = &bytes[..bytes.len().min(1024)];
     let head = String::from_utf8_lossy(head);
@@ -48,6 +90,33 @@ fn looks_like_svg(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_pixel_size_of_common_images() {
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\x01\x2C\0\0\0\xC8";
+        assert_eq!(image_pixel_size(png), Some((300, 200)));
+        assert_eq!(image_pixel_size(b"GIF89a\x0A\0\x05\0"), Some((10, 5)));
+        let mut bmp = b"BM".to_vec();
+        bmp.resize(18, 0);
+        bmp.extend_from_slice(&4_i32.to_le_bytes());
+        bmp.extend_from_slice(&(-3_i32).to_le_bytes());
+        assert_eq!(image_pixel_size(&bmp), Some((4, 3)));
+        let jpeg = [
+            0xFF, 0xD8, 0xFF, 0xE0, 0, 4, 0, 0, 0xFF, 0xFF, 0xC4, 0, 2, 0xFF, 0xC0, 0, 11, 8, 0,
+            50, 0, 80,
+        ];
+        assert_eq!(image_pixel_size(&jpeg), Some((80, 50)));
+        assert_eq!(
+            image_pixel_size(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 4, 0, 0, 0x00]),
+            None
+        );
+        assert_eq!(
+            image_pixel_size(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\0\0\0\0\x01"),
+            None
+        );
+        assert_eq!(image_pixel_size(b"RIFF\0\0\0\0WEBPVP8 "), None);
+        assert_eq!(image_pixel_size(b"GIF8"), None);
+    }
 
     #[test]
     fn sniffs_the_image_formats_documents_embed() {

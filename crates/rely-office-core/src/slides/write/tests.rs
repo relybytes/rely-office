@@ -8,7 +8,7 @@ use std::io::Read;
 
 use super::*;
 use crate::document::Media;
-use crate::slides::{SlideTableCell, SlideTableRow};
+use crate::slides::{Gradient, GradientKind, GradientStop, SlideTableCell, SlideTableRow};
 use crate::{Limits, read_presentation};
 
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\nimmagine";
@@ -64,7 +64,7 @@ fn shape(geometry: ShapeGeometry, content: ShapeContent, at: Frame) -> SlideShap
         frame: at,
         rotation: 0.0,
         geometry,
-        fill: Some("4472C4".to_owned()),
+        fill: Some(Paint::Solid("4472C4".to_owned())),
         line: Some(ShapeLine {
             colour: "1F3864".to_owned(),
             width_emu: 12_700,
@@ -155,7 +155,7 @@ fn presentation() -> Presentation {
         height_emu: 6_858_000,
         slides: vec![
             Slide {
-                background: Some("F0F0F0".to_owned()),
+                background: Some(Paint::Solid("F0F0F0".to_owned())),
                 shapes: vec![
                     text_shape,
                     line,
@@ -251,7 +251,10 @@ fn writes_slides_that_read_back_as_they_were() {
     assert_eq!((read.width_emu, read.height_emu), (12_192_000, 6_858_000));
     assert_eq!(read.slides.len(), 2);
     let first = &read.slides[0];
-    assert_eq!(first.background.as_deref(), Some("F0F0F0"));
+    assert_eq!(
+        first.background.as_ref().and_then(Paint::colour),
+        Some("F0F0F0")
+    );
     assert_eq!(
         first.shapes.len(),
         6,
@@ -356,7 +359,11 @@ fn writes_the_parts_a_pptx_needs() {
     assert!(slide.contains("<a:p><a:pPr"));
     assert!(slide.contains("a &amp; &lt;b&gt;"));
     let relationships = member(&written, "ppt/slides/_rels/slide2.xml.rels");
-    assert_eq!(relationships.matches("media/image1.png").count(), 2);
+    assert_eq!(
+        relationships.matches("media/image1.png").count(),
+        1,
+        "one relationship for an image shown twice"
+    );
     for part in [
         "_rels/.rels",
         "ppt/_rels/presentation.xml.rels",
@@ -389,4 +396,96 @@ fn writes_one_blank_slide_for_an_empty_presentation_within_the_sizes_powerpoint_
     let mut xml = String::new();
     text_body(&body(Vec::new()), &mut xml);
     assert!(xml.ends_with("<a:p/>"));
+}
+
+#[test]
+fn writes_gradients_and_pictures_that_read_back_as_they_were() {
+    let stop = |offset: f64, colour: &str| GradientStop {
+        offset,
+        colour: colour.to_owned(),
+    };
+    let linear = Paint::Gradient(Gradient {
+        stops: vec![
+            stop(0.0, "FF0000"),
+            stop(0.25, "00FF00"),
+            stop(1.0, "0000FF"),
+        ],
+        kind: GradientKind::Linear { angle: 30.0 },
+    });
+    let radial = Paint::Gradient(Gradient {
+        stops: vec![stop(0.0, "FFFFFF"), stop(1.0, "000000")],
+        kind: GradientKind::Radial {
+            centre: (0.25, 0.75),
+        },
+    });
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x10\0\0\0\x08".to_vec();
+    let mut shapes = Vec::new();
+    for paint in [
+        linear.clone(),
+        radial.clone(),
+        Paint::Picture {
+            media: 0,
+            tile_emu: None,
+        },
+        Paint::Picture {
+            media: 0,
+            tile_emu: Some((76_200, 38_100)),
+        },
+        Paint::Picture {
+            media: 1,
+            tile_emu: None,
+        },
+    ] {
+        let mut filled = shape(ShapeGeometry::Rectangle, ShapeContent::None, frame(0, 0));
+        filled.fill = Some(paint);
+        shapes.push(filled);
+    }
+    let deck = Presentation {
+        width_emu: 12_192_000,
+        height_emu: 6_858_000,
+        slides: vec![Slide {
+            background: Some(linear.clone()),
+            shapes,
+        }],
+        media: vec![
+            Media {
+                content_type: "image/png",
+                bytes: png,
+            },
+            Media {
+                content_type: "image/emf",
+                bytes: vec![1, 2, 3],
+            },
+        ],
+        truncated: false,
+    };
+    let written = write_pptx(&deck).unwrap();
+    let read = read_presentation(&written, &Limits::default()).unwrap();
+    let slide = &read.slides[0];
+    assert_eq!(slide.background, Some(linear.clone()));
+    let fills: Vec<Option<Paint>> = slide
+        .shapes
+        .iter()
+        .map(|shape| shape.fill.clone())
+        .collect();
+    assert_eq!(
+        fills,
+        [
+            Some(linear),
+            Some(radial),
+            Some(Paint::Picture {
+                media: 0,
+                tile_emu: None
+            }),
+            Some(Paint::Picture {
+                media: 0,
+                tile_emu: Some((76_200, 38_100))
+            }),
+            None,
+        ],
+        "an image PowerPoint cannot show is no fill"
+    );
+    assert_eq!(read.media.len(), 1);
+    let relationships = member(&written, "ppt/slides/_rels/slide1.xml.rels");
+    assert_eq!(relationships.matches("media/image1.png").count(), 1);
 }

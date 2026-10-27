@@ -4,7 +4,7 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
-use rely_office_core::{FillShade, ShapeLine, SlideTableCell, SlideTableRow};
+use rely_office_core::{FillShade, GradientStop, ShapeLine, SlideTableCell, SlideTableRow};
 
 use super::*;
 
@@ -85,7 +85,7 @@ fn source(presentation: &Presentation, with_images: bool) -> (String, Vec<(Strin
 fn sets_one_page_per_slide_at_the_slide_size() {
     let slides = vec![
         Slide {
-            background: Some("1F3864".to_owned()),
+            background: Some(Paint::Solid("1F3864".to_owned())),
             shapes: Vec::new(),
         },
         Slide {
@@ -111,7 +111,7 @@ fn draws_shapes_with_their_fill_outline_geometry_and_rotation() {
         ShapeGeometry::RoundedRectangle,
         ShapeContent::Text(body(vec![paragraph(vec![run("Novità")])])),
     );
-    rounded.fill = Some("ED7D31".to_owned());
+    rounded.fill = Some(Paint::Solid("ED7D31".to_owned()));
     rounded.line = Some(ShapeLine {
         colour: "FFFFFF".to_owned(),
         width_emu: 25_400,
@@ -370,7 +370,7 @@ fn draws_a_path_geometry_as_curves_under_its_text_its_faces_before_its_outlines(
         ShapeGeometry::Path(paths.clone()),
         ShapeContent::Text(body(vec![paragraph(vec![run("Avanti")])])),
     );
-    arrow.fill = Some("4472C4".to_owned());
+    arrow.fill = Some(Paint::Solid("4472C4".to_owned()));
     arrow.line = Some(ShapeLine {
         colour: "1F3864".to_owned(),
         width_emu: 12_700,
@@ -393,4 +393,105 @@ fn draws_a_path_geometry_as_curves_under_its_text_its_faces_before_its_outlines(
     assert!(markup.contains("Avanti"));
     assert!(markup.contains("#place(top + left, curve(fill: none, fill-rule: \"even-odd\", stroke: none, curve.move((0pt, 0pt)), curve.line((10pt, 0pt))"));
     assert!(markup.contains(", inset: 0pt, [])]"));
+}
+
+#[test]
+fn fills_shapes_and_pages_with_gradients_and_pictures() {
+    let stop = |offset: f64, colour: &str| GradientStop {
+        offset,
+        colour: colour.to_owned(),
+    };
+    let linear = Paint::Gradient(Gradient {
+        stops: vec![stop(1.0, "0000FF"), stop(0.0, "FF0000")],
+        kind: GradientKind::Linear { angle: 45.0 },
+    });
+    let radial = Paint::Gradient(Gradient {
+        stops: vec![stop(0.0, "FFFFFF"), stop(1.0, "000000")],
+        kind: GradientKind::Radial {
+            centre: (0.25, 0.5),
+        },
+    });
+    let mut shapes = Vec::new();
+    for paint in [
+        radial,
+        Paint::Picture {
+            media: 0,
+            tile_emu: None,
+        },
+        Paint::Picture {
+            media: 0,
+            tile_emu: Some((25_400, 12_700)),
+        },
+        Paint::Picture {
+            media: 1,
+            tile_emu: None,
+        },
+        Paint::Gradient(Gradient {
+            stops: vec![stop(0.5, "123456")],
+            kind: GradientKind::Linear { angle: 0.0 },
+        }),
+        Paint::Gradient(Gradient {
+            stops: Vec::new(),
+            kind: GradientKind::Linear { angle: 0.0 },
+        }),
+    ] {
+        let mut filled = shape(ShapeGeometry::Rectangle, ShapeContent::None);
+        filled.frame = frame(0, 0, 127_000, 63_500);
+        filled.fill = Some(paint);
+        shapes.push(filled);
+    }
+    let slides = vec![Slide {
+        background: Some(linear),
+        shapes,
+    }];
+    let media = vec![
+        Media {
+            content_type: "image/png",
+            bytes: b"\x89PNG\r\n\x1a\nimmagine".to_vec(),
+        },
+        Media {
+            content_type: "image/emf",
+            bytes: vec![1, 2, 3],
+        },
+    ];
+    let (markup, files) = source(&presentation(slides, media.clone()), true);
+    assert!(markup.contains(
+        "#page(fill: gradient.linear((rgb(\"#FF0000\"), 0%), (rgb(\"#0000FF\"), 100%), angle: 45deg))"
+    ));
+    assert!(markup.contains(
+        "fill: gradient.radial((rgb(\"#FFFFFF\"), 0%), (rgb(\"#000000\"), 100%), center: (25%, 50%), radius: 90.14%)"
+    ));
+    assert!(markup.contains(
+        "fill: tiling(size: (10pt, 5pt))[#image(\"/media/slides/0.png\", width: 10pt, height: 5pt, fit: \"stretch\")]"
+    ));
+    assert!(markup.contains(
+        "fill: tiling(size: (2pt, 1pt))[#image(\"/media/slides/0.png\", width: 2pt, height: 1pt, fit: \"stretch\")]"
+    ));
+    assert!(
+        markup.contains("fill: luma(230)"),
+        "an image Typst cannot draw"
+    );
+    assert!(
+        markup.contains("fill: rgb(\"#123456\")"),
+        "one stop is a colour"
+    );
+    assert!(markup.contains("fill: none"), "no stop is no fill");
+    assert_eq!(files.len(), 1);
+    let (without, _) = source(
+        &presentation(
+            vec![Slide {
+                background: Some(Paint::Picture {
+                    media: 0,
+                    tile_emu: None,
+                }),
+                shapes: Vec::new(),
+            }],
+            media,
+        ),
+        false,
+    );
+    assert!(
+        without.contains("#page(fill: luma(230))"),
+        "images left out"
+    );
 }

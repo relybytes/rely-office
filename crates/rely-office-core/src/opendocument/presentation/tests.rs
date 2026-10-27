@@ -7,6 +7,7 @@
 use super::*;
 use crate::geometry::{PathCommand, PathPoint};
 use crate::read_presentation;
+use crate::slides::{Gradient, GradientKind, GradientStop, Paint};
 use crate::test_support::build_zip;
 
 const NAMESPACES: &str = concat!(
@@ -22,11 +23,20 @@ const NAMESPACES: &str = concat!(
     r#"xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0" "#,
     r#"xmlns:xlink="http://www.w3.org/1999/xlink""#
 );
-const PNG: &[u8] = &[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0];
+const PNG: &[u8] = &[
+    0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0,
+    0, 4, 0, 0, 0, 2,
+];
 
 const STYLES: &str = concat!(
     "<office:styles>",
     r##"<draw:gradient draw:name="Sfumato" draw:start-color="#102030" draw:end-color="#ffffff"/>"##,
+    r##"<draw:gradient draw:name="Assiale" draw:style="axial" draw:angle="900" draw:border="20%" draw:start-color="#000000" draw:end-color="#ffffff"/>"##,
+    r##"<draw:gradient draw:name="Radiale" draw:style="radial" draw:cx="25%" draw:cy="75%" draw:start-color="#ff0000" draw:end-color="#00ff00"/>"##,
+    r##"<draw:gradient draw:name="Lineare" draw:style="linear" draw:angle="45deg" draw:start-color="#111111" draw:end-color="#222222"/>"##,
+    r##"<draw:gradient draw:name="Vuoto" draw:style="linear"/>"##,
+    r#"<draw:fill-image draw:name="Logo" xlink:href="Pictures/logo.png"/>"#,
+    r#"<draw:fill-image draw:name="Perso" xlink:href="Pictures/nowhere.png"/>"#,
     r#"<style:default-style style:family="graphic"><style:text-properties fo:font-size="18pt" style:font-name="Liberation Sans"/></style:default-style>"#,
     r##"<style:style style:name="standard" style:family="graphic"><style:graphic-properties draw:stroke="solid" svg:stroke-color="#3465a4" "##,
     r##"svg:stroke-width="0.1cm" draw:fill="solid" draw:fill-color="#729fcf"/></style:style>"##,
@@ -60,6 +70,15 @@ const AUTOMATIC: &str = concat!(
     r#"<style:style style:name="gr1" style:family="graphic" style:parent-style-name="standard"><style:graphic-properties draw:textarea-vertical-align="middle" "#,
     r#"fo:padding="0.2cm" fo:wrap-option="no-wrap"/></style:style>"#,
     r#"<style:style style:name="gr2" style:family="graphic"><style:graphic-properties draw:stroke="none" draw:fill="none"/></style:style>"#,
+    r#"<style:style style:name="fa" style:family="graphic"><style:graphic-properties draw:fill="gradient" draw:fill-gradient-name="Assiale"/></style:style>"#,
+    r#"<style:style style:name="fr" style:family="graphic"><style:graphic-properties draw:fill="gradient" draw:fill-gradient-name="Radiale"/></style:style>"#,
+    r#"<style:style style:name="fl" style:family="graphic"><style:graphic-properties draw:fill="gradient" draw:fill-gradient-name="Lineare"/></style:style>"#,
+    r##"<style:style style:name="fv" style:family="graphic"><style:graphic-properties draw:fill="gradient" draw:fill-gradient-name="Vuoto" draw:fill-color="#abcdef"/></style:style>"##,
+    r#"<style:style style:name="fb" style:family="graphic"><style:graphic-properties draw:fill="bitmap" draw:fill-image-name="Logo"/></style:style>"#,
+    r#"<style:style style:name="fs" style:family="graphic"><style:graphic-properties draw:fill="bitmap" draw:fill-image-name="Logo" style:repeat="stretch"/></style:style>"#,
+    r#"<style:style style:name="fz" style:family="graphic"><style:graphic-properties draw:fill="bitmap" draw:fill-image-name="Logo" draw:fill-image-width="1cm" draw:fill-image-height="2cm"/></style:style>"#,
+    r##"<style:style style:name="fp" style:family="graphic"><style:graphic-properties draw:fill="bitmap" draw:fill-image-name="Perso" draw:fill-color="#123456" draw:stroke="solid" svg:stroke-color="#000000"/></style:style>"##,
+    r##"<style:style style:name="fn" style:family="graphic"><style:graphic-properties draw:fill="bitmap" draw:fill-image-name="Nessuno" draw:fill-color="#654321"/></style:style>"##,
     r#"<style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:text-align="end" fo:line-height="150%" fo:margin-bottom="0.2cm"/></style:style>"#,
     r#"<style:style style:name="T1" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic" style:text-underline-style="solid" "#,
     r##"style:text-line-through-style="solid" fo:color="#ff0000"/></style:style>"##,
@@ -146,7 +165,7 @@ fn draws_each_page_over_its_master_with_the_text_of_its_styles() {
     );
     let slide = &presentation.slides[0];
     assert_eq!(
-        slide.background.as_deref(),
+        slide.background.as_ref().and_then(Paint::colour),
         Some("EEEEEE"),
         "the master's background"
     );
@@ -155,7 +174,10 @@ fn draws_each_page_over_its_master_with_the_text_of_its_styles() {
         4,
         "the master's bar and page number, then the title and the outline"
     );
-    assert_eq!(slide.shapes[0].fill.as_deref(), Some("729FCF"));
+    assert_eq!(
+        slide.shapes[0].fill.as_ref().and_then(Paint::colour),
+        Some("729FCF")
+    );
     assert_eq!(
         slide.shapes[0].line,
         Some(ShapeLine {
@@ -260,7 +282,7 @@ fn places_shapes_lines_groups_rotations_tables_pictures_and_charts() {
     ));
     let slide = &presentation.slides[0];
     assert_eq!(
-        slide.background.as_deref(),
+        slide.background.as_ref().and_then(Paint::colour),
         Some("102030"),
         "the first colour of the gradient"
     );
@@ -369,7 +391,7 @@ fn draws_chart_objects_and_leaves_out_what_is_no_image() {
     assert_eq!(slide.shapes[1].content, ShapeContent::Picture { media: 0 });
     assert_eq!(presentation.media[0].content_type, "image/svg+xml");
     assert_eq!(
-        slide.background.as_deref(),
+        slide.background.as_ref().and_then(Paint::colour),
         Some("EEEEEE"),
         "the first master's background"
     );
@@ -488,4 +510,102 @@ fn draws_enhanced_geometries_polygons_and_paths_as_their_outline() {
         })
     );
     assert_eq!(shapes[5].geometry, ShapeGeometry::Rectangle);
+}
+
+#[test]
+fn reads_gradients_and_bitmaps_as_fills() {
+    let shape = |style: &str| {
+        format!(
+            r#"<draw:rect draw:style-name="{style}" svg:x="0cm" svg:y="0cm" svg:width="2cm" svg:height="1cm"/>"#
+        )
+    };
+    let page = format!(
+        r#"<draw:page draw:style-name="dp2" draw:master-page-name="Default">{}</draw:page>"#,
+        ["fa", "fr", "fl", "fv", "fb", "fs", "fz", "fp", "fn"]
+            .map(shape)
+            .concat()
+    );
+    let presentation = read(&page);
+    let fills: Vec<Option<Paint>> = presentation.slides[0]
+        .shapes
+        .iter()
+        .map(|shape| shape.fill.clone())
+        .collect();
+    let stop = |offset: f64, colour: &str| GradientStop {
+        offset,
+        colour: colour.to_owned(),
+    };
+    assert_eq!(
+        fills[0],
+        Some(Paint::Gradient(Gradient {
+            stops: vec![
+                stop(0.0, "000000"),
+                stop(0.1, "000000"),
+                stop(0.5, "FFFFFF"),
+                stop(0.9, "000000"),
+                stop(1.0, "000000"),
+            ],
+            kind: GradientKind::Linear { angle: 0.0 },
+        })),
+        "an axial gradient turned a quarter: the end colour down the middle"
+    );
+    assert_eq!(
+        fills[1],
+        Some(Paint::Gradient(Gradient {
+            stops: vec![
+                stop(0.0, "00FF00"),
+                stop(1.0, "FF0000"),
+                stop(1.0, "FF0000")
+            ],
+            kind: GradientKind::Radial {
+                centre: (0.25, 0.75)
+            },
+        }))
+    );
+    assert_eq!(
+        fills[2],
+        Some(Paint::Gradient(Gradient {
+            stops: vec![
+                stop(0.0, "111111"),
+                stop(0.0, "111111"),
+                stop(1.0, "222222")
+            ],
+            kind: GradientKind::Linear { angle: 45.0 },
+        }))
+    );
+    assert_eq!(fills[3], Some(Paint::Solid("ABCDEF".to_owned())));
+    assert_eq!(
+        fills[4],
+        Some(Paint::Picture {
+            media: 0,
+            tile_emu: Some((38_100, 19_050))
+        }),
+        "a bitmap repeats at its own size"
+    );
+    assert_eq!(
+        fills[5],
+        Some(Paint::Picture {
+            media: 0,
+            tile_emu: None
+        })
+    );
+    assert_eq!(
+        fills[6],
+        Some(Paint::Picture {
+            media: 0,
+            tile_emu: Some((360_000, 720_000))
+        })
+    );
+    assert_eq!(fills[7], None, "a bitmap that is missing is no fill");
+    assert_eq!(fills[8], Some(Paint::Solid("654321".to_owned())));
+}
+
+#[test]
+fn reads_odf_angles_in_every_unit() {
+    assert!((parse_odf_angle("450") - 45.0).abs() < 1e-9);
+    assert!((parse_odf_angle("30deg") - 30.0).abs() < 1e-9);
+    assert!((parse_odf_angle("100grad") - 90.0).abs() < 1e-9);
+    assert!((parse_odf_angle(" 3.14159265358979rad ") - 180.0).abs() < 1e-6);
+    assert!(parse_odf_angle("sideways").abs() < f64::EPSILON);
+    assert!(parse_odf_angle("1e999").abs() < f64::EPSILON);
 }

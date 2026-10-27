@@ -9,6 +9,7 @@ use crate::ppt::test_ppt::{
     PptBuilder, array, atom, container, exception, property_table, shape, text_chars,
 };
 use crate::read_presentation;
+use crate::slides::{Gradient, GradientKind, GradientStop, Paint};
 use crate::test_support::{build_compound_file, ppt_record};
 
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\nimmagine";
@@ -65,6 +66,18 @@ fn drawing(shapes: &[Vec<u8>], background: Option<u32>) -> Vec<u8> {
         ));
     }
     container(DRAWING, 0, &[container(DRAWING_CONTAINER, 0, &children)])
+}
+
+/// A rectangle filled with the fill properties given, its fill colour red.
+fn filled_shape(fill: &[(u16, u32)]) -> Vec<u8> {
+    let mut properties = vec![(0x0181, 0x0000_00FF)];
+    properties.extend_from_slice(fill);
+    shape(
+        1,
+        0,
+        Some([0, 0, 100, 100]),
+        &[property_table(PROPERTIES, &properties, &[])],
+    )
 }
 
 fn placeholder(text: &[Vec<u8>], anchor: [i16; 4]) -> Vec<u8> {
@@ -304,6 +317,17 @@ fn presentation() -> PptBuilder {
                     shape(202, 0, Some([0, 0, 10, 10]), &[]),
                     free_form,
                     group,
+                    filled_shape(&[(0x0180, 3), (0x0186, 1)]),
+                    filled_shape(&[(0x0180, 2), (0x0186, 1)]),
+                    filled_shape(&[(0x0180, 3), (0x0186, 9)]),
+                    filled_shape(&[
+                        (0x0180, 4),
+                        (0x0183, 0x0000_FF00),
+                        (0x018B, 90 << 16),
+                        (0x018C, 50),
+                    ]),
+                    filled_shape(&[(0x0180, 5), (0x018C, 100)]),
+                    filled_shape(&[(0x0180, 7), (0x0183, 0x0800_0004)]),
                 ],
                 Some(0x0800_0004),
             ),
@@ -356,7 +380,7 @@ fn reads_the_slides_over_their_master() {
     assert_eq!(presentation.slides.len(), 2);
     let first = &presentation.slides[0];
     assert_eq!(
-        first.background.as_deref(),
+        first.background.as_ref().and_then(Paint::colour),
         Some("F0F000"),
         "the master's background"
     );
@@ -413,13 +437,13 @@ fn draws_shapes_pictures_groups_and_outlines() {
     let presentation = read_ppt_presentation(&presentation().build(), &Limits::default()).unwrap();
     let second = &presentation.slides[1];
     assert_eq!(
-        second.background.as_deref(),
+        second.background.as_ref().and_then(Paint::colour),
         Some("0A141E"),
         "its own scheme's fill colour"
     );
     assert_eq!(
         second.shapes.len(),
-        4,
+        10,
         "no master shapes, no deleted shape, no empty text box, no missing picture"
     );
     let arrow = &second.shapes[0];
@@ -433,7 +457,7 @@ fn draws_shapes_pictures_groups_and_outlines() {
         Some(("FFFF00", 25_400))
     );
     assert_eq!(
-        arrow.fill.as_deref(),
+        arrow.fill.as_ref().and_then(Paint::colour),
         Some("0A141E"),
         "a shape without a fill takes the scheme's"
     );
@@ -457,7 +481,10 @@ fn draws_shapes_pictures_groups_and_outlines() {
         panic!("a free-form outline");
     };
     assert_eq!(paths[0].commands.len(), 4);
-    assert_eq!(second.shapes[2].fill.as_deref(), Some("FF0000"));
+    assert_eq!(
+        second.shapes[2].fill.as_ref().and_then(Paint::colour),
+        Some("FF0000")
+    );
     let child = &second.shapes[3];
     assert_eq!(child.geometry, ShapeGeometry::Ellipse);
     assert_eq!(
@@ -479,7 +506,7 @@ fn reads_slides_in_stream_order_without_a_current_user() {
     assert_eq!(presentation.slides.len(), 2);
     assert_eq!(
         presentation.slides[1].shapes.len(),
-        4,
+        10,
         "the slide that needs neither master nor list"
     );
 }
@@ -582,4 +609,60 @@ fn reads_colour_references_and_shape_types() {
     assert_eq!(master_style_of(8), 1);
     assert_eq!(master_style_of(2), 2);
     assert_eq!(master_style_of(4), 4);
+}
+
+#[test]
+fn reads_pictures_textures_and_shaded_blends_as_fills() {
+    let presentation = read_ppt_presentation(&presentation().build(), &Limits::default()).unwrap();
+    let second = &presentation.slides[1];
+    let fills: Vec<Option<Paint>> = second.shapes[4..]
+        .iter()
+        .map(|shape| shape.fill.clone())
+        .collect();
+    let stop = |offset: f64, colour: &str| GradientStop {
+        offset,
+        colour: colour.to_owned(),
+    };
+    assert_eq!(
+        fills[..3],
+        [
+            Some(Paint::Picture {
+                media: 0,
+                tile_emu: None
+            }),
+            Some(Paint::Picture {
+                media: 0,
+                tile_emu: None
+            }),
+            Some(Paint::Solid("FF0000".to_owned())),
+        ],
+        "a picture, a texture whose size is unknown, and a picture the store lacks"
+    );
+    assert_eq!(
+        fills[3],
+        Some(Paint::Gradient(Gradient {
+            stops: vec![
+                stop(0.0, "FF0000"),
+                stop(0.5, "00FF00"),
+                stop(1.0, "FF0000")
+            ],
+            kind: GradientKind::Linear { angle: 0.0 },
+        })),
+        "a focus in the middle blends out to both sides"
+    );
+    assert_eq!(
+        fills[4],
+        Some(Paint::Gradient(Gradient {
+            stops: vec![stop(0.0, "FF0000"), stop(1.0, "FFFFFF")],
+            kind: GradientKind::Radial { centre: (0.5, 0.5) },
+        }))
+    );
+    assert_eq!(
+        fills[5],
+        Some(Paint::Gradient(Gradient {
+            stops: vec![stop(0.0, "0A141E"), stop(1.0, "FF0000")],
+            kind: GradientKind::Linear { angle: 90.0 },
+        })),
+        "no focus starts from the back colour, here the scheme's fill"
+    );
 }

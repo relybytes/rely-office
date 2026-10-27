@@ -12,9 +12,9 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use rely_office_core::{
-    Alignment, Bullet, Frame, Media, PathCommand, PathPoint, Presentation, ShapeContent,
-    ShapeGeometry, ShapePath, Slide, SlideParagraph, SlideRun, SlideShape, SlideTable, TextAnchor,
-    TextBody,
+    Alignment, Bullet, FillShade, Frame, Gradient, GradientKind, Media, Paint, PathCommand,
+    PathPoint, Presentation, ShapeContent, ShapeGeometry, ShapePath, Slide, SlideParagraph,
+    SlideRun, SlideShape, SlideTable, TextAnchor, TextBody,
 };
 
 use crate::fonts::body_fonts;
@@ -45,6 +45,7 @@ pub(crate) fn presentation_source(
         with_images,
         lines,
         files: HashMap::new(),
+        page: (presentation.width_emu, presentation.height_emu),
     };
     let mut source = String::new();
     let _ = writeln!(
@@ -77,14 +78,16 @@ struct Writer<'a> {
     with_images: bool,
     lines: &'a FontLines,
     files: HashMap<usize, String>,
+    /// The slide size, in English Metric Units.
+    page: (i64, i64),
 }
 
 impl Writer<'_> {
     fn slide(&mut self, slide: &Slide) -> String {
-        let fill = slide.background.as_ref().map_or_else(
-            || "white".to_owned(),
-            |colour| format!("rgb(\"#{colour}\")"),
-        );
+        let fill = match slide.background.as_ref() {
+            Some(paint) => self.paint(paint, FillShade::Normal, self.page),
+            None => "white".to_owned(),
+        };
         let mut markup = format!("#page(fill: {fill})[");
         for shape in &slide.shapes {
             let drawn = self.shape(shape);
@@ -103,10 +106,11 @@ impl Writer<'_> {
     fn shape(&mut self, shape: &SlideShape) -> String {
         let width = points(emu(shape.frame.width));
         let height = points(emu(shape.frame.height));
-        let fill = shape
-            .fill
-            .as_ref()
-            .map_or_else(|| "none".to_owned(), |colour| format!("rgb(\"#{colour}\")"));
+        let size = (shape.frame.width, shape.frame.height);
+        let fill = shape.fill.as_ref().map_or_else(
+            || "none".to_owned(),
+            |paint| self.paint(paint, FillShade::Normal, size),
+        );
         let stroke = shape.line.as_ref().map_or_else(
             || "none".to_owned(),
             |line| {
@@ -146,7 +150,7 @@ impl Writer<'_> {
                 for path in paths.iter().filter(|path| path.filled) {
                     let path_fill = shape.fill.as_ref().map_or_else(
                         || "none".to_owned(),
-                        |colour| format!("rgb(\"#{}\")", path.shade.apply(colour)),
+                        |paint| self.paint(paint, path.shade, size),
                     );
                     let _ = write!(
                         layers,
@@ -198,18 +202,48 @@ impl Writer<'_> {
         }
     }
 
-    fn picture(&mut self, media: usize, width: &str, height: &str, stroke: &str) -> String {
+    /// A Typst fill for a paint over a frame of `size`: a colour, a gradient, or the image
+    /// as a tiling stretched over the frame or repeated at its tile size.
+    fn paint(&mut self, paint: &Paint, shade: FillShade, size: (i64, i64)) -> String {
+        match paint {
+            Paint::Solid(colour) => format!("rgb(\"#{}\")", shade.apply(colour)),
+            Paint::Gradient(gradient) => gradient_fill(gradient, shade),
+            Paint::Picture { media, tile_emu } => {
+                let Some(path) = self.image_file(*media) else {
+                    return "luma(230)".to_owned();
+                };
+                let (width, height) = tile_emu.unwrap_or(size);
+                let (width, height) = (
+                    points(emu(width.max(12_700))),
+                    points(emu(height.max(12_700))),
+                );
+                format!(
+                    "tiling(size: ({width}, {height}))[#image({}, width: {width}, height: {height}, fit: \"stretch\")]",
+                    string_literal(&path)
+                )
+            }
+        }
+    }
+
+    /// The path an image is handed to Typst at; `None` for an image Typst cannot decode, or
+    /// when images are left out.
+    fn image_file(&mut self, media: usize) -> Option<String> {
         let extension = self
             .media
             .get(media)
-            .and_then(|media| image_extension(media.content_type));
-        match extension {
-            Some(extension) if self.with_images => {
-                let path = self
-                    .files
-                    .entry(media)
-                    .or_insert_with(|| format!("/media/slides/{media}.{extension}"))
-                    .clone();
+            .and_then(|media| image_extension(media.content_type))
+            .filter(|_| self.with_images)?;
+        Some(
+            self.files
+                .entry(media)
+                .or_insert_with(|| format!("/media/slides/{media}.{extension}"))
+                .clone(),
+        )
+    }
+
+    fn picture(&mut self, media: usize, width: &str, height: &str, stroke: &str) -> String {
+        match self.image_file(media) {
+            Some(path) => {
                 format!(
                     "block(width: {width}, height: {height}, stroke: {stroke}, image({}, width: 100%, height: 100%, fit: \"stretch\"))",
                     string_literal(&path)
@@ -412,6 +446,40 @@ fn run_markup(run: &SlideRun) -> String {
 }
 
 /// A path as a Typst curve, in points from the frame's top-left corner.
+/// A Typst gradient, each colour shaded; the stops in order, as Typst needs them.
+fn gradient_fill(gradient: &Gradient, shade: FillShade) -> String {
+    let mut stops: Vec<(f64, String)> = gradient
+        .stops
+        .iter()
+        .map(|stop| (stop.offset.clamp(0.0, 1.0), shade.apply(&stop.colour)))
+        .collect();
+    stops.sort_by(|first, second| first.0.total_cmp(&second.0));
+    match stops.len() {
+        0 => return "none".to_owned(),
+        1 => return format!("rgb(\"#{}\")", stops[0].1),
+        _ => {}
+    }
+    let mut markup = String::new();
+    for (offset, colour) in &stops {
+        let _ = write!(markup, "(rgb(\"#{colour}\"), {}%), ", round(offset * 100.0));
+    }
+    match gradient.kind {
+        GradientKind::Linear { angle } => {
+            format!("gradient.linear({markup}angle: {}deg)", round(angle))
+        }
+        GradientKind::Radial { centre: (x, y) } => {
+            let (x, y) = (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
+            let radius = (x.max(1.0 - x).hypot(y.max(1.0 - y)) * 100.0).max(1.0);
+            format!(
+                "gradient.radial({markup}center: ({}%, {}%), radius: {}%)",
+                round(x * 100.0),
+                round(y * 100.0),
+                round(radius)
+            )
+        }
+    }
+}
+
 fn curve_of(path: &ShapePath, fill: &str, stroke: &str) -> String {
     let at = |point: &PathPoint| format!("({}, {})", points(emu(point.x)), points(emu(point.y)));
     let mut curve = format!("curve(fill: {fill}, fill-rule: \"even-odd\", stroke: {stroke}");

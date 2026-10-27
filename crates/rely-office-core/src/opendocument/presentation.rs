@@ -14,10 +14,13 @@ use std::collections::HashMap;
 use super::styles::{FO, STYLE, Scope, Styles, TEXT, colour, points};
 use crate::archive::{ZipPackage, open_package, read_member_bytes, read_text_member};
 use crate::chart::{odf_chart_picture, odf_object_part};
-use crate::document::{Alignment, LineSpacing, Media, ParagraphLook, RunLook, sniff_image_type};
+use crate::document::{
+    Alignment, LineSpacing, Media, ParagraphLook, RunLook, image_pixel_size, sniff_image_type,
+};
 use crate::slides::{
-    Bullet, Frame, Presentation, ShapeContent, ShapeGeometry, ShapeLine, Slide, SlideParagraph,
-    SlideRun, SlideShape, SlideTable, SlideTableCell, SlideTableRow, TextAnchor, TextBody,
+    Bullet, Frame, Gradient, GradientKind, GradientStop, Paint, Presentation, ShapeContent,
+    ShapeGeometry, ShapeLine, Slide, SlideParagraph, SlideRun, SlideShape, SlideTable,
+    SlideTableCell, SlideTableRow, TextAnchor, TextBody,
 };
 use crate::xml_tree::{Element, Namespace, Node, parse_tree};
 use crate::{Limits, OfficeError};
@@ -42,6 +45,8 @@ const MAX_LEVEL: usize = 9;
 /// and below.
 const DEFAULT_INSETS: [i64; 4] = [90_000, 45_000, 90_000, 45_000];
 const DEFAULT_SIZE_HUNDREDTHS: u32 = 1_800;
+/// A pixel at 96 to the inch.
+const PIXEL_EMU: i64 = 9_525;
 
 /// Read an odp as slides to draw.
 pub(crate) fn read_odp(bytes: &[u8], limits: &Limits) -> Result<Presentation, OfficeError> {
@@ -160,10 +165,10 @@ impl Reader<'_, '_> {
             date_time: drawing(Scope::Body, page_style, "display-date-time").unwrap_or(false),
         };
         let background = match self.page_fill(Scope::Body, page_style) {
-            Fill::Named(colour) => colour,
+            Fill::Named(paint) => paint,
             Fill::Unset => master.and_then(|master| {
                 self.page_fill(Scope::Master, master.attribute(DRAW, "style-name"))
-                    .colour()
+                    .paint()
             }),
         };
         let background_objects =
@@ -177,14 +182,58 @@ impl Reader<'_, '_> {
     }
 
     /// The fill of a drawing-page style.
-    fn page_fill(&self, scope: Scope, name: Option<&str>) -> Fill {
+    fn page_fill(&mut self, scope: Scope, name: Option<&str>) -> Fill {
         if name.is_none() {
             return Fill::Unset;
         }
         let properties =
             self.styles
                 .properties(scope, "drawing-page", name, "drawing-page-properties");
-        graphic_fill(&properties, self.styles)
+        self.graphic_paint(&properties)
+    }
+
+    /// The fill graphic properties name, nearest first, a bitmap included.
+    fn graphic_paint(&mut self, properties: &[&Element]) -> Fill {
+        let attribute = |key: &str| {
+            properties
+                .iter()
+                .find_map(|properties| properties.attribute(DRAW, key))
+        };
+        if attribute("fill") != Some("bitmap") {
+            return graphic_fill(properties, self.styles);
+        }
+        let Some(href) = attribute("fill-image-name")
+            .and_then(|name| self.styles.fill_image(name))
+            .map(str::to_owned)
+        else {
+            return Fill::Named(attribute("fill-color").and_then(colour).map(Paint::Solid));
+        };
+        let Some(media) = self.image(&href) else {
+            return Fill::Named(None);
+        };
+        let repeated = !matches!(
+            properties
+                .iter()
+                .find_map(|properties| properties.attribute(STYLE, "repeat")),
+            Some("stretch" | "no-repeat")
+        );
+        let tile_emu = repeated
+            .then(|| {
+                let given = (
+                    attribute("fill-image-width").and_then(emu),
+                    attribute("fill-image-height").and_then(emu),
+                );
+                if let (Some(width), Some(height)) = given
+                    && width > 0
+                    && height > 0
+                {
+                    return Some((width, height));
+                }
+                let (width, height) = image_pixel_size(&self.media.get(media)?.bytes)?;
+                Some((i64::from(width) * PIXEL_EMU, i64::from(height) * PIXEL_EMU))
+            })
+            .flatten();
+        Fill::Named(Some(Paint::Picture { media, tile_emu }))
     }
 
     /// The shapes of a page, a master page or a group; a master's placeholders are templates,
@@ -297,7 +346,7 @@ impl Reader<'_, '_> {
         let fill = if element.name == "line" || element.name == "connector" {
             None
         } else {
-            graphic_fill(&graphic, self.styles).colour()
+            self.graphic_paint(&graphic).paint()
         };
         let is_line = matches!(element.name.as_str(), "line" | "connector");
         let line = match attribute(DRAW, "stroke") {
@@ -824,12 +873,7 @@ impl Reader<'_, '_> {
                             style,
                             "table-cell-properties",
                         );
-                        let fill = graphic_fill(&graphic, self.styles).colour().or_else(|| {
-                            cell_properties
-                                .iter()
-                                .find_map(|properties| properties.attribute(FO, "background-color"))
-                                .and_then(colour)
-                        });
+                        let fill = cell_fill(&graphic, &cell_properties, self.styles);
                         let body =
                             self.text_body(cell, scope, "table-cell", style, &graphic, number);
                         let span = |name: &str| {
@@ -1002,24 +1046,107 @@ fn paragraph_only(
     }
     (look, align)
 }
+/// The colour of a table cell: its graphic fill, else its background colour.
+fn cell_fill(graphic: &[&Element], cell: &[&Element], styles: &Styles) -> Option<String> {
+    graphic_fill(graphic, styles)
+        .paint()
+        .and_then(|paint| paint.colour().map(str::to_owned))
+        .or_else(|| {
+            cell.iter()
+                .find_map(|properties| properties.attribute(FO, "background-color"))
+                .and_then(colour)
+        })
+}
+
 /// What graphic properties say about a fill.
 enum Fill {
     /// They name none, so whatever stands behind decides.
     Unset,
-    /// They name one, a colour or none at all.
-    Named(Option<String>),
+    /// They name one, a paint or none at all.
+    Named(Option<Paint>),
 }
 
 impl Fill {
-    fn colour(self) -> Option<String> {
+    fn paint(self) -> Option<Paint> {
         match self {
             Self::Unset => None,
-            Self::Named(colour) => colour,
+            Self::Named(paint) => paint,
         }
     }
 }
 
-/// The fill graphic properties name, nearest first; a gradient shows its first colour.
+/// A `draw:gradient` as stops: its start and end colours, the border that keeps the start
+/// colour solid, and for an axial gradient the end colour in the middle.
+fn odf_gradient(gradient: &Element) -> Option<Paint> {
+    let start = gradient.attribute(DRAW, "start-color").and_then(colour)?;
+    let end = gradient
+        .attribute(DRAW, "end-color")
+        .and_then(colour)
+        .unwrap_or_else(|| start.clone());
+    let percent = |name: &str, default: f64| {
+        gradient
+            .attribute(DRAW, name)
+            .and_then(|value| value.trim_end_matches('%').trim().parse::<f64>().ok())
+            .filter(|value| value.is_finite())
+            .map_or(default, |value| (value / 100.0).clamp(0.0, 1.0))
+    };
+    let border = percent("border", 0.0);
+    let stop = |offset: f64, colour: &str| GradientStop {
+        offset,
+        colour: colour.to_owned(),
+    };
+    // The angle runs counter-clockwise from a gradient that starts at the top.
+    let angle = gradient
+        .attribute(DRAW, "angle")
+        .map_or(0.0, parse_odf_angle);
+    let linear_angle = (90.0 - angle).rem_euclid(360.0);
+    let (stops, kind) = match gradient.attribute(DRAW, "style").unwrap_or("linear") {
+        "axial" => (
+            vec![
+                stop(0.0, &start),
+                stop(border / 2.0, &start),
+                stop(0.5, &end),
+                stop(1.0 - border / 2.0, &start),
+                stop(1.0, &start),
+            ],
+            GradientKind::Linear {
+                angle: linear_angle,
+            },
+        ),
+        "radial" | "ellipsoid" | "square" | "rectangular" => (
+            vec![
+                stop(0.0, &end),
+                stop(1.0 - border, &start),
+                stop(1.0, &start),
+            ],
+            GradientKind::Radial {
+                centre: (percent("cx", 0.5), percent("cy", 0.5)),
+            },
+        ),
+        _ => (
+            vec![stop(0.0, &start), stop(border, &start), stop(1.0, &end)],
+            GradientKind::Linear {
+                angle: linear_angle,
+            },
+        ),
+    };
+    Some(Paint::Gradient(Gradient { stops, kind }))
+}
+
+/// An `OpenDocument` angle in degrees: a number with `deg`, `rad` or `grad`, or a bare number
+/// of tenths of a degree as older files write it.
+fn parse_odf_angle(text: &str) -> f64 {
+    let text = text.trim();
+    let number = |suffix: &str| text.strip_suffix(suffix)?.trim().parse::<f64>().ok();
+    let degrees = number("deg")
+        .or_else(|| number("rad").map(f64::to_degrees))
+        .or_else(|| number("grad").map(|value| value * 0.9))
+        .or_else(|| text.parse::<f64>().ok().map(|value| value / 10.0))
+        .unwrap_or(0.0);
+    if degrees.is_finite() { degrees } else { 0.0 }
+}
+
+/// The fill graphic properties name, nearest first, without a bitmap.
 fn graphic_fill(properties: &[&Element], styles: &Styles) -> Fill {
     let Some(kind) = properties
         .iter()
@@ -1033,10 +1160,11 @@ fn graphic_fill(properties: &[&Element], styles: &Styles) -> Fill {
             .find_map(|properties| properties.attribute(DRAW, key))
     };
     Fill::Named(match kind {
-        "solid" | "hatch" | "bitmap" => attribute("fill-color").and_then(colour),
+        "solid" | "hatch" | "bitmap" => attribute("fill-color").and_then(colour).map(Paint::Solid),
         "gradient" => attribute("fill-gradient-name")
-            .and_then(|name| styles.gradient_start(name))
-            .or_else(|| attribute("fill-color").and_then(colour)),
+            .and_then(|name| styles.gradient(name))
+            .and_then(odf_gradient)
+            .or_else(|| attribute("fill-color").and_then(colour).map(Paint::Solid)),
         _ => None,
     })
 }

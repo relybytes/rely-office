@@ -28,6 +28,7 @@ pub use edges::{
     Border, BorderStyle, Borders, CellLook, TabKind, TabLeader, TabStop, VerticalAlignment,
 };
 pub use look::{LabelSuffix, LineSpacing, ListLabel, PageField, ParagraphLook, RunLook, TableLook};
+pub(crate) use media::image_pixel_size;
 pub use media::sniff_image_type;
 pub use write::write_docx;
 pub(crate) use write::{escape as escape_xml, image_extension, zip_members};

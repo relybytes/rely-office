@@ -22,6 +22,7 @@ pub(super) const TEXT: Namespace = Namespace::OdfText;
 const SVG: Namespace = Namespace::OdfSvg;
 const OFFICE: Namespace = Namespace::OdfOffice;
 const DRAW: Namespace = Namespace::OdfDraw;
+const XLINK: Namespace = Namespace::XLink;
 /// A style chain stops here, so a style that names itself as its parent cannot loop.
 const MAX_CHAIN: usize = 16;
 const TWIPS_PER_POINT: f64 = 20.0;
@@ -69,8 +70,10 @@ pub(super) struct Styles {
     pub outline: Option<Element>,
     pub page_layouts: HashMap<String, Element>,
     pub master_pages: Vec<Element>,
-    /// The first colour of each named gradient.
-    gradients: HashMap<String, String>,
+    /// The `draw:gradient` of each name.
+    gradients: HashMap<String, Element>,
+    /// The `xlink:href` of each `draw:fill-image`.
+    fill_images: HashMap<String, String>,
 }
 
 impl Styles {
@@ -102,11 +105,16 @@ impl Styles {
                         (TEXT, "list-style") => insert_list(&mut read.named_lists, style),
                         (TEXT, "outline-style") => read.outline = Some(style.clone()),
                         (DRAW, "gradient") => {
-                            if let (Some(name), Some(start)) = (
+                            if let Some(name) = style.attribute(DRAW, "name") {
+                                read.gradients.insert(name.to_owned(), style.clone());
+                            }
+                        }
+                        (DRAW, "fill-image") => {
+                            if let (Some(name), Some(href)) = (
                                 style.attribute(DRAW, "name"),
-                                style.attribute(DRAW, "start-color").and_then(colour),
+                                style.attribute(XLINK, "href"),
                             ) {
-                                read.gradients.insert(name.to_owned(), start);
+                                read.fill_images.insert(name.to_owned(), href.to_owned());
                             }
                         }
                         _ => {}
@@ -181,9 +189,14 @@ impl Styles {
         chain
     }
 
-    /// The colour a named gradient starts with.
-    pub(super) fn gradient_start(&self, name: &str) -> Option<String> {
-        self.gradients.get(name).cloned()
+    /// The `draw:gradient` of a name.
+    pub(super) fn gradient(&self, name: &str) -> Option<&Element> {
+        self.gradients.get(name)
+    }
+
+    /// The picture a `draw:fill-image` of a name points at.
+    pub(super) fn fill_image(&self, name: &str) -> Option<&str> {
+        self.fill_images.get(name).map(String::as_str)
     }
 
     /// The list style of a name, the part's own first.

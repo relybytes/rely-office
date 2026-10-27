@@ -34,8 +34,8 @@ pub struct Presentation {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Slide {
-    /// The background colour as `RRGGBB`; unset is white.
-    pub background: Option<String>,
+    /// The background; unset is white.
+    pub background: Option<Paint>,
     /// The shapes in drawing order, the first one at the back.
     pub shapes: Vec<SlideShape>,
 }
@@ -80,10 +80,62 @@ pub struct SlideShape {
     /// Clockwise, in degrees.
     pub rotation: f64,
     pub geometry: ShapeGeometry,
-    /// The fill colour as `RRGGBB`; unset is no fill.
-    pub fill: Option<String>,
+    /// Unset is no fill.
+    pub fill: Option<Paint>,
     pub line: Option<ShapeLine>,
     pub content: ShapeContent,
+}
+
+/// What fills a shape or a slide.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Paint {
+    /// A colour, `RRGGBB`.
+    Solid(String),
+    Gradient(Gradient),
+    /// An image of [`Presentation::media`], stretched over the frame, or repeated at
+    /// `tile_emu` from the top-left corner.
+    Picture {
+        media: usize,
+        tile_emu: Option<(i64, i64)>,
+    },
+}
+
+impl Paint {
+    /// The colour that stands for the paint where only one can be drawn: the colour itself,
+    /// or a gradient's first stop; `None` for a picture.
+    #[must_use]
+    pub fn colour(&self) -> Option<&str> {
+        match self {
+            Self::Solid(colour) => Some(colour),
+            Self::Gradient(gradient) => gradient.stops.first().map(|stop| stop.colour.as_str()),
+            Self::Picture { .. } => None,
+        }
+    }
+}
+
+/// A blend of colours across a frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Gradient {
+    /// In order of their offset, at least two.
+    pub stops: Vec<GradientStop>,
+    pub kind: GradientKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GradientKind {
+    /// Along a line through the frame, clockwise in degrees from left to right.
+    Linear { angle: f64 },
+    /// Out from a centre, given as fractions of the frame's width and height, to its far
+    /// corners.
+    Radial { centre: (f64, f64) },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GradientStop {
+    /// From 0.0 at the start to 1.0 at the end.
+    pub offset: f64,
+    /// `RRGGBB`.
+    pub colour: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -14,12 +14,13 @@ use std::rc::Rc;
 
 use super::text::{BulletStyle, LEVELS, LevelStyle, list_styles, number_label};
 use super::{
-    Bullet, Frame, Presentation, ShapeContent, ShapeGeometry, ShapeLine, Slide, SlideParagraph,
-    SlideRun, SlideShape, SlideTable, SlideTableCell, SlideTableRow, TextAnchor, TextBody,
+    Bullet, Frame, Gradient, GradientKind, GradientStop, Paint, Presentation, ShapeContent,
+    ShapeGeometry, ShapeLine, Slide, SlideParagraph, SlideRun, SlideShape, SlideTable,
+    SlideTableCell, SlideTableRow, TextAnchor, TextBody,
 };
 use crate::archive::{ZipPackage, open_package, read_member_bytes, read_text_member};
 use crate::chart::{chart_picture, no_cells};
-use crate::document::{Alignment, Media, sniff_image_type};
+use crate::document::{Alignment, Media, image_pixel_size, sniff_image_type};
 use crate::presentation::slide_parts;
 use crate::relationships::{Relationship, main_part_path, read_relationships};
 use crate::theme::{Theme, colour_in};
@@ -44,6 +45,10 @@ const DEFAULT_INSETS: [i64; 4] = [91_440, 45_720, 91_440, 45_720];
 /// Text of no style is 18 points.
 const DEFAULT_SIZE_HUNDREDTHS: u32 = 1_800;
 const DEFAULT_LINE_EMU: i64 = 9_525;
+/// A pixel at 96 to the inch.
+const PIXEL_EMU: f64 = 9_525.0;
+/// No gradient blends more colours than this.
+const MAX_GRADIENT_STOPS: usize = 64;
 
 /// A layout or a master, with what its shapes need.
 struct Template {
@@ -247,15 +252,28 @@ impl Reader<'_, '_> {
             number,
         };
 
+        let mut background = None;
+        for (part, part_relationships) in [
+            Some((&root, relationships.as_slice())),
+            context
+                .layout
+                .as_ref()
+                .map(|layout| (&layout.root, layout.relationships.as_slice())),
+            context
+                .master
+                .as_ref()
+                .map(|master| (&master.root, master.relationships.as_slice())),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(paint) = self.background(part, part_relationships, &context.theme) {
+                background = Some(paint);
+                break;
+            }
+        }
         let mut slide = Slide {
-            background: [
-                Some(&root),
-                context.layout.as_ref().map(|layout| &layout.root),
-                context.master.as_ref().map(|master| &master.root),
-            ]
-            .into_iter()
-            .flatten()
-            .find_map(|part| background(part, &context.theme)),
+            background,
             shapes: Vec::new(),
         };
         let shows = |part: &Element| part.attribute(Namespace::None, "showMasterSp") != Some("0");
@@ -331,7 +349,7 @@ impl Reader<'_, '_> {
             }
             match (element.namespace, element.name.as_str()) {
                 (P, "sp" | "cxnSp") => {
-                    if let Some(shape) = self.shape(element, context, transform) {
+                    if let Some(shape) = self.shape(element, relationships, context, transform) {
                         shapes.push(shape);
                     }
                 }
@@ -429,6 +447,7 @@ impl Reader<'_, '_> {
     fn shape(
         &mut self,
         shape: &Element,
+        relationships: &[Relationship],
         context: &Context,
         transform: &Transform,
     ) -> Option<SlideShape> {
@@ -444,9 +463,11 @@ impl Reader<'_, '_> {
         let geometry = shape_geometry(properties, frame, flipped);
         let style = shape.child(P, "style");
         let theme = &context.theme;
-        let fill = match properties.map_or(Fill::Unset, |properties| fill_of(properties, theme)) {
-            Fill::Unset => style_colour(style, "fillRef", theme),
-            Fill::Named(colour) => colour,
+        let fill = match properties.map_or(Fill::Unset, |properties| {
+            self.paint_of(properties, relationships, theme)
+        }) {
+            Fill::Unset => style_colour(style, "fillRef", theme).map(Paint::Solid),
+            Fill::Named(paint) => paint,
         };
         let line = properties
             .and_then(|properties| properties.child(A, "ln"))
@@ -593,8 +614,11 @@ impl Reader<'_, '_> {
                         anchor,
                         ..body
                     },
-                    fill: properties
-                        .and_then(|properties| fill_of(properties, &context.theme).colour()),
+                    fill: properties.and_then(|properties| {
+                        fill_of(properties, &context.theme)
+                            .paint()
+                            .and_then(|paint| paint.colour().map(str::to_owned))
+                    }),
                     col_span: span("gridSpan"),
                     row_span: span("rowSpan"),
                     covered,
@@ -890,6 +914,69 @@ impl Reader<'_, '_> {
     }
 
     /// The media index of an image of a part, loading it the first time.
+    /// The fill a shape's properties name, a picture fill included.
+    fn paint_of(
+        &mut self,
+        properties: &Element,
+        relationships: &[Relationship],
+        theme: &Theme,
+    ) -> Fill {
+        let Some(picture) = properties.elements().find(|fill| {
+            matches!(
+                fill.name.as_str(),
+                "noFill" | "solidFill" | "gradFill" | "pattFill" | "blipFill" | "grpFill"
+            )
+        }) else {
+            return Fill::Unset;
+        };
+        if picture.name != "blipFill" {
+            return fill_of(properties, theme);
+        }
+        let Some(media) = picture
+            .child(A, "blip")
+            .and_then(|blip| blip.attribute(Namespace::Relationships, "embed"))
+            .and_then(|id| self.image(relationships, id))
+        else {
+            return Fill::Named(None);
+        };
+        let tile_emu = picture.child(A, "tile").and_then(|tile| {
+            let (width, height) = image_pixel_size(&self.media.get(media)?.bytes)?;
+            let scale = |name: &str| {
+                tile.attribute(Namespace::None, name)
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .filter(|value| value.is_finite() && *value > 0.0)
+                    .map_or(1.0, |value| value / 100_000.0)
+            };
+            let side = |pixels: u32, scale: f64| {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "an image is far below the range of i64 in EMU"
+                )]
+                let emu = (f64::from(pixels) * PIXEL_EMU * scale).round() as i64;
+                emu.max(1)
+            };
+            Some((side(width, scale("sx")), side(height, scale("sy"))))
+        });
+        Fill::Named(Some(Paint::Picture { media, tile_emu }))
+    }
+
+    /// The background of a slide, a layout or a master.
+    fn background(
+        &mut self,
+        part: &Element,
+        relationships: &[Relationship],
+        theme: &Theme,
+    ) -> Option<Paint> {
+        let background = part.child(P, "cSld")?.child(P, "bg")?;
+        if let Some(properties) = background.child(P, "bgPr") {
+            return self.paint_of(properties, relationships, theme).paint();
+        }
+        background
+            .child(P, "bgRef")
+            .and_then(|reference| colour_in(reference, theme))
+            .map(Paint::Solid)
+    }
+
     fn image(&mut self, relationships: &[Relationship], id: &str) -> Option<usize> {
         let target = relationships
             .iter()
@@ -1081,38 +1168,91 @@ fn anchor_of(value: &str) -> TextAnchor {
 enum Fill {
     /// They name no fill, so the shape's style decides.
     Unset,
-    /// They name one, a colour or none at all.
-    Named(Option<String>),
+    /// They name one, a paint or none at all.
+    Named(Option<Paint>),
 }
 
 impl Fill {
-    fn colour(self) -> Option<String> {
+    fn paint(self) -> Option<Paint> {
         match self {
             Self::Unset => None,
-            Self::Named(colour) => colour,
+            Self::Named(paint) => paint,
         }
     }
 }
 
-/// The fill a shape's properties name; a gradient shows its first stop, a pattern its
-/// foreground.
+/// The fill a shape's properties name without a picture: a colour, a gradient, a pattern as
+/// its foreground; a picture fill counts as unset here.
 fn fill_of(properties: &Element, theme: &Theme) -> Fill {
     properties
         .elements()
         .find_map(|fill| match fill.name.as_str() {
             "noFill" => Some(None),
-            "solidFill" => Some(colour_in(fill, theme)),
-            "gradFill" => Some(
-                fill.descendant(A, "gs")
-                    .and_then(|stop| colour_in(stop, theme)),
-            ),
+            "solidFill" => Some(colour_in(fill, theme).map(Paint::Solid)),
+            "gradFill" => Some(gradient_of(fill, theme)),
             "pattFill" => Some(
                 fill.child(A, "fgClr")
-                    .and_then(|colour| colour_in(colour, theme)),
+                    .and_then(|colour| colour_in(colour, theme))
+                    .map(Paint::Solid),
             ),
             _ => None,
         })
         .map_or(Fill::Unset, Fill::Named)
+}
+
+/// A `a:gradFill`: its stops in order, along its `a:lin` angle or out from the centre its
+/// `a:path` names; one stop is a colour.
+fn gradient_of(fill: &Element, theme: &Theme) -> Option<Paint> {
+    let mut stops: Vec<GradientStop> = fill
+        .child(A, "gsLst")
+        .into_iter()
+        .flat_map(Element::elements)
+        .filter(|stop| stop.is(A, "gs"))
+        .filter_map(|stop| {
+            let offset = stop
+                .attribute(Namespace::None, "pos")
+                .and_then(|position| position.parse::<f64>().ok())
+                .filter(|position| position.is_finite())
+                .unwrap_or(0.0);
+            Some(GradientStop {
+                offset: (offset / 100_000.0).clamp(0.0, 1.0),
+                colour: colour_in(stop, theme)?,
+            })
+        })
+        .take(MAX_GRADIENT_STOPS)
+        .collect();
+    stops.sort_by(|first, second| first.offset.total_cmp(&second.offset));
+    match stops.len() {
+        0 => return None,
+        1 => return stops.pop().map(|stop| Paint::Solid(stop.colour)),
+        _ => {}
+    }
+    let kind = match fill.child(A, "path") {
+        Some(path) => {
+            let inset = |name: &str| {
+                path.child(A, "fillToRect")
+                    .and_then(|rect| rect.attribute(Namespace::None, name))
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .filter(|value| value.is_finite())
+                    .map_or(0.5, |value| value / 100_000.0)
+            };
+            GradientKind::Radial {
+                centre: (
+                    f64::midpoint(inset("l"), 1.0 - inset("r")).clamp(0.0, 1.0),
+                    f64::midpoint(inset("t"), 1.0 - inset("b")).clamp(0.0, 1.0),
+                ),
+            }
+        }
+        None => GradientKind::Linear {
+            angle: fill
+                .child(A, "lin")
+                .and_then(|line| line.attribute(Namespace::None, "ang"))
+                .and_then(|angle| angle.parse::<f64>().ok())
+                .filter(|angle| angle.is_finite())
+                .map_or(90.0, |angle| (angle / 60_000.0).rem_euclid(360.0)),
+        },
+    };
+    Some(Paint::Gradient(Gradient { stops, kind }))
 }
 
 fn line_of(line: &Element, theme: &Theme) -> Option<ShapeLine> {
@@ -1137,17 +1277,6 @@ fn style_colour(style: Option<&Element>, name: &str, theme: &Theme) -> Option<St
         return None;
     }
     colour_in(reference, theme)
-}
-
-/// The background colour of a slide, a layout or a master.
-fn background(part: &Element, theme: &Theme) -> Option<String> {
-    let background = part.child(P, "cSld")?.child(P, "bg")?;
-    if let Some(properties) = background.child(P, "bgPr") {
-        return fill_of(properties, theme).colour();
-    }
-    background
-        .child(P, "bgRef")
-        .and_then(|reference| colour_in(reference, theme))
 }
 
 fn related(relationships: &[Relationship], kind: &str) -> Option<String> {

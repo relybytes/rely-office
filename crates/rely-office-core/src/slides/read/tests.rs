@@ -17,7 +17,8 @@ const NS: &str = concat!(
     r#"xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006""#
 );
 const PNG: &[u8] = &[
-    0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 13, b'I', b'H', b'D', b'R',
+    0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0,
+    0, 20, 0, 0, 0, 10,
 ];
 
 fn relationships(items: &[(&str, &str, &str)]) -> String {
@@ -244,6 +245,10 @@ fn texts(shape: &SlideShape) -> &TextBody {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one slide checks every inherited property of its placeholders"
+)]
 fn places_and_styles_placeholders_from_their_layout_and_master() {
     let slide = format!(
         "<p:cSld>{}</p:cSld>",
@@ -276,7 +281,7 @@ fn places_and_styles_placeholders_from_their_layout_and_master() {
     );
     let slide = &presentation.slides[0];
     assert_eq!(
-        slide.background.as_deref(),
+        slide.background.as_ref().and_then(Paint::colour),
         Some("EEEEEE"),
         "bg2 from the master"
     );
@@ -285,7 +290,10 @@ fn places_and_styles_placeholders_from_their_layout_and_master() {
         3,
         "the master's bar, then the slide's two placeholders"
     );
-    assert_eq!(slide.shapes[0].fill.as_deref(), Some("2F5597"));
+    assert_eq!(
+        slide.shapes[0].fill.as_ref().and_then(Paint::colour),
+        Some("2F5597")
+    );
     assert_eq!(slide.shapes[0].content, ShapeContent::None);
 
     let title = &slide.shapes[1];
@@ -398,7 +406,10 @@ fn reads_shapes_pictures_groups_tables_and_fields() {
     );
     let presentation = read(&[&slide, &slide]);
     let slide = &presentation.slides[1];
-    assert_eq!(slide.background.as_deref(), Some("FAFAFA"));
+    assert_eq!(
+        slide.background.as_ref().and_then(Paint::colour),
+        Some("FAFAFA")
+    );
     let shapes = &slide.shapes[1..];
 
     let boxed = &shapes[0];
@@ -409,7 +420,7 @@ fn reads_shapes_pictures_groups_tables_and_fields() {
     assert_eq!(paths[0].commands.len(), 9);
     assert!((boxed.rotation - 90.0).abs() < f64::EPSILON);
     assert_eq!(
-        boxed.fill.as_deref(),
+        boxed.fill.as_ref().and_then(Paint::colour),
         Some("00FF00"),
         "from the style's fill reference"
     );
@@ -458,7 +469,10 @@ fn reads_shapes_pictures_groups_tables_and_fields() {
         }
     );
     assert_eq!(
-        (grouped.geometry.clone(), grouped.fill.as_deref()),
+        (
+            grouped.geometry.clone(),
+            grouped.fill.as_ref().and_then(Paint::colour)
+        ),
         (ShapeGeometry::Ellipse, Some("123456"))
     );
 
@@ -492,7 +506,7 @@ fn reads_shapes_pictures_groups_tables_and_fields() {
     assert!(table.rows[0].cells[1].covered);
     assert_eq!(table.rows[1].cells[1].fill, None);
     assert_eq!(
-        shapes[6].fill.as_deref(),
+        shapes[6].fill.as_ref().and_then(Paint::colour),
         Some("ABCDEF"),
         "the alternate content's choice"
     );
@@ -677,4 +691,126 @@ fn draws_presets_and_custom_geometries_as_paths_mirrored_as_their_frame_says() {
     assert_eq!(shapes[5].geometry, ShapeGeometry::Rectangle);
     assert_eq!(shapes[6].geometry, ShapeGeometry::Other);
     assert_eq!(shapes[7].geometry, ShapeGeometry::Line { flipped: true });
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one slide carries every kind of fill"
+)]
+fn reads_gradients_and_pictures_as_fills() {
+    let shape = |id: u32, fill: &str| {
+        format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="S{id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm>{fill}</p:spPr></p:sp>"#
+        )
+    };
+    let shapes = [
+        shape(
+            2,
+            concat!(
+                r#"<a:gradFill><a:gsLst><a:gs pos="100000"><a:srgbClr val="FFFFFF"/></a:gs>"#,
+                r#"<a:gs pos="0"><a:schemeClr val="accent1"/></a:gs><a:gs pos="nope"><a:srgbClr val="000000"/></a:gs>"#,
+                r#"</a:gsLst><a:lin ang="2700000"/></a:gradFill>"#
+            ),
+        ),
+        shape(
+            3,
+            concat!(
+                r#"<a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs></a:gsLst>"#,
+                r#"<a:path path="circle"><a:fillToRect l="100000" t="0" r="0" b="100000"/></a:path></a:gradFill>"#
+            ),
+        ),
+        shape(
+            4,
+            r#"<a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="1"><a:srgbClr val="00FF00"/></a:gs></a:gsLst></a:gradFill>"#,
+        ),
+        shape(
+            5,
+            r#"<a:blipFill><a:blip r:embed="rId2"/><a:stretch/></a:blipFill>"#,
+        ),
+        shape(
+            6,
+            r#"<a:blipFill><a:blip r:embed="rId2"/><a:tile sx="50000" sy="200000"/></a:blipFill>"#,
+        ),
+        shape(
+            7,
+            r#"<a:blipFill><a:blip r:embed="rId3"/></a:blipFill>"#,
+        ),
+        shape(
+            8,
+            r#"<a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="ABCDEF"/></a:gs></a:gsLst></a:gradFill>"#,
+        ),
+    ]
+    .concat();
+    let slide = format!(
+        r#"<p:cSld><p:bg><p:bgPr><a:blipFill><a:blip r:embed="rId2"/></a:blipFill></p:bgPr></p:bg>{}</p:cSld>"#,
+        tree(&shapes)
+    );
+    let presentation = read(&[&slide]);
+    let slide = &presentation.slides[0];
+    assert_eq!(
+        slide.background,
+        Some(Paint::Picture {
+            media: 0,
+            tile_emu: None
+        })
+    );
+    let fills: Vec<Option<Paint>> = slide.shapes[1..]
+        .iter()
+        .map(|shape| shape.fill.clone())
+        .collect();
+    let stop = |offset: f64, colour: &str| GradientStop {
+        offset,
+        colour: colour.to_owned(),
+    };
+    assert_eq!(
+        fills[0],
+        Some(Paint::Gradient(Gradient {
+            stops: vec![
+                stop(0.0, "2F5597"),
+                stop(0.0, "000000"),
+                stop(1.0, "FFFFFF")
+            ],
+            kind: GradientKind::Linear { angle: 45.0 },
+        })),
+        "the stops in order of their position, an unreadable one at the start"
+    );
+    assert_eq!(
+        fills[1],
+        Some(Paint::Gradient(Gradient {
+            stops: vec![stop(0.0, "FF0000"), stop(1.0, "0000FF")],
+            kind: GradientKind::Radial { centre: (1.0, 0.0) },
+        }))
+    );
+    assert!(
+        matches!(
+            &fills[2],
+            Some(Paint::Gradient(Gradient {
+                kind: GradientKind::Linear { angle },
+                ..
+            })) if (*angle - 90.0).abs() < f64::EPSILON
+        ),
+        "no line and no path is a gradient from top to bottom"
+    );
+    assert_eq!(
+        fills[3],
+        Some(Paint::Picture {
+            media: 0,
+            tile_emu: None
+        })
+    );
+    assert_eq!(
+        fills[4],
+        Some(Paint::Picture {
+            media: 0,
+            tile_emu: Some((95_250, 190_500))
+        }),
+        "a tile of 20 by 10 pixels at half and double size"
+    );
+    assert_eq!(
+        slide.shapes.len(),
+        7,
+        "a picture fill that is missing is no fill"
+    );
+    assert_eq!(fills[5], Some(Paint::Solid("ABCDEF".to_owned())));
 }

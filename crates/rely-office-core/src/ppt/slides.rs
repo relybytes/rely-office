@@ -16,7 +16,7 @@ use super::text_style::{
     CharacterStyle, Colour, ParagraphStyle, character_exception, master_levels, style_runs,
 };
 use crate::compound::{open_compound_file, read_stream, u16_at, u32_at};
-use crate::document::{Alignment, Media, bullet_character, sniff_image_type};
+use crate::document::{Alignment, Media, bullet_character, image_pixel_size, sniff_image_type};
 use crate::geometry::{flip_paths, preset_geometry};
 use crate::office_art::{
     CHILD_ANCHOR, CLIENT_ANCHOR, CLIENT_DATA, CLIENT_TEXTBOX, DRAWING_CONTAINER, GROUP_CONTAINER,
@@ -25,11 +25,13 @@ use crate::office_art::{
     store_images,
 };
 use crate::slides::{
-    Bullet, Frame, Presentation, ShapeContent, ShapeGeometry, ShapeLine, Slide, SlideParagraph,
-    SlideRun, SlideShape, TextAnchor, TextBody,
+    Bullet, Frame, Gradient, GradientKind, GradientStop, Paint, Presentation, ShapeContent,
+    ShapeGeometry, ShapeLine, Slide, SlideParagraph, SlideRun, SlideShape, TextAnchor, TextBody,
 };
 use crate::{Limits, OfficeError};
 
+/// A pixel at 96 to the inch.
+const PIXEL_EMU: i64 = 9_525;
 const DOCUMENT: u16 = 0x03E8;
 const DOCUMENT_ATOM: u16 = 0x03E9;
 const SLIDE: u16 = 0x03EE;
@@ -134,7 +136,7 @@ struct TextGroup {
 #[derive(Debug, Clone, Default)]
 struct Master {
     shapes: Vec<SlideShape>,
-    background: Option<String>,
+    background: Option<Paint>,
     scheme: Vec<String>,
     /// The levels of each text type's style.
     styles: HashMap<u16, Vec<(ParagraphStyle, CharacterStyle)>>,
@@ -471,7 +473,7 @@ impl<'a> Reader<'a> {
         texts: &[TextGroup],
         styles: &HashMap<u16, Vec<(ParagraphStyle, CharacterStyle)>>,
         is_master: bool,
-    ) -> (Vec<SlideShape>, Option<String>) {
+    ) -> (Vec<SlideShape>, Option<Paint>) {
         let Some(drawing) =
             child(container, DRAWING).and_then(|drawing| child(drawing.body, DRAWING_CONTAINER))
         else {
@@ -491,7 +493,7 @@ impl<'a> Reader<'a> {
                 SHAPE_CONTAINER => {
                     let options = Options::read(record.body);
                     if options.background {
-                        background = options.fill_colour(scheme);
+                        background = self.paint(&options, scheme);
                     }
                 }
                 _ => {}
@@ -572,7 +574,7 @@ impl<'a> Reader<'a> {
         let fill = options
             .filled
             .unwrap_or(!is_text_box)
-            .then(|| options.fill_colour(context.scheme))
+            .then(|| self.paint(&options, context.scheme))
             .flatten()
             .filter(|_| !matches!(geometry, ShapeGeometry::Line { .. }));
         let line = options
@@ -602,6 +604,35 @@ impl<'a> Reader<'a> {
             line,
             content: shape_content,
         })
+    }
+
+    /// A shape's fill ([MS-ODRAW] 2.3.7): a colour, a shaded blend of its two colours, or a
+    /// picture, pattern or texture of the blip store.
+    fn paint(&mut self, options: &Options, scheme: &[String]) -> Option<Paint> {
+        let colour = options.fill_colour(scheme)?;
+        match options.fill_type {
+            1..=3 => {
+                let media = options.fill_blip.and_then(|index| self.picture(index));
+                let Some(media) = media else {
+                    return Some(Paint::Solid(colour));
+                };
+                let tile_emu = (options.fill_type != 3)
+                    .then(|| {
+                        let (width, height) = image_pixel_size(&self.media.get(media)?.bytes)?;
+                        Some((i64::from(width) * PIXEL_EMU, i64::from(height) * PIXEL_EMU))
+                    })
+                    .flatten();
+                Some(Paint::Picture { media, tile_emu })
+            }
+            4..=8 => {
+                let back = options
+                    .fill_back
+                    .and_then(|value| reference_colour(value, scheme))
+                    .unwrap_or_else(|| "FFFFFF".to_owned());
+                Some(shaded_fill(options, &colour, &back))
+            }
+            _ => Some(Paint::Solid(colour)),
+        }
     }
 
     /// A store image as media, kept once.
@@ -1063,6 +1094,33 @@ fn preset_of_shape_type(kind: u16) -> Option<&'static str> {
     })
 }
 
+/// A shaded fill: the fill colour blending to the back colour along the fill's angle, the back
+/// colour at the focus; a focus inside the shape blends out to both sides, and the types that
+/// shade from the centre or the shape's own outline blend outwards from its middle.
+fn shaded_fill(options: &Options, colour: &str, back: &str) -> Paint {
+    let focus = f64::from(options.fill_focus.clamp(-100, 100)) / 100.0;
+    let stop = |offset: f64, colour: &str| GradientStop {
+        offset,
+        colour: colour.to_owned(),
+    };
+    let stops = if focus <= -1.0 + f64::EPSILON || focus >= 1.0 - f64::EPSILON {
+        vec![stop(0.0, colour), stop(1.0, back)]
+    } else if focus.abs() < f64::EPSILON {
+        vec![stop(0.0, back), stop(1.0, colour)]
+    } else {
+        let middle = focus.abs();
+        vec![stop(0.0, colour), stop(middle, back), stop(1.0, colour)]
+    };
+    let kind = if matches!(options.fill_type, 5 | 6) {
+        GradientKind::Radial { centre: (0.5, 0.5) }
+    } else {
+        GradientKind::Linear {
+            angle: (90.0 - options.fill_angle).rem_euclid(360.0),
+        }
+    };
+    Paint::Gradient(Gradient { stops, kind })
+}
+
 /// The outline of a shape type (`MSOSPT`), drawn from the `DrawingML` preset of the same shape.
 fn geometry(kind: u16, frame: Frame, flip_horizontal: bool, flip_vertical: bool) -> ShapeGeometry {
     let preset = match kind {
@@ -1110,6 +1168,13 @@ struct Options {
     group_coordinates: Option<(i64, i64, i64, i64)>,
     picture: Option<u32>,
     fill: Option<u32>,
+    fill_type: u32,
+    fill_back: Option<u32>,
+    fill_blip: Option<u32>,
+    /// Degrees, counter-clockwise from a blend running top to bottom.
+    fill_angle: f64,
+    /// Where the second colour stands, in percent of the way across.
+    fill_focus: i32,
     filled: Option<bool>,
     line_colour: Option<u32>,
     line_width: Option<u32>,
@@ -1246,7 +1311,14 @@ impl Options {
                 0x0104 => self.picture = Some(value),
                 0x0140..=0x0143 => self.freeform.bounds[usize::from(identifier - 0x0140)] = length,
                 0x0147..=0x0150 => self.freeform.adjust[usize::from(identifier - 0x0147)] = length,
+                0x0180 => self.fill_type = value,
                 0x0181 => self.fill = Some(value),
+                0x0183 => self.fill_back = Some(value),
+                0x0186 => self.fill_blip = Some(value),
+                0x018B => {
+                    self.fill_angle = f64::from(i32::from_le_bytes(value.to_le_bytes())) / 65_536.0;
+                }
+                0x018C => self.fill_focus = i32::from_le_bytes(value.to_le_bytes()),
                 0x01BF => self.filled = flag(value, 4).or(self.filled),
                 0x01C0 => self.line_colour = Some(value),
                 0x01CB => self.line_width = Some(value),
