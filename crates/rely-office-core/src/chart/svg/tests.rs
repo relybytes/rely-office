@@ -40,6 +40,8 @@ fn plot(kind: PlotKind, grouping: Grouping, series: Vec<Series>) -> Plot {
         secondary: false,
         vary_colours: false,
         first_slice_degrees: 0,
+        high_low_lines: false,
+        up_down_bars: None,
     }
 }
 
@@ -516,5 +518,45 @@ fn draws_radars_and_bubbles() {
     assert!(
         (radii[1] / radii[0] - 2.0).abs() < 0.01,
         "sized by area: {radii:?}"
+    );
+}
+
+#[test]
+fn draws_high_low_lines_up_down_bars_and_the_close_tick() {
+    let marks = |values: &[Option<f64>], colour: &str| {
+        let mut series = series(colour, values, colour);
+        series.line = false;
+        series
+    };
+    let mut stock = plot(
+        PlotKind::Line,
+        Grouping::Standard,
+        vec![
+            marks(&[Some(5.0), Some(6.0)], "111111"),
+            marks(&[Some(2.0), Some(3.0)], "222222"),
+            marks(&[Some(4.0), None], "333333"),
+        ],
+    );
+    stock.high_low_lines = true;
+    let svg = chart_svg(&chart(vec![stock.clone()]), 400.0, 300.0);
+    let stock_lines = svg.matches(&format!("stroke=\"{STOCK_COLOUR}\"")).count();
+    assert_eq!(
+        stock_lines, 3,
+        "a line per category and a tick for the close: {svg}"
+    );
+    assert!(svg.contains("stroke-width=\"1.5\""));
+
+    stock.series.truncate(2);
+    stock.series[1].values = vec![Some(7.0), Some(1.0)];
+    stock.up_down_bars = Some(("FFFFFF".to_owned(), "000000".to_owned()));
+    let svg = chart_svg(&chart(vec![stock]), 400.0, 300.0);
+    assert!(svg.contains("<rect") && svg.contains("fill=\"#FFFFFF\" stroke=\"#404040\""));
+    assert!(
+        svg.contains("fill=\"#000000\" stroke=\"#404040\""),
+        "a fall: {svg}"
+    );
+    assert!(
+        !svg.contains("stroke-width=\"1.5\""),
+        "no tick beside a bar"
     );
 }

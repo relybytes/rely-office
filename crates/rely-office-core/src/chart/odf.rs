@@ -147,6 +147,22 @@ pub(crate) fn read_odf_chart(xml: &str, locale: NumberLocale) -> Option<Chart> {
         _ => None,
     };
     let default_kind = kind_of(class)?;
+    // A stock chart draws its series as marks between their values, never as lines.
+    let stock = class.trim_start_matches("chart:") == "stock";
+    let stock_fill = |name: &str, default: &str| {
+        let style = plot_area
+            .child(CHART, name)
+            .and_then(|marker| marker.attribute(CHART, "style-name"));
+        property(style, "graphic-properties", DRAW, "fill-color")
+            .and_then(|value| hex(&value))
+            .unwrap_or_else(|| default.to_owned())
+    };
+    let up_down_bars = (stock && flag("japanese-candle-stick")).then(|| {
+        (
+            stock_fill("stock-gain-marker", "FFFFFF"),
+            stock_fill("stock-loss-marker", "000000"),
+        )
+    });
 
     let axes: Vec<&Element> = plot_area
         .elements()
@@ -274,12 +290,14 @@ pub(crate) fn read_odf_chart(xml: &str, locale: NumberLocale) -> Option<Chart> {
             sizes,
             colour,
             point_colours,
-            line: kind != PlotKind::Bubble
+            line: !stock
+                && kind != PlotKind::Bubble
                 && (property(style, "graphic-properties", DRAW, "stroke").as_deref()
                     != Some("none")
                     || kind != PlotKind::Scatter),
-            markers: kind == PlotKind::Scatter
-                || symbol.as_deref().is_some_and(|symbol| symbol != "none"),
+            markers: !stock
+                && (kind == PlotKind::Scatter
+                    || symbol.as_deref().is_some_and(|symbol| symbol != "none")),
             labels: DataLabels {
                 value: matches!(label.as_deref(), Some("value" | "value-and-percentage")),
                 percent: matches!(
@@ -312,6 +330,8 @@ pub(crate) fn read_odf_chart(xml: &str, locale: NumberLocale) -> Option<Chart> {
                 secondary: false,
                 vary_colours: pies,
                 first_slice_degrees: 0,
+                high_low_lines: stock,
+                up_down_bars: up_down_bars.clone(),
             }),
         }
     }

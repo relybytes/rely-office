@@ -386,3 +386,25 @@ fn reads_radar_and_bubble_charts() {
     assert_eq!(series.sizes, [Some(3.0), Some(12.0)]);
     assert!(!series.line && !series.markers);
 }
+
+#[test]
+fn reads_the_high_low_lines_and_up_down_bars_of_a_stock_chart() {
+    let xml = chart_space(
+        &format!(
+            concat!(
+                r#"<c:plotArea><c:stockChart>{}{}<c:hiLowLines/><c:upDownBars><c:upBars><c:spPr><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></c:spPr></c:upBars>"#,
+                r#"<c:downBars/></c:upDownBars></c:stockChart></c:plotArea>"#
+            ),
+            series(0, "Apertura", &["1", "2", "3"], ""),
+            series(1, "Chiusura", &["2", "1", "3"], "")
+        ),
+        "",
+    );
+    let plot = &read(&xml).plots[0];
+    assert_eq!(plot.kind, PlotKind::Line);
+    assert!(plot.high_low_lines);
+    assert_eq!(
+        plot.up_down_bars,
+        Some(("00FF00".to_owned(), "000000".to_owned()))
+    );
+}

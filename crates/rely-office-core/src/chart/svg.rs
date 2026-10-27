@@ -16,6 +16,7 @@ const FONT: &str = "Calibri, Carlito, Liberation Sans, Arial, sans-serif";
 const TEXT_COLOUR: &str = "#595959";
 const GRID_COLOUR: &str = "#D9D9D9";
 const AXIS_COLOUR: &str = "#BFBFBF";
+const STOCK_COLOUR: &str = "#404040";
 const PAD: f64 = 6.0;
 /// An average glyph width, as a fraction of the font size, to measure text before it is set.
 const GLYPH_WIDTH: f64 = 0.52;
@@ -944,6 +945,16 @@ fn categories(svg: &mut String, chart: &Chart, area: Area) {
             }
             PlotKind::Line | PlotKind::Area => {
                 let between = primary_axis.between.unwrap_or(plot.kind == PlotKind::Line);
+                let place = |index: usize, value: f64| {
+                    let along = category_position(index, between);
+                    let value = position(value.clamp(scale.minimum, scale.maximum));
+                    if horizontal {
+                        (value, along)
+                    } else {
+                        (along, value)
+                    }
+                };
+                stock_marks(svg, plot, points, band, horizontal, &place);
                 let mut floor = vec![0.0; points];
                 for series in &plot.series {
                     let mut tops = Vec::with_capacity(points);
@@ -1289,6 +1300,74 @@ fn scatter(svg: &mut String, chart: &Chart, area: Area) {
         if series.markers || !series.line {
             for (x, y) in points.iter().flatten() {
                 marker(svg, *x, *y, &series.colour);
+            }
+        }
+    }
+}
+
+/// The high-low lines and up-down bars of a line plot, under its series, and the last series of
+/// a stock plot that draws neither as a tick beside each line.
+fn stock_marks(
+    svg: &mut String,
+    plot: &Plot,
+    points: usize,
+    band: f64,
+    horizontal: bool,
+    place: &dyn Fn(usize, f64) -> (f64, f64),
+) {
+    let value = |series: &Series, index: usize| series.values.get(index).copied().flatten();
+    if plot.high_low_lines {
+        for index in 0..points {
+            let values = plot.series.iter().filter_map(|series| value(series, index));
+            let Some((low, high)) = values.fold(None, |extent: Option<(f64, f64)>, value| {
+                Some(extent.map_or((value, value), |(low, high)| {
+                    (low.min(value), high.max(value))
+                }))
+            }) else {
+                continue;
+            };
+            let ((x1, y1), (x2, y2)) = (place(index, low), place(index, high));
+            line(svg, x1, y1, x2, y2, STOCK_COLOUR, 1.0);
+        }
+    }
+    let (Some(first), Some(last)) = (plot.series.first(), plot.series.last()) else {
+        return;
+    };
+    if let Some((rise, fall)) = &plot.up_down_bars {
+        if plot.series.len() < 2 {
+            return;
+        }
+        let thickness = band * 0.4;
+        for index in 0..points {
+            let (Some(open), Some(close)) = (value(first, index), value(last, index)) else {
+                continue;
+            };
+            let ((x1, y1), (x2, y2)) = (place(index, open), place(index, close));
+            let (x, y, width, height) = if horizontal {
+                (x1.min(x2), y1 - thickness / 2.0, (x2 - x1).abs(), thickness)
+            } else {
+                (x1 - thickness / 2.0, y1.min(y2), thickness, (y2 - y1).abs())
+            };
+            let _ = write!(
+                svg,
+                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"#{}\" stroke=\"{STOCK_COLOUR}\" stroke-width=\"0.75\"/>",
+                number(x),
+                number(y),
+                number(width.max(0.75)),
+                number(height.max(0.75)),
+                if close >= open { rise } else { fall }
+            );
+        }
+    } else if plot.high_low_lines && plot.series.len() >= 3 && !last.line && !last.markers {
+        let reach = band * 0.15;
+        for index in 0..points {
+            if let Some(close) = value(last, index) {
+                let (x, y) = place(index, close);
+                if horizontal {
+                    line(svg, x, y, x, y + reach, STOCK_COLOUR, 1.5);
+                } else {
+                    line(svg, x, y, x + reach, y, STOCK_COLOUR, 1.5);
+                }
             }
         }
     }

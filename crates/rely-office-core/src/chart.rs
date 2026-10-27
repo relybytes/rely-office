@@ -126,6 +126,11 @@ pub(crate) struct Plot {
     /// Every point of a pie or a single series takes its own colour.
     pub vary_colours: bool,
     pub first_slice_degrees: u32,
+    /// A line from the lowest value of each category to its highest, as a stock chart draws.
+    pub high_low_lines: bool,
+    /// A bar from the first series to the last at each category, in the fill of a rise and of
+    /// a fall.
+    pub up_down_bars: Option<(String, String)>,
 }
 
 /// A value axis as the file sets it.
@@ -441,6 +446,16 @@ pub(crate) fn read_chart(
                 .and_then(|angle| angle.parse().ok())
                 .unwrap_or(0)
                 % 360,
+            high_low_lines: plot.child(C, "hiLowLines").is_some(),
+            up_down_bars: plot.child(C, "upDownBars").map(|bars| {
+                let bar_fill = |name: &str, default: &str| {
+                    bars.child(C, name)
+                        .and_then(|bar| bar.child(C, "spPr"))
+                        .and_then(|properties| fill(properties, theme))
+                        .unwrap_or_else(|| default.to_owned())
+                };
+                (bar_fill("upBars", "FFFFFF"), bar_fill("downBars", "000000"))
+            }),
         });
     }
     if plots.is_empty() {

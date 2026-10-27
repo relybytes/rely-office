@@ -225,3 +225,36 @@ fn reads_radars_and_bubbles_from_the_copy_of_the_sheet() {
     );
     assert!(!series.line);
 }
+
+#[test]
+fn reads_a_stock_chart_as_marks_between_its_series() {
+    let styles = concat!(
+        r#"<style:style style:name="plot" style:family="chart"><style:chart-properties chart:japanese-candle-stick="true"/></style:style>"#,
+        r##"<style:style style:name="gain" style:family="chart"><style:graphic-properties draw:fill-color="#00ff00"/></style:style>"##
+    );
+    let plot = concat!(
+        r#"<chart:series chart:values-cell-range-address="local-table.$B$2:.$B$4"/>"#,
+        r#"<chart:series chart:values-cell-range-address="local-table.$C$2:.$C$4"/>"#,
+        r#"<chart:stock-gain-marker chart:style-name="gain"/><chart:stock-loss-marker/><chart:stock-range-line/>"#
+    );
+    let read = read_odf_chart(
+        &chart("chart:stock", styles, plot, ""),
+        NumberLocale::Italian,
+    )
+    .unwrap();
+    let stock = &read.plots[0];
+    assert_eq!(stock.kind, PlotKind::Line);
+    assert!(stock.high_low_lines);
+    assert_eq!(
+        stock.up_down_bars,
+        Some(("00FF00".to_owned(), "000000".to_owned()))
+    );
+    assert!(
+        stock
+            .series
+            .iter()
+            .all(|series| !series.line && !series.markers)
+    );
+    let plain = read_odf_chart(&chart("chart:stock", "", plot, ""), NumberLocale::Italian).unwrap();
+    assert_eq!(plain.plots[0].up_down_bars, None, "no candles unless asked");
+}
