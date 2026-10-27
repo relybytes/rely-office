@@ -7,6 +7,7 @@
 //! How paragraphs, runs and tables look on the page: spacing, indents, fonts, column widths and
 //! borders. A renderer needs them and an editor does not, so they never reach the JSON of the tree.
 
+use super::anchor::TextFrame;
 use super::edges::{
     Borders, TabStop, hex_colour, highlight_colour, merge_tabs, parse_tabs, shading_fill,
 };
@@ -152,6 +153,8 @@ pub struct ParagraphLook {
     pub borders: Borders,
     /// The label a numbered or bulleted paragraph shows, as the numbering part writes it.
     pub list_label: Option<ListLabel>,
+    /// The text box the paragraph is in.
+    pub frame: Option<TextFrame>,
 }
 
 /// What separates a list label from the text.
@@ -233,6 +236,7 @@ impl ParagraphLook {
             shading: self.shading.or(fallback.shading),
             borders: self.borders.or(fallback.borders),
             list_label: self.list_label.or(fallback.list_label),
+            frame: self.frame.or(fallback.frame),
         }
     }
 }
@@ -249,6 +253,8 @@ pub struct TableLook {
     pub cell_margins_twips: [Option<u32>; 4],
     /// The table's borders, its own over its style's.
     pub edges: Borders,
+    /// The text box the table is in.
+    pub frame: Option<TextFrame>,
 }
 
 impl TableLook {
@@ -300,6 +306,7 @@ impl TableLook {
                 margin(&["bottom"]),
                 margin(&["right", "end"]),
             ],
+            frame: None,
         }
     }
 }

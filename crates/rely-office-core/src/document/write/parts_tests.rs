@@ -84,6 +84,7 @@ fn writes_notes_and_reads_them_back_in_order() {
                         alt: None,
                         width: Some(10),
                         height: Some(10),
+                        anchor: None,
                     }]),
                 ],
             },
@@ -146,6 +147,7 @@ fn writes_headers_and_footers_and_their_variants() {
                     alt: None,
                     width: None,
                     height: None,
+                    anchor: None,
                 },
             ])],
             footer: vec![paragraph(vec![
@@ -360,6 +362,7 @@ fn writes_the_looks_a_tree_read_from_a_docx_carries() {
             inside_vertical: None,
         },
         list_label: None,
+        frame: None,
     };
     let heading_look = ParagraphLook {
         list_label: Some(ListLabel {
@@ -420,6 +423,7 @@ fn writes_the_looks_a_tree_read_from_a_docx_carries() {
                         inside_horizontal: Some(border.clone()),
                         ..Borders::default()
                     },
+                    frame: None,
                 },
             },
         ],

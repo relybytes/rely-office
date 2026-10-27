@@ -613,6 +613,7 @@ fn returns_images_once_with_their_alt_text_size_and_type() {
         alt: Some("Il logo".to_owned()),
         width: Some(100),
         height: Some(50),
+        anchor: None,
     };
     assert_eq!(
         read.blocks,
@@ -627,6 +628,7 @@ fn returns_images_once_with_their_alt_text_size_and_type() {
                     alt: Some("vecchia".to_owned()),
                     width: Some(100),
                     height: Some(40),
+                    anchor: None,
                 },
             ]
         }]
@@ -1081,8 +1083,10 @@ fn gives_each_block_the_look_of_its_style_list_and_direct_formatting() {
             borders: true,
             cell_margins_twips: [None; 4],
             edges: look.edges.clone(),
+            frame: None,
         }
     );
 }
 
+mod floats;
 mod parts;

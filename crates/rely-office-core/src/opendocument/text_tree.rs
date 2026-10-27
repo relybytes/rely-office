@@ -16,8 +16,8 @@ use crate::chart::{odf_chart_picture, odf_object_part};
 use crate::document::{
     Block, Borders, CellLook, DocumentTree, HeadersFooters, ImportReport, Inline, LabelSuffix,
     ListLabel, Mark, Media, Note, NoteKind, PageField, PageLayout, ParagraphLook, RunLook, Section,
-    TableCell, TableLook, TableRow, bullet_label, number_label, plain_text, push_block,
-    sniff_image_type,
+    TableCell, TableLook, TableRow, TextFrame, bullet_label, number_label, plain_text, push_block,
+    set_frame, sniff_image_type,
 };
 use crate::xml_tree::{Element, Namespace, Node, parse_tree};
 use crate::{Limits, OfficeError};
@@ -72,6 +72,7 @@ pub(crate) fn read_odt_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTre
         next_list_id: 0,
         outline: [0; MAX_LIST_LEVEL],
         floating: Vec::new(),
+        next_frame: 0,
     };
     // A paragraph or table whose style names a master page other than the current one starts
     // a section on that page.
@@ -192,6 +193,8 @@ struct Converter<'a, 'p> {
     outline: [u32; MAX_LIST_LEVEL],
     /// The text boxes of the paragraph being read, placed after it.
     floating: Vec<Block>,
+    /// The last id given to a text box frame.
+    next_frame: u32,
 }
 
 /// Where a paragraph sits in a list: its level, its list, the label of an item's first
@@ -747,10 +750,11 @@ impl Converter<'_, '_> {
         match element.name.as_str() {
             "frame" => {
                 if let Some(image) = element.child(DRAW, "image") {
-                    self.image(element, image, content);
+                    self.image(element, image, scope, content);
                 } else if let Some(text_box) = element.child(DRAW, "text-box") {
                     self.report.text_boxes += 1;
-                    self.text_box(text_box, scope);
+                    let frame = self.text_frame(element, scope);
+                    self.text_box(text_box, scope, frame.as_ref());
                 } else if let Some(object) = element.child(DRAW, "object") {
                     if !self.chart(element, object, content) {
                         self.report.embedded_objects += 1;
@@ -767,7 +771,8 @@ impl Converter<'_, '_> {
             _ => {
                 if element.descendant(TEXT, "p").is_some() {
                     self.report.text_boxes += 1;
-                    self.text_box(element, scope);
+                    let frame = self.text_frame(element, scope);
+                    self.text_box(element, scope, frame.as_ref());
                 } else {
                     self.report.shapes += 1;
                 }
@@ -828,19 +833,23 @@ impl Converter<'_, '_> {
             alt: title.or_else(|| Some("Grafico".to_owned())),
             width: pixels(width),
             height: pixels(height),
+            anchor: None,
         });
         true
     }
 
-    fn text_box(&mut self, container: &Element, scope: Scope) {
+    fn text_box(&mut self, container: &Element, scope: Scope, frame: Option<&TextFrame>) {
         let outer = std::mem::take(&mut self.floating);
         let mut blocks = Vec::new();
         self.blocks(container, scope, &mut blocks);
+        if let Some(frame) = frame {
+            set_frame(&mut blocks, frame);
+        }
         self.floating = outer;
         self.floating.extend(blocks);
     }
 
-    fn image(&mut self, frame: &Element, image: &Element, content: &mut Vec<Inline>) {
+    fn image(&mut self, frame: &Element, image: &Element, scope: Scope, content: &mut Vec<Inline>) {
         let Some(href) = image.attribute(XLINK, "href") else {
             self.report.missing_images += 1;
             return;
@@ -882,11 +891,13 @@ impl Converter<'_, '_> {
                     pixels
                 })
         };
+        let anchor = self.frame_anchor(frame, scope).map(Box::new);
         content.push(Inline::Image {
             media,
             alt,
             width: pixels("width"),
             height: pixels("height"),
+            anchor,
         });
     }
 
@@ -947,6 +958,7 @@ impl Converter<'_, '_> {
                 borders: state.any_border,
                 cell_margins_twips: state.padding.unwrap_or([None; 4]),
                 edges: Borders::default(),
+                frame: None,
             },
         })
     }
@@ -1415,6 +1427,8 @@ fn page_layout(
     }
     layout
 }
+
+mod frames;
 
 #[cfg(test)]
 mod tests;

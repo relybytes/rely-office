@@ -321,24 +321,28 @@ fn writes_images_and_drops_those_word_cannot_show() {
                 alt: Some("Il \"logo\"".to_owned()),
                 width: Some(100),
                 height: Some(50),
+                anchor: None,
             },
             Inline::Image {
                 media: 0,
                 alt: None,
                 width: Some(10_000),
                 height: Some(1_000),
+                anchor: None,
             },
             Inline::Image {
                 media: 1,
                 alt: Some("grafico".to_owned()),
                 width: None,
                 height: None,
+                anchor: None,
             },
             Inline::Image {
                 media: 9,
                 alt: None,
                 width: None,
                 height: None,
+                anchor: None,
             },
         ],
         None,
@@ -356,6 +360,7 @@ fn writes_images_and_drops_those_word_cannot_show() {
             alt: Some("Il \"logo\"".to_owned()),
             width: Some(100),
             height: Some(50),
+            anchor: None,
         }
     );
     let Inline::Image { width, height, .. } = &content[1] else {

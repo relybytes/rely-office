@@ -59,6 +59,8 @@ fn writer(media: &[Media]) -> Writer<'_> {
         list_counters: HashMap::new(),
         endnotes: Vec::new(),
         in_note: false,
+        page: super::PagePlace::default(),
+        open_frame: None,
     }
 }
 
@@ -276,6 +278,7 @@ fn counts_the_columns_a_table_fills_with_its_spans() {
         borders: true,
         cell_margins_twips: [Some(28), None, Some(40), Some(20)],
         edges: Borders::default(),
+        frame: None,
     };
     let table = writer.table(&rows, &bordered);
     assert!(table.starts_with("table(columns: (100pt, 300pt, ), stroke: 0.5pt, inset: (top: 1.4pt, left: 5.4pt, bottom: 2pt, right: 1pt), table.header(["));
@@ -316,18 +319,21 @@ fn sizes_images_within_the_text_width_and_frames_what_typst_cannot_read() {
                 alt: None,
                 width: Some(1_000),
                 height: Some(500),
+                anchor: None,
             },
             Inline::Image {
                 media: 1,
                 alt: None,
                 width: Some(100),
                 height: None,
+                anchor: None,
             },
             Inline::Image {
                 media: 0,
                 alt: None,
                 width: None,
                 height: None,
+                anchor: None,
             },
         ],
         align: None,

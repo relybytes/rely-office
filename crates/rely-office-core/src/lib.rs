@@ -44,10 +44,11 @@ mod xml_tree;
 mod test_support;
 
 pub use document::{
-    Alignment, Block, Border, BorderStyle, Borders, CellLook, DocumentTree, HeadersFooters,
-    ImportReport, Inline, LabelSuffix, LineSpacing, ListLabel, Mark, Media, Note, NoteKind,
-    PageField, PageLayout, ParagraphLook, RunLook, Section, TabKind, TabLeader, TabStop, TableCell,
-    TableLook, TableRow, VerticalAlignment, read_document_tree, sniff_image_type, write_docx,
+    Alignment, Anchor, AnchorAlign, AnchorBase, AnchorPosition, Block, Border, BorderStyle,
+    Borders, CellLook, DocumentTree, HeadersFooters, ImportReport, Inline, LabelSuffix,
+    LineSpacing, ListLabel, Mark, Media, Note, NoteKind, PageField, PageLayout, ParagraphLook,
+    RunLook, Section, TabKind, TabLeader, TabStop, TableCell, TableLook, TableRow, TextFrame,
+    VerticalAlignment, Wrap, read_document_tree, sniff_image_type, write_docx,
 };
 pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};

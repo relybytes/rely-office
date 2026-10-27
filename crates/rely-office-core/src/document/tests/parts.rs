@@ -552,6 +552,7 @@ fn draws_a_chart_as_an_image_in_the_colours_of_the_theme() {
             alt: Some("Fatturato".to_owned()),
             width: Some(400),
             height: Some(267),
+            anchor: None,
         }
     );
 }

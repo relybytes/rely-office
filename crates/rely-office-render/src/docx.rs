@@ -28,6 +28,7 @@ use rely_office_core::{
 use crate::fonts::{MONO, body_fonts};
 use crate::markup::{font_list, points, string_literal};
 use crate::metrics::FontLines;
+use floats::{Float, PagePlace, frame_of};
 
 const TWIPS_PER_POINT: f64 = 20.0;
 const POINTS_PER_CSS_PIXEL: f64 = 0.75;
@@ -117,6 +118,8 @@ pub(crate) fn document_source(
         body_family,
         body_size,
         text_width: PageGeometry::of(&sections[0].layout).column_width,
+        page: PagePlace::default(),
+        open_frame: None,
         default_tab: (f64::from(layout.default_tab_twips) / TWIPS_PER_POINT).max(1.0),
         files: HashMap::new(),
         list_counters: HashMap::new(),
@@ -134,6 +137,14 @@ pub(crate) fn document_source(
         };
         let geometry = PageGeometry::of(&section.layout);
         writer.text_width = geometry.column_width;
+        writer.page = PagePlace {
+            width: geometry.width,
+            height: geometry.height,
+            left: geometry.left,
+            top: geometry.top,
+            right: geometry.right,
+            bottom: geometry.bottom,
+        };
         // A continuous section on the same page goes on where the last one stopped.
         let goes_on = section.continuous
             && previous.is_some_and(|previous| PageGeometry::of(previous).same_page(&geometry));
@@ -322,6 +333,10 @@ struct Writer<'a> {
     endnotes: Vec<usize>,
     /// Inside a note, where a reference to another note is not followed.
     in_note: bool,
+    /// The page of the section being written, where floating objects are placed.
+    page: PagePlace,
+    /// The text box being written, whose blocks are not framed again.
+    open_frame: Option<u32>,
 }
 
 impl Writer<'_> {
@@ -424,10 +439,42 @@ impl Writer<'_> {
 
     /// Blocks as markup, each gap between two blocks the sum of their spacing.
     fn blocks(&mut self, blocks: &[Block]) -> String {
+        let mut placed_blocks: Vec<Placed> = Vec::new();
+        let mut index = 0;
+        while index < blocks.len() {
+            let frame = frame_of(&blocks[index])
+                .filter(|frame| self.open_frame != Some(frame.id))
+                .cloned();
+            let Some(frame) = frame else {
+                placed_blocks.push(self.place(&blocks[index]));
+                index += 1;
+                continue;
+            };
+            let mut end = index + 1;
+            while blocks
+                .get(end)
+                .and_then(frame_of)
+                .is_some_and(|other| other.id == frame.id)
+            {
+                end += 1;
+            }
+            // A text box floats from the paragraph before it, the one that anchors it.
+            let expression = self.frame_box(&blocks[index..end], &frame);
+            let host = placed_blocks
+                .pop()
+                .unwrap_or_else(|| Placed::tight("[]".to_owned()));
+            placed_blocks.push(self.with_floats(
+                host,
+                vec![Float {
+                    expression,
+                    anchor: frame.anchor,
+                }],
+            ));
+            index = end;
+        }
         let mut markup = String::new();
         let mut previous_after: Option<f64> = None;
-        for block in blocks {
-            let placed = self.place(block);
+        for placed in placed_blocks {
             if placed.page_break {
                 markup.push_str("#pagebreak(weak: true)\n");
                 previous_after = None;
@@ -455,20 +502,32 @@ impl Writer<'_> {
                 content,
                 align,
                 look,
-            } => self.paragraph(content, *align, look, None),
+            } => {
+                let (content, floats) = self.split_floats(content);
+                let placed = self.paragraph(&content, *align, look, None);
+                self.with_floats(placed, floats)
+            }
             Block::Heading {
                 level,
                 content,
                 align,
                 look,
-            } => self.paragraph(content, *align, look, Some(*level)),
+            } => {
+                let (content, floats) = self.split_floats(content);
+                let placed = self.paragraph(&content, *align, look, Some(*level));
+                self.with_floats(placed, floats)
+            }
             Block::ListItem {
                 ordered,
                 level,
                 list_id,
                 content,
                 look,
-            } => self.list_item(*ordered, *level, *list_id, content, look),
+            } => {
+                let (content, floats) = self.split_floats(content);
+                let placed = self.list_item(*ordered, *level, *list_id, &content, look);
+                self.with_floats(placed, floats)
+            }
             Block::Table { rows, look } => Placed::tight(self.table(rows, look)),
             Block::Blockquote { blocks } => Placed::tight(format!(
                 "pad(left: {})[{}]",
@@ -1352,6 +1411,8 @@ fn roman(number: u32) -> String {
     }
     label
 }
+
+mod floats;
 
 #[cfg(test)]
 mod tests;

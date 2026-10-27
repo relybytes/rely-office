@@ -430,6 +430,7 @@ impl DocxWriter<'_> {
                     alt,
                     width,
                     height,
+                    ..
                 } => self.image(*media, alt.as_deref(), *width, *height, xml),
                 Inline::NoteReference { note } => self.note_reference(*note, xml),
             }

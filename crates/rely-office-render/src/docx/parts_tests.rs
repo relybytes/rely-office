@@ -198,6 +198,8 @@ fn lays_out_text_after_tabs_against_the_stops() {
         list_counters: HashMap::new(),
         endnotes: Vec::new(),
         in_note: false,
+        page: super::PagePlace::default(),
+        open_frame: None,
     };
     let placed = writer.paragraph(&[text("Premesse\t1"), text("\tx")], None, &look, None);
     assert!(
@@ -229,6 +231,8 @@ fn draws_list_labels_and_numbered_headings_as_the_document_names_them() {
         list_counters: HashMap::new(),
         endnotes: Vec::new(),
         in_note: false,
+        page: super::PagePlace::default(),
+        open_frame: None,
     };
     let label = |suffix| ListLabel {
         text: "Art. 1.".to_owned(),

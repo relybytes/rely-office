@@ -73,6 +73,11 @@ const AUTOMATIC: &str = concat!(
     r#"<style:style style:name="Tab.A" style:family="table-column"><style:table-column-properties style:column-width="3cm"/></style:style>"#,
     r##"<style:style style:name="Tab.C" style:family="table-cell"><style:table-cell-properties fo:background-color="#dddddd" "##,
     r#"fo:border="0.75pt double #808080" fo:border-top="none" fo:padding="0.1cm" style:vertical-align="middle"/></style:style>"#,
+    r#"<style:style style:name="Fr" style:family="graphic"><style:graphic-properties fo:border="0.5pt solid #00ff00" fo:margin-left="0.1in"/></style:style>"#,
+    r##"<style:style style:name="gr1" style:family="graphic" style:parent-style-name="Fr"><style:graphic-properties draw:stroke="solid" svg:stroke-width="2pt" svg:stroke-color="#bf9000" draw:fill-color="#fff2cc" style:wrap="run-through" style:run-through="foreground" style:horizontal-rel="page-content" style:vertical-rel="char"/></style:style>"##,
+    r##"<style:style style:name="fr2" style:family="graphic"><style:graphic-properties style:wrap="run-through" style:run-through="background" style:horizontal-rel="page-start-margin" style:vertical-rel="page-content" style:vertical-pos="middle" draw:fill="none" fo:background-color="#ff0000" fo:border="none"/></style:style>"##,
+    r#"<style:style style:name="fr3" style:family="graphic" style:parent-style-name="Fr"><style:graphic-properties style:wrap="parallel" style:horizontal-pos="right" style:horizontal-rel="paragraph" style:vertical-pos="from-top"/></style:style>"#,
+    r##"<style:style style:name="fr4" style:family="graphic"><style:graphic-properties draw:stroke="dash" svg:stroke-color="nonsense" fo:background-color="#336699" style:vertical-rel="paragraph-content"/></style:style>"##,
     "</office:automatic-styles>"
 );
 
@@ -395,6 +400,7 @@ fn reads_notes_images_text_boxes_and_fields() {
             alt: Some("Il logo".to_owned()),
             width: Some(76),
             height: Some(38),
+            anchor: None,
         }
     );
     assert!(
@@ -565,6 +571,7 @@ fn draws_a_chart_object_as_an_image() {
             alt: Some("Andamento".to_owned()),
             width: Some(302),
             height: Some(227),
+            anchor: None,
         }]
     );
     assert_eq!(read.media[0].content_type, "image/svg+xml");
@@ -611,3 +618,5 @@ fn starts_a_section_where_a_paragraph_names_another_master_page() {
         "each master page read once"
     );
 }
+
+mod frames;

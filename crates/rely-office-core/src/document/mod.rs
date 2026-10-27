@@ -7,6 +7,7 @@
 //! A structured reading of a docx for import into a rich-text editor: a neutral tree of blocks
 //! and inline runs, the embedded images, and a report of what the tree could not carry.
 
+mod anchor;
 mod convert;
 mod edges;
 mod look;
@@ -21,6 +22,8 @@ use crate::relationships::{main_part_path, read_relationships};
 use crate::xml_tree::{Element, Namespace, parse_tree};
 use crate::{DocumentFormat, Limits, OfficeError, detect_format};
 
+pub(crate) use anchor::set_frame;
+pub use anchor::{Anchor, AnchorAlign, AnchorBase, AnchorPosition, TextFrame, Wrap};
 pub use edges::{
     Border, BorderStyle, Borders, CellLook, TabKind, TabLeader, TabStop, VerticalAlignment,
 };
@@ -308,6 +311,10 @@ pub enum Inline {
         width: Option<u32>,
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         height: Option<u32>,
+        /// Where a floating image stands; `None` for one set in the line. An editor gets the
+        /// image in the line.
+        #[cfg_attr(feature = "serde", serde(skip))]
+        anchor: Option<Box<Anchor>>,
     },
     /// The reference to a footnote or an endnote: `note` is its index in [`DocumentTree::notes`].
     /// The number it shows is its position among the notes of its kind.

@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 
+use super::anchor::{Anchor, TextFrame, css_emu, set_frame};
 use super::edges::CellLook;
 use super::look::{PageField, ParagraphLook, RunLook, TableLook};
 use super::notes::NoteParts;
@@ -23,6 +24,7 @@ use crate::archive::{ZipPackage, read_member_bytes, read_text_member};
 use crate::chart::{chart_picture, no_cells};
 use crate::relationships::Relationship;
 use crate::theme::Theme;
+use crate::theme::colour_in;
 use crate::xml_tree::{Element, Namespace};
 use crate::{Limits, OfficeError};
 
@@ -152,6 +154,8 @@ pub(super) struct Converter<'a, 'p> {
     /// The theme part the document's charts take their colours from, read on the first chart.
     theme_target: Option<String>,
     theme: Option<Theme>,
+    /// The last id given to a text box frame.
+    next_frame: u32,
     /// The description of each chart image, by media index, taken as it is placed.
     media_titles: HashMap<usize, String>,
 }
@@ -193,6 +197,7 @@ impl<'a, 'p> Converter<'a, 'p> {
                 .map(|relationship| relationship.target.clone()),
             theme: None,
             media_titles: HashMap::new(),
+            next_frame: 0,
         }
     }
 
@@ -804,6 +809,7 @@ impl<'a, 'p> Converter<'a, 'p> {
         }) else {
             return;
         };
+        let anchor = Anchor::parse(frame);
         let graphic_data = frame.descendant(Namespace::Drawing, "graphicData");
         let uri = graphic_data
             .and_then(|data| data.attribute(Namespace::None, "uri"))
@@ -845,6 +851,7 @@ impl<'a, 'p> Converter<'a, 'p> {
                 alt,
                 width: pixels("cx"),
                 height: pixels("cy"),
+                anchor: anchor.map(Box::new),
             });
         } else if uri.contains("chart") {
             self.report.charts += 1;
@@ -874,11 +881,16 @@ impl<'a, 'p> Converter<'a, 'p> {
                 alt,
                 width: pixels(width),
                 height: pixels(height),
+                anchor: anchor.map(Box::new),
             });
         } else if uri.contains("/diagram") {
             self.report.smart_art += 1;
         } else if let Some(text_box) = frame.descendant(W, "txbxContent") {
-            self.append_text_box(text_box);
+            let text_frame = anchor.map(|anchor| {
+                let properties = frame.descendant(Namespace::WordShape, "spPr");
+                self.text_frame(anchor, properties)
+            });
+            self.append_text_box(text_box, text_frame.as_ref());
         } else {
             self.report.shapes += 1;
         }
@@ -892,7 +904,12 @@ impl<'a, 'p> Converter<'a, 'p> {
         scan: &mut ParagraphScan,
     ) {
         if let Some(text_box) = picture.descendant(W, "txbxContent") {
-            self.append_text_box(text_box);
+            let shape = text_box_shape(picture);
+            let text_frame = shape.and_then(|shape| {
+                let anchor = Anchor::from_vml_style(shape.attribute(Namespace::None, "style")?)?;
+                Some(self.vml_frame(anchor, shape))
+            });
+            self.append_text_box(text_box, text_frame.as_ref());
             return;
         }
         let is_rule = picture
@@ -918,6 +935,7 @@ impl<'a, 'p> Converter<'a, 'p> {
             .descendant(Namespace::Vml, "shape")
             .and_then(|shape| shape.attribute(Namespace::None, "style"))
             .unwrap_or_default();
+        let anchor = Anchor::from_vml_style(style).map(Box::new);
         content.push(Inline::Image {
             media: index,
             alt: image_data
@@ -927,21 +945,103 @@ impl<'a, 'p> Converter<'a, 'p> {
                 .map(str::to_owned),
             width: css_length_in_pixels(style, "width"),
             height: css_length_in_pixels(style, "height"),
+            anchor,
         });
     }
 
     /// Read the content of a text box, to be placed after the paragraph that anchors it. Its
     /// fields and links are its own, and a text box inside it is read in turn.
-    fn append_text_box(&mut self, text_box: &Element) {
+    fn append_text_box(&mut self, text_box: &Element, text_frame: Option<&TextFrame>) {
         self.report.text_boxes += 1;
         let outer_floating = std::mem::take(&mut self.floating);
         let outer_fields = std::mem::take(&mut self.fields);
         let outer_depth = std::mem::take(&mut self.hyperlink_depth);
-        let blocks = self.convert_blocks(text_box);
+        let mut blocks = self.convert_blocks(text_box);
+        if let Some(text_frame) = text_frame {
+            set_frame(&mut blocks, text_frame);
+        }
         self.hyperlink_depth = outer_depth;
         self.fields = outer_fields;
         self.floating = outer_floating;
         self.floating.extend(blocks);
+    }
+
+    /// The frame of a `DrawingML` text box: its anchor and the fill and outline of its shape.
+    fn text_frame(&mut self, anchor: Anchor, properties: Option<&Element>) -> TextFrame {
+        self.next_frame += 1;
+        if self.theme.is_none() {
+            let theme = self
+                .theme_target
+                .clone()
+                .and_then(|target| {
+                    read_text_member(self.package, &target, self.limits)
+                        .ok()
+                        .flatten()
+                })
+                .map(|xml| Theme::parse(&xml))
+                .unwrap_or_default();
+            self.theme = Some(theme);
+        }
+        let theme = self.theme.clone().unwrap_or_default();
+        let fill = properties
+            .filter(|properties| properties.child(Namespace::Drawing, "noFill").is_none())
+            .and_then(|properties| properties.child(Namespace::Drawing, "solidFill"))
+            .and_then(|fill| colour_in(fill, &theme));
+        let line = properties
+            .and_then(|properties| properties.child(Namespace::Drawing, "ln"))
+            .filter(|line| line.child(Namespace::Drawing, "noFill").is_none())
+            .and_then(|line| {
+                let colour = line
+                    .child(Namespace::Drawing, "solidFill")
+                    .and_then(|fill| colour_in(fill, &theme))?;
+                let width = line
+                    .attribute(Namespace::None, "w")
+                    .and_then(|width| width.parse::<u32>().ok())
+                    .unwrap_or(9_525);
+                Some((colour, (width * 8 / 12_700).max(1)))
+            });
+        TextFrame {
+            id: self.next_frame,
+            anchor,
+            fill,
+            line,
+        }
+    }
+
+    /// The frame of a VML text box, from the attributes of its shape.
+    fn vml_frame(&mut self, anchor: Anchor, shape: &Element) -> TextFrame {
+        self.next_frame += 1;
+        let attribute = |name: &str| shape.attribute(Namespace::None, name);
+        let off = |name: &str| attribute(name).is_some_and(|value| matches!(value, "f" | "false"));
+        let colour = |value: Option<&str>| {
+            let hex = value?.trim().trim_start_matches('#');
+            (hex.len() == 6 && hex.chars().all(|character| character.is_ascii_hexdigit()))
+                .then(|| hex.to_ascii_uppercase())
+        };
+        let fill = if off("filled") {
+            None
+        } else {
+            colour(attribute("fillcolor"))
+        };
+        let line = if off("stroked") {
+            None
+        } else {
+            let width = attribute("strokeweight")
+                .and_then(css_emu)
+                .map_or(6, |emu| {
+                    u32::try_from((emu * 8 / 12_700).max(1)).unwrap_or(6)
+                });
+            Some((
+                colour(attribute("strokecolor")).unwrap_or_else(|| "000000".to_owned()),
+                width,
+            ))
+        };
+        TextFrame {
+            id: self.next_frame,
+            anchor,
+            fill,
+            line,
+        }
     }
 
     /// The media index of the image a relationship points at, loading it the first time.
@@ -1266,6 +1366,18 @@ fn alternate_choice(element: &Element) -> Option<&Element> {
 /// Whether a subtree holds any text a reader would see.
 fn has_text(element: &Element) -> bool {
     (element.is(W, "t") && !element.text().is_empty()) || element.elements().any(has_text)
+}
+
+/// The shape that holds a VML text box.
+fn text_box_shape(picture: &Element) -> Option<&Element> {
+    picture.elements().find(|element| {
+        element.namespace == Namespace::Vml
+            && matches!(
+                element.name.as_str(),
+                "shape" | "rect" | "roundrect" | "oval"
+            )
+            && element.descendant(W, "txbxContent").is_some()
+    })
 }
 
 /// Merge a code block into the code block before it, a quote into the quote before it.

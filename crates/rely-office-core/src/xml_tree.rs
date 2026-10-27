@@ -25,6 +25,8 @@ pub(crate) enum Namespace {
     Word,
     Relationships,
     WordDrawing,
+    /// `wps:`, the shapes of Word 2010 and later, text boxes among them.
+    WordShape,
     Drawing,
     Presentation,
     Chart,
@@ -60,6 +62,7 @@ impl Namespace {
             | "http://purl.oclc.org/ooxml/drawingml/wordprocessingDrawing" => Self::WordDrawing,
             "http://schemas.openxmlformats.org/drawingml/2006/main"
             | "http://purl.oclc.org/ooxml/drawingml/main" => Self::Drawing,
+            "http://schemas.microsoft.com/office/word/2010/wordprocessingShape" => Self::WordShape,
             "http://schemas.openxmlformats.org/presentationml/2006/main"
             | "http://purl.oclc.org/ooxml/presentationml/main" => Self::Presentation,
             "http://schemas.openxmlformats.org/drawingml/2006/chart"
