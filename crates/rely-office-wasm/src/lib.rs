@@ -13,8 +13,9 @@
 //! cross as their own byte arrays, never inside the JSON.
 
 use rely_office_core::{
-    Block, DocumentTree, ImportReport, Limits, Media, OfficeError, PageLayout, Sheet,
-    detect_format, extract_text, read_document_tree, read_workbook, sniff_image_type, write_docx,
+    Block, DocumentTree, HeadersFooters, ImportReport, Limits, Media, Note, OfficeError,
+    PageLayout, Sheet, detect_format, extract_text, read_document_tree, read_workbook,
+    sniff_image_type, write_docx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -137,10 +138,27 @@ struct MediaOutput {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DocumentTreeOutput<'a> {
     blocks: &'a [Block],
     media: Vec<MediaOutput>,
     report: &'a ImportReport,
+    notes: &'a [Note],
+    headers_footers: &'a HeadersFooters,
+    page: PageOutput,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+#[expect(
+    clippy::struct_field_names,
+    reason = "the fields mirror the JSON keys, which name their unit"
+)]
+struct PageOutput {
+    width_twips: u32,
+    height_twips: u32,
+    /// Top, right, bottom, left.
+    margins_twips: [u32; 4],
 }
 
 /// The format of a document, read from its bytes: `docx`, `xlsx`, ... or `unknown`.
@@ -242,7 +260,9 @@ pub fn document_tree(
         blocks,
         media,
         report,
-        ..
+        layout,
+        notes,
+        headers_footers,
     } = read_document_tree(bytes, &limits)?;
     let json = to_json(&DocumentTreeOutput {
         blocks: &blocks,
@@ -256,6 +276,13 @@ pub fn document_tree(
             })
             .collect(),
         report: &report,
+        notes: &notes,
+        headers_footers: &headers_footers,
+        page: PageOutput {
+            width_twips: layout.width_twips,
+            height_twips: layout.height_twips,
+            margins_twips: layout.margins_twips,
+        },
     })?;
     Ok(DocumentTreeHandle { json, media })
 }
@@ -281,10 +308,14 @@ struct DocxInput {
     blocks: Vec<Block>,
     #[serde(default)]
     page: Option<PageInput>,
+    #[serde(default)]
+    notes: Vec<Note>,
+    #[serde(default)]
+    headers_footers: HeadersFooters,
 }
 
-/// Write a docx from the JSON of a document tree, `{ blocks, page? }`, with the images the tree
-/// names by index.
+/// Write a docx from the JSON of a document tree, `{ blocks, page?, notes?, headersFooters? }`,
+/// with the images the tree names by index.
 ///
 /// # Errors
 ///
@@ -305,6 +336,8 @@ pub fn docx_from_json(tree_json: &str, media: Vec<Media>) -> Result<Vec<u8>, Fai
         media,
         report: ImportReport::default(),
         layout,
+        notes: input.notes,
+        headers_footers: input.headers_footers,
     };
     Ok(write_docx(&tree)?)
 }

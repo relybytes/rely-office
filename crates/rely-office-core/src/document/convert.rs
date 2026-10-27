@@ -8,12 +8,17 @@
 
 use std::collections::HashMap;
 
-use super::look::{ParagraphLook, RunLook, TableLook};
-use super::numbering::Numbering;
+use super::edges::CellLook;
+use super::look::{PageField, ParagraphLook, RunLook, TableLook};
+use super::notes::NoteParts;
+use super::numbering::{ListCounters, Numbering};
 use super::styles::{
-    ParagraphRole, RunFormat, Styles, alignment, numbering_reference, on_off, outline_level,
+    NumberingReference, ParagraphRole, RunFormat, Styles, TableFormat, TableRegion, alignment,
+    numbering_reference, on_off, outline_level,
 };
-use super::{Block, ImportReport, Inline, Mark, Media, TableCell, TableRow, sniff_image_type};
+use super::{
+    Block, ImportReport, Inline, Mark, Media, Note, NoteKind, TableCell, TableRow, sniff_image_type,
+};
 use crate::archive::{ZipPackage, read_member_bytes};
 use crate::relationships::Relationship;
 use crate::xml_tree::{Element, Namespace};
@@ -27,6 +32,9 @@ const EMUS_PER_PIXEL: u64 = 9_525;
 const MAX_SPAN: u32 = 1_000;
 /// The longest field instruction kept; a real one is a few dozen characters.
 const MAX_INSTRUCTION_CHARS: usize = 4_096;
+/// The share of the text limit a header, a footer or a note may take, so a part read after the
+/// body never truncates the body.
+const PART_TEXT_SHARE: usize = 10;
 
 /// A complex field (`w:fldChar` begin, separate, end) still open.
 #[derive(Debug)]
@@ -36,6 +44,71 @@ struct OpenField {
     instruction: String,
     /// The target of a `HYPERLINK` field, applied to its result.
     link: Option<String>,
+    /// The page number a `PAGE` or `NUMPAGES` field shows.
+    page_field: Option<PageField>,
+    /// Whether any of the result was read.
+    shown: bool,
+}
+
+/// What a converter keeps while it reads one part, set aside while it reads another.
+#[derive(Debug, Default)]
+struct PartState {
+    fields: Vec<OpenField>,
+    hyperlink_depth: usize,
+    pending_page_break: bool,
+    floating: Vec<Block>,
+    table_context: Option<ParagraphLook>,
+}
+
+/// Which conditional formats of a table style a table turns on, `w:tblLook`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is one switch of w:tblLook, which a table sets independently"
+)]
+struct TableFlags {
+    first_row: bool,
+    last_row: bool,
+    first_column: bool,
+    last_column: bool,
+    banded_rows: bool,
+    banded_columns: bool,
+}
+
+impl TableFlags {
+    /// Read `w:tblLook`, by attribute or by the bits of its value; Word's own default without one.
+    fn parse(properties: Option<&Element>) -> Self {
+        let Some(table_look) = properties.and_then(|properties| properties.child(W, "tblLook"))
+        else {
+            return Self {
+                first_row: true,
+                last_row: false,
+                first_column: true,
+                last_column: false,
+                banded_rows: true,
+                banded_columns: false,
+            };
+        };
+        let bits = table_look
+            .attribute(W, "val")
+            .and_then(|value| u32::from_str_radix(value, 16).ok())
+            .unwrap_or(0);
+        let flag = |name: &str, bit: u32| {
+            table_look
+                .attribute(W, name)
+                .map_or(bits & bit != 0, |value| {
+                    matches!(value, "1" | "true" | "on")
+                })
+        };
+        Self {
+            first_row: flag("firstRow", 0x0020),
+            last_row: flag("lastRow", 0x0040),
+            first_column: flag("firstColumn", 0x0080),
+            last_column: flag("lastColumn", 0x0100),
+            banded_rows: !flag("noHBand", 0x0200),
+            banded_columns: !flag("noVBand", 0x0400),
+        }
+    }
 }
 
 /// What the runs of a paragraph said about the paragraph itself.
@@ -50,9 +123,11 @@ struct ParagraphScan {
 
 pub(super) struct Converter<'a, 'p> {
     package: &'a mut ZipPackage<'p>,
+    /// The relationships of the part being read: the body, a header, a note.
     relationships: HashMap<&'a str, &'a Relationship>,
     styles: &'a Styles,
     numbering: &'a Numbering,
+    note_parts: &'a NoteParts,
     limits: &'a Limits,
     report: &'a mut ImportReport,
     media: Vec<Media>,
@@ -64,6 +139,14 @@ pub(super) struct Converter<'a, 'p> {
     hyperlink_depth: usize,
     /// A page break the next paragraph starts with.
     pending_page_break: bool,
+    /// The content of the text boxes of the paragraph being read, placed after it.
+    floating: Vec<Block>,
+    /// The paragraph formatting a table style gives the cell being read.
+    table_context: Option<ParagraphLook>,
+    list_counters: ListCounters,
+    notes: Vec<Note>,
+    notes_by_id: HashMap<(NoteKind, String), usize>,
+    reading_note: bool,
 }
 
 impl<'a, 'p> Converter<'a, 'p> {
@@ -72,17 +155,16 @@ impl<'a, 'p> Converter<'a, 'p> {
         relationships: &'a [Relationship],
         styles: &'a Styles,
         numbering: &'a Numbering,
+        note_parts: &'a NoteParts,
         limits: &'a Limits,
         report: &'a mut ImportReport,
     ) -> Self {
         Self {
             package,
-            relationships: relationships
-                .iter()
-                .map(|relationship| (relationship.id.as_str(), relationship))
-                .collect(),
+            relationships: relationship_map(relationships),
             styles,
             numbering,
+            note_parts,
             limits,
             report,
             media: Vec::new(),
@@ -92,11 +174,79 @@ impl<'a, 'p> Converter<'a, 'p> {
             fields: Vec::new(),
             hyperlink_depth: 0,
             pending_page_break: false,
+            floating: Vec::new(),
+            table_context: None,
+            list_counters: ListCounters::default(),
+            notes: Vec::new(),
+            notes_by_id: HashMap::new(),
+            reading_note: false,
         }
     }
 
-    pub(super) fn into_media(self) -> Vec<Media> {
-        self.media
+    /// The images and the notes read, in the order the tree refers to them.
+    pub(super) fn finish(self) -> (Vec<Media>, Vec<Note>) {
+        (self.media, self.notes)
+    }
+
+    /// The blocks of another part, a header, a footer or a note, with its own relationships and
+    /// a share of the text limit of its own.
+    pub(super) fn convert_part(
+        &mut self,
+        container: &Element,
+        relationships: &'a [Relationship],
+    ) -> Vec<Block> {
+        let outer_relationships =
+            std::mem::replace(&mut self.relationships, relationship_map(relationships));
+        let outer_state = self.take_state();
+        let outer_chars = self.remaining_chars;
+        let outer_truncated = self.report.truncated;
+        self.remaining_chars = self.limits.max_text_chars / PART_TEXT_SHARE;
+        self.report.truncated = false;
+
+        let blocks = self.convert_blocks(container);
+
+        self.report.truncated = outer_truncated;
+        self.remaining_chars = outer_chars;
+        self.restore_state(outer_state);
+        self.relationships = outer_relationships;
+        blocks
+    }
+
+    fn take_state(&mut self) -> PartState {
+        PartState {
+            fields: std::mem::take(&mut self.fields),
+            hyperlink_depth: std::mem::take(&mut self.hyperlink_depth),
+            pending_page_break: std::mem::take(&mut self.pending_page_break),
+            floating: std::mem::take(&mut self.floating),
+            table_context: self.table_context.take(),
+        }
+    }
+
+    fn restore_state(&mut self, state: PartState) {
+        self.fields = state.fields;
+        self.hyperlink_depth = state.hyperlink_depth;
+        self.pending_page_break = state.pending_page_break;
+        self.floating = state.floating;
+        self.table_context = state.table_context;
+    }
+
+    /// The index of a note in the tree, read the first time the text refers to it; a note
+    /// referred to from inside a note is not followed.
+    fn note(&mut self, kind: NoteKind, id: &str) -> Option<usize> {
+        if let Some(index) = self.notes_by_id.get(&(kind, id.to_owned())) {
+            return Some(*index);
+        }
+        if self.reading_note {
+            return None;
+        }
+        let (element, relationships) = self.note_parts.find(kind, id)?;
+        self.reading_note = true;
+        let blocks = self.convert_part(element, relationships);
+        self.reading_note = false;
+        self.notes.push(Note { kind, blocks });
+        let index = self.notes.len() - 1;
+        self.notes_by_id.insert((kind, id.to_owned()), index);
+        Some(index)
     }
 
     /// The blocks of a container of block content: the body, a table cell, a content control.
@@ -143,7 +293,14 @@ impl<'a, 'p> Converter<'a, 'p> {
         }
     }
 
+    /// A paragraph, then the content of its text boxes.
     fn append_paragraph(&mut self, paragraph: &Element, blocks: &mut Vec<Block>) {
+        self.append_paragraph_block(paragraph, blocks);
+        let floating = std::mem::take(&mut self.floating);
+        blocks.extend(floating);
+    }
+
+    fn append_paragraph_block(&mut self, paragraph: &Element, blocks: &mut Vec<Block>) {
         let properties = paragraph.child(W, "pPr");
         let style_id = properties
             .and_then(|properties| properties.child(W, "pStyle"))
@@ -158,11 +315,15 @@ impl<'a, 'p> Converter<'a, 'p> {
                     .level_look(reference.num_id, reference.level.unwrap_or(0))
             })
             .unwrap_or_default();
+        let style_look = match &self.table_context {
+            Some(table) => self.styles.paragraph_look_in_table(style_id, table),
+            None => self.styles.paragraph_look(style_id),
+        };
         let mut look = properties
             .map(ParagraphLook::parse)
             .unwrap_or_default()
             .or(list_look)
-            .or(self.styles.paragraph_look(style_id));
+            .or(style_look);
 
         let mut scan = ParagraphScan::default();
         let mut content = Vec::new();
@@ -187,6 +348,15 @@ impl<'a, 'p> Converter<'a, 'p> {
         look.page_break_before |=
             std::mem::take(&mut self.pending_page_break) || scan.page_break_before;
         self.pending_page_break = scan.page_break_after;
+        if style.role != ParagraphRole::Code
+            && let Some(reference) = numbering
+        {
+            look.list_label = self.numbering.next_label(
+                &mut self.list_counters,
+                reference.num_id,
+                reference.level.unwrap_or(0),
+            );
+        }
 
         let block = match style.role {
             ParagraphRole::Code => Block::CodeBlock {
@@ -207,37 +377,47 @@ impl<'a, 'p> Converter<'a, 'p> {
                 align,
                 look,
             },
-            role => {
-                let list = numbering.and_then(|reference| {
-                    let level = reference.level.unwrap_or(0);
-                    self.numbering
-                        .is_ordered(reference.num_id, level)
-                        .map(|ordered| (ordered, level, reference.num_id))
-                });
-                match (list, role) {
-                    (Some((ordered, level, list_id)), _) => Block::ListItem {
-                        ordered,
-                        level,
-                        list_id,
-                        content,
-                        look,
-                    },
-                    (None, ParagraphRole::Quote) => Block::Blockquote {
-                        blocks: vec![Block::Paragraph {
-                            content,
-                            align,
-                            look,
-                        }],
-                    },
-                    (None, _) => Block::Paragraph {
-                        content,
-                        align,
-                        look,
-                    },
-                }
-            }
+            role => self.body_block(role, numbering, content, align, look),
         };
         push_block(blocks, block);
+    }
+
+    /// A paragraph that is not a heading or code: a list item, a quote or a plain paragraph.
+    fn body_block(
+        &self,
+        role: ParagraphRole,
+        numbering: Option<NumberingReference>,
+        content: Vec<Inline>,
+        align: Option<super::Alignment>,
+        look: ParagraphLook,
+    ) -> Block {
+        let list = numbering.and_then(|reference| {
+            let level = reference.level.unwrap_or(0);
+            self.numbering
+                .is_ordered(reference.num_id, level)
+                .map(|ordered| (ordered, level, reference.num_id))
+        });
+        match (list, role) {
+            (Some((ordered, level, list_id)), _) => Block::ListItem {
+                ordered,
+                level,
+                list_id,
+                content,
+                look,
+            },
+            (None, ParagraphRole::Quote) => Block::Blockquote {
+                blocks: vec![Block::Paragraph {
+                    content,
+                    align,
+                    look,
+                }],
+            },
+            (None, _) => Block::Paragraph {
+                content,
+                align,
+                look,
+            },
+        }
     }
 
     fn append_inlines(
@@ -271,9 +451,27 @@ impl<'a, 'p> Converter<'a, 'p> {
                 }
                 (W, "fldSimple") => {
                     self.report.fields_kept_as_text += 1;
-                    let field_link =
-                        self.field_link(element.attribute(W, "instr").unwrap_or_default());
+                    let instruction = element.attribute(W, "instr").unwrap_or_default();
+                    let field_link = self.field_link(instruction);
+                    self.fields.push(OpenField {
+                        in_result: true,
+                        instruction: String::new(),
+                        link: None,
+                        page_field: page_field(instruction),
+                        shown: false,
+                    });
                     self.append_inlines(element, field_link.as_deref().or(link), content, scan);
+                    if let Some(field) = self.fields.pop()
+                        && let Some(page_field) = field.page_field.filter(|_| !field.shown)
+                    {
+                        self.push_text(
+                            content,
+                            "1",
+                            RunFormat::default(),
+                            &with_field(&RunLook::default(), page_field),
+                            link,
+                        );
+                    }
                 }
                 (Namespace::Math, "oMath" | "oMathPara") => self.report.equations += 1,
                 (MC, "AlternateContent") => {
@@ -313,7 +511,11 @@ impl<'a, 'p> Converter<'a, 'p> {
     ) {
         for element in container.elements() {
             match (element.namespace, element.name.as_str()) {
-                (W, "fldChar") => self.field_character(element),
+                (W, "fldChar") => {
+                    if let Some(page_field) = self.field_character(element) {
+                        self.push_text(content, "1", format, &with_field(look, page_field), link);
+                    }
+                }
                 (W, "instrText") => {
                     if let Some(field) = self.fields.last_mut()
                         && !field.in_result
@@ -334,8 +536,21 @@ impl<'a, 'p> Converter<'a, 'p> {
                     _ => content.push(Inline::HardBreak),
                 },
                 (W, "cr") => content.push(Inline::HardBreak),
-                (W, "footnoteReference") => self.report.footnotes += 1,
-                (W, "endnoteReference") => self.report.endnotes += 1,
+                (W, name @ ("footnoteReference" | "endnoteReference")) => {
+                    let kind = if name == "footnoteReference" {
+                        self.report.footnotes += 1;
+                        NoteKind::Footnote
+                    } else {
+                        self.report.endnotes += 1;
+                        NoteKind::Endnote
+                    };
+                    if let Some(note) = element
+                        .attribute(W, "id")
+                        .and_then(|id| self.note(kind, id))
+                    {
+                        content.push(Inline::NoteReference { note });
+                    }
+                }
                 (W, "commentReference") => self.report.comments += 1,
                 (W, "drawing") => self.append_drawing(element, content),
                 (W, "pict") => self.append_vml(element, content, scan),
@@ -403,8 +618,20 @@ impl<'a, 'p> Converter<'a, 'p> {
             return;
         }
 
+        let page_field = self.fields.iter_mut().rev().find_map(|field| {
+            field.shown |= field.page_field.is_some();
+            field.page_field
+        });
+        let field_look;
+        let look = match page_field {
+            Some(page_field) if look.field.is_none() => {
+                field_look = with_field(look, page_field);
+                &field_look
+            }
+            _ => look,
+        };
         let link = link.or_else(|| self.current_field_link());
-        let marks = marks_of(format, link, self.hyperlink_depth > 0);
+        let marks = marks_of(format, look, link, self.hyperlink_depth > 0);
         if let Some(Inline::Text {
             text: previous,
             marks: previous_marks,
@@ -423,30 +650,40 @@ impl<'a, 'p> Converter<'a, 'p> {
         });
     }
 
-    fn field_character(&mut self, element: &Element) {
+    /// Follow a `w:fldChar`. A page number field that ends without a result of its own gives
+    /// its kind, so a number can stand in for it.
+    fn field_character(&mut self, element: &Element) -> Option<PageField> {
         match element.attribute(W, "fldCharType") {
             Some("begin") => self.fields.push(OpenField {
                 in_result: false,
                 instruction: String::new(),
                 link: None,
+                page_field: None,
+                shown: false,
             }),
             Some("separate") => {
                 let instruction = match self.fields.last() {
                     Some(field) if !field.in_result => field.instruction.clone(),
-                    _ => return,
+                    _ => return None,
                 };
                 let link = self.field_link(&instruction);
                 if let Some(field) = self.fields.last_mut() {
                     field.in_result = true;
                     field.link = link;
+                    field.page_field = page_field(&instruction);
                 }
             }
             Some("end") => {
-                let closed_with_result = self.fields.pop().is_some_and(|field| field.in_result);
-                self.report.fields_kept_as_text += usize::from(closed_with_result);
+                let field = self.fields.pop()?;
+                self.report.fields_kept_as_text += usize::from(field.in_result);
+                let page_field = field
+                    .page_field
+                    .or_else(|| page_field(&field.instruction).filter(|_| !field.in_result));
+                return page_field.filter(|_| !field.shown && !self.in_field_code());
             }
             _ => {}
         }
+        None
     }
 
     /// Inside the instruction of a field, where runs are code, not text.
@@ -581,8 +818,8 @@ impl<'a, 'p> Converter<'a, 'p> {
             self.report.charts += 1;
         } else if uri.contains("/diagram") {
             self.report.smart_art += 1;
-        } else if frame.descendant(W, "txbxContent").is_some() {
-            self.report.text_boxes += 1;
+        } else if let Some(text_box) = frame.descendant(W, "txbxContent") {
+            self.append_text_box(text_box);
         } else {
             self.report.shapes += 1;
         }
@@ -595,8 +832,8 @@ impl<'a, 'p> Converter<'a, 'p> {
         content: &mut Vec<Inline>,
         scan: &mut ParagraphScan,
     ) {
-        if picture.descendant(W, "txbxContent").is_some() {
-            self.report.text_boxes += 1;
+        if let Some(text_box) = picture.descendant(W, "txbxContent") {
+            self.append_text_box(text_box);
             return;
         }
         let is_rule = picture
@@ -632,6 +869,20 @@ impl<'a, 'p> Converter<'a, 'p> {
             width: css_length_in_pixels(style, "width"),
             height: css_length_in_pixels(style, "height"),
         });
+    }
+
+    /// Read the content of a text box, to be placed after the paragraph that anchors it. Its
+    /// fields and links are its own, and a text box inside it is read in turn.
+    fn append_text_box(&mut self, text_box: &Element) {
+        self.report.text_boxes += 1;
+        let outer_floating = std::mem::take(&mut self.floating);
+        let outer_fields = std::mem::take(&mut self.fields);
+        let outer_depth = std::mem::take(&mut self.hyperlink_depth);
+        let blocks = self.convert_blocks(text_box);
+        self.hyperlink_depth = outer_depth;
+        self.fields = outer_fields;
+        self.floating = outer_floating;
+        self.floating.extend(blocks);
     }
 
     /// The media index of the image a relationship points at, loading it the first time.
@@ -688,22 +939,43 @@ impl<'a, 'p> Converter<'a, 'p> {
     }
 
     fn convert_table(&mut self, table: &Element) -> Block {
+        let mut look = TableLook::parse(table);
+        let table_properties = table.child(W, "tblPr");
+        let style_id = table_properties
+            .and_then(|properties| properties.child(W, "tblStyle"))
+            .and_then(|style| style.attribute(W, "val"));
+        let style = self.styles.table_style(style_id).unwrap_or_default();
+        look.edges = look.edges.or(style.edges.clone());
+        look.borders |= style.edges.any_visible();
+        for side in 0..4 {
+            look.cell_margins_twips[side] =
+                look.cell_margins_twips[side].or(style.cell_margins_twips[side]);
+        }
+        let flags = TableFlags::parse(table_properties);
+        let kept_rows: Vec<&Element> = child_elements_through_wrappers(table, "tr")
+            .into_iter()
+            .filter(|row| {
+                let deleted = row
+                    .child(W, "trPr")
+                    .and_then(|properties| properties.child(W, "del"))
+                    .is_some();
+                self.report.tracked_deletions += usize::from(deleted);
+                !deleted
+            })
+            .collect();
+        let row_count = kept_rows.len();
+        let grid_columns = u32::try_from(look.column_widths_twips.len()).unwrap_or(0);
+
         let mut rows: Vec<TableRow> = Vec::new();
         // Grid column where a vertical merge started, to the row and cell that hold it.
         let mut merge_origins: HashMap<u32, (usize, usize)> = HashMap::new();
+        let outer_context = self.table_context.take();
 
-        for row in child_elements_through_wrappers(table, "tr") {
+        for row in kept_rows {
             if self.report.truncated {
                 break;
             }
             let properties = row.child(W, "trPr");
-            if properties
-                .and_then(|properties| properties.child(W, "del"))
-                .is_some()
-            {
-                self.report.tracked_deletions += 1;
-                continue;
-            }
             let header = properties
                 .and_then(|properties| properties.child(W, "tblHeader"))
                 .is_some_and(on_off);
@@ -739,8 +1011,17 @@ impl<'a, 'p> Converter<'a, 'p> {
                     continue;
                 }
 
-                let blocks = self.convert_blocks(cell);
                 let end_column = grid_column.saturating_add(col_span);
+                let place = CellPlace {
+                    row: row_index,
+                    rows: row_count,
+                    first_column: grid_column,
+                    end_column,
+                    columns: grid_columns,
+                };
+                let format = region_format(&style, flags, place);
+                self.table_context = Some(format.paragraph);
+                let blocks = self.convert_blocks(cell);
                 merge_origins.retain(|column, _| *column < grid_column || *column >= end_column);
                 if vertical_merge == Some(true) {
                     merge_origins.insert(grid_column, (row_index, cells.len()));
@@ -749,16 +1030,107 @@ impl<'a, 'p> Converter<'a, 'p> {
                     col_span,
                     row_span: 1,
                     blocks,
+                    look: cell_properties
+                        .map(CellLook::parse)
+                        .unwrap_or_default()
+                        .or(format.cell),
                 });
                 grid_column = end_column;
             }
             rows.push(TableRow { header, cells });
         }
+        self.table_context = outer_context;
 
-        Block::Table {
-            rows,
-            look: TableLook::parse(table),
+        Block::Table { rows, look }
+    }
+}
+
+/// Where a cell sits in its table, in rows and grid columns.
+#[derive(Debug, Clone, Copy)]
+struct CellPlace {
+    row: usize,
+    rows: usize,
+    first_column: u32,
+    /// The grid column after the cell's last.
+    end_column: u32,
+    /// The columns of the grid; 0 when the table declares no grid.
+    columns: u32,
+}
+
+/// What a table style gives a cell: the conditional formats that cover it, the strongest first,
+/// over the style's own formatting.
+fn region_format(
+    style: &super::styles::TableStyle,
+    flags: TableFlags,
+    place: CellPlace,
+) -> TableFormat {
+    let header_rows = usize::from(flags.first_row);
+    let body_row = place.row.checked_sub(header_rows);
+    let in_last_row = flags.last_row && place.row + 1 == place.rows && place.rows > 1;
+    let row_band = body_row
+        .filter(|_| flags.banded_rows && !in_last_row)
+        .map(|row| {
+            if row % 2 == 0 {
+                TableRegion::OddRow
+            } else {
+                TableRegion::EvenRow
+            }
+        });
+    let header_columns = u32::from(flags.first_column);
+    let column_band = place
+        .first_column
+        .checked_sub(header_columns)
+        .filter(|_| flags.banded_columns)
+        .map(|column| {
+            if column % 2 == 0 {
+                TableRegion::OddColumn
+            } else {
+                TableRegion::EvenColumn
+            }
+        });
+    let regions = [
+        (flags.first_row && place.row == 0).then_some(TableRegion::FirstRow),
+        in_last_row.then_some(TableRegion::LastRow),
+        (flags.first_column && place.first_column == 0).then_some(TableRegion::FirstColumn),
+        (flags.last_column && place.columns > 0 && place.end_column >= place.columns)
+            .then_some(TableRegion::LastColumn),
+        row_band,
+        column_band,
+    ];
+    let mut format = TableFormat::default();
+    for region in regions.into_iter().flatten() {
+        if let Some((_, conditional)) = style.regions.iter().find(|(known, _)| *known == region) {
+            format = format.or(conditional.clone());
         }
+    }
+    format.or(style.whole.clone())
+}
+
+fn relationship_map(relationships: &[Relationship]) -> HashMap<&str, &Relationship> {
+    relationships
+        .iter()
+        .map(|relationship| (relationship.id.as_str(), relationship))
+        .collect()
+}
+
+/// The page number a field instruction shows, if it is `PAGE`, `NUMPAGES` or `SECTIONPAGES`.
+fn page_field(instruction: &str) -> Option<PageField> {
+    let keyword = instruction.split_whitespace().next()?;
+    if keyword.eq_ignore_ascii_case("PAGE") {
+        Some(PageField::Page)
+    } else if keyword.eq_ignore_ascii_case("NUMPAGES")
+        || keyword.eq_ignore_ascii_case("SECTIONPAGES")
+    {
+        Some(PageField::Pages)
+    } else {
+        None
+    }
+}
+
+fn with_field(look: &RunLook, field: PageField) -> RunLook {
+    RunLook {
+        field: Some(field),
+        ..look.clone()
     }
 }
 
@@ -821,15 +1193,21 @@ fn plain_text(content: &[Inline]) -> String {
         match inline {
             Inline::Text { text: run, .. } => text.push_str(run),
             Inline::HardBreak => text.push('\n'),
-            Inline::Image { .. } => {}
+            Inline::Image { .. } | Inline::NoteReference { .. } => {}
         }
     }
     text
 }
 
-/// The marks of a run. A link carries its own underline, so the run's is not repeated; nor is it
-/// kept on a link that was dropped, whose underline only said it was a link.
-fn marks_of(format: RunFormat, link: Option<&str>, in_hyperlink: bool) -> Vec<Mark> {
+/// The marks of a run. A link carries its own underline and colour, so the run's are not
+/// repeated; nor is the underline kept on a link that was dropped, where it only said it was a
+/// link. A code run keeps no font of its own.
+fn marks_of(
+    format: RunFormat,
+    look: &RunLook,
+    link: Option<&str>,
+    in_hyperlink: bool,
+) -> Vec<Mark> {
     let flags = [
         (format.bold, Mark::Bold),
         (format.italic, Mark::Italic),
@@ -847,6 +1225,32 @@ fn marks_of(format: RunFormat, link: Option<&str>, in_hyperlink: bool) -> Vec<Ma
         .filter(|(flag, _)| *flag == Some(true))
         .map(|(_, mark)| mark)
         .collect();
+    let code = format.code == Some(true);
+    let font_family = look.family.clone().filter(|_| !code);
+    let font_size = look.size_half_points.map(|size| {
+        if size % 2 == 0 {
+            format!("{}pt", size / 2)
+        } else {
+            format!("{}.5pt", size / 2)
+        }
+    });
+    let color = look
+        .colour
+        .as_ref()
+        .filter(|_| link.is_none() && !in_hyperlink)
+        .map(|colour| format!("#{colour}"));
+    if !code && (font_family.is_some() || font_size.is_some() || color.is_some()) {
+        marks.push(Mark::TextStyle {
+            font_family,
+            font_size,
+            color,
+        });
+    }
+    if let Some(highlight) = &look.highlight {
+        marks.push(Mark::Highlight {
+            color: format!("#{highlight}"),
+        });
+    }
     if let Some(href) = link {
         marks.push(Mark::Link {
             href: href.to_owned(),
@@ -975,12 +1379,15 @@ mod tests {
             ..RunFormat::default()
         };
         assert_eq!(
-            marks_of(format, None, false),
+            marks_of(format, &RunLook::default(), None, false),
             vec![Mark::Bold, Mark::Underline]
         );
-        assert_eq!(marks_of(format, None, true), vec![Mark::Bold]);
         assert_eq!(
-            marks_of(format, Some("https://x"), false),
+            marks_of(format, &RunLook::default(), None, true),
+            vec![Mark::Bold]
+        );
+        assert_eq!(
+            marks_of(format, &RunLook::default(), Some("https://x"), false),
             vec![
                 Mark::Bold,
                 Mark::Link {

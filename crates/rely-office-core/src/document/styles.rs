@@ -10,11 +10,14 @@
 use std::collections::HashMap;
 
 use super::Alignment;
+use super::edges::{Borders, CellLook};
 use super::look::{ParagraphLook, RunLook};
 use crate::OfficeError;
 use crate::xml_tree::{Element, Namespace, parse_tree};
 
 const W: Namespace = Namespace::Word;
+/// Five inches; a wider cell margin is a crafted file.
+const MAX_CELL_MARGIN_TWIPS: u32 = 7_200;
 /// How many `w:basedOn` steps are followed; a longer chain is a loop or a crafted file.
 const MAX_STYLE_CHAIN: usize = 16;
 /// Outline level 9 means body text.
@@ -174,11 +177,82 @@ pub(crate) fn alignment(properties: &Element) -> Option<Alignment> {
     }
 }
 
+/// The part of a table a conditional format of a table style applies to, in the order Word
+/// applies them, the weakest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TableRegion {
+    /// Odd and even column bands.
+    OddColumn,
+    EvenColumn,
+    /// Odd and even row bands, counted from the first row below the header.
+    OddRow,
+    EvenRow,
+    FirstColumn,
+    LastColumn,
+    FirstRow,
+    LastRow,
+}
+
+/// What a table style, or one of its conditional formats, gives the cells it covers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct TableFormat {
+    pub cell: CellLook,
+    /// The spacing and font of the paragraphs in the cells.
+    pub paragraph: ParagraphLook,
+}
+
+impl TableFormat {
+    fn parse(container: &Element) -> Self {
+        Self {
+            cell: container
+                .child(W, "tcPr")
+                .map(CellLook::parse)
+                .unwrap_or_default(),
+            paragraph: ParagraphLook {
+                font: container
+                    .child(W, "rPr")
+                    .map(RunLook::parse)
+                    .unwrap_or_default(),
+                ..container
+                    .child(W, "pPr")
+                    .map(ParagraphLook::parse)
+                    .unwrap_or_default()
+            },
+        }
+    }
+
+    pub(crate) fn or(self, fallback: Self) -> Self {
+        Self {
+            cell: self.cell.or(fallback.cell),
+            paragraph: self.paragraph.or(fallback.paragraph),
+        }
+    }
+}
+
+/// A table style with its `w:basedOn` chain resolved.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct TableStyle {
+    /// The table borders, `w:tblBorders`.
+    pub edges: Borders,
+    /// `w:tblCellMar`: top, left, bottom, right.
+    pub cell_margins_twips: [Option<u32>; 4],
+    pub whole: TableFormat,
+    pub regions: Vec<(TableRegion, TableFormat)>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TableStyleDefinition {
+    based_on: Option<String>,
+    style: TableStyle,
+}
+
 /// The styles of a document, by id.
 #[derive(Debug, Default)]
 pub(crate) struct Styles {
     by_id: HashMap<String, StyleDefinition>,
+    tables: HashMap<String, TableStyleDefinition>,
     default_paragraph: Option<String>,
+    default_table: Option<String>,
     document_look: ParagraphLook,
     document_font: RunLook,
 }
@@ -209,6 +283,16 @@ impl Styles {
                 continue;
             };
             let kind = style.attribute(W, "type").unwrap_or("paragraph");
+            if kind == "table" {
+                if style
+                    .attribute(W, "default")
+                    .is_some_and(|value| value == "1")
+                {
+                    styles.default_table = Some(id.to_owned());
+                }
+                styles.tables.insert(id.to_owned(), read_table_style(style));
+                continue;
+            }
             if kind != "paragraph" && kind != "character" {
                 continue;
             }
@@ -322,6 +406,71 @@ impl Styles {
         })
     }
 
+    /// The look of a paragraph of this style inside a table cell: the table style's paragraph
+    /// formatting sits between the paragraph style and the document defaults, as in Word.
+    pub(crate) fn paragraph_look_in_table(
+        &self,
+        style_id: Option<&str>,
+        table: &ParagraphLook,
+    ) -> ParagraphLook {
+        let mut look = ParagraphLook::default();
+        for definition in self.chain(style_id.or(self.default_paragraph.as_deref())) {
+            if definition.paragraph {
+                look = look.or(ParagraphLook {
+                    font: definition.font.clone(),
+                    ..definition.look.clone()
+                });
+            }
+        }
+        look.or(table.clone()).or(ParagraphLook {
+            font: self.document_font.clone(),
+            ..self.document_look.clone()
+        })
+    }
+
+    /// A table style with the styles it is based on; the default table style when `style_id` is
+    /// `None`, nothing when the document does not define it.
+    pub(crate) fn table_style(&self, style_id: Option<&str>) -> Option<TableStyle> {
+        let mut next = style_id.or(self.default_table.as_deref());
+        let mut chain = Vec::new();
+        while let Some(id) = next {
+            let Some(definition) = self.tables.get(id) else {
+                break;
+            };
+            chain.push(&definition.style);
+            if chain.len() >= MAX_STYLE_CHAIN {
+                break;
+            }
+            next = definition.based_on.as_deref();
+        }
+        let mut resolved: Option<TableStyle> = None;
+        for style in chain {
+            resolved = Some(match resolved {
+                None => style.clone(),
+                Some(near) => {
+                    let mut regions = near.regions;
+                    for (region, format) in &style.regions {
+                        match regions.iter_mut().find(|(known, _)| known == region) {
+                            Some((_, near_format)) => {
+                                *near_format = near_format.clone().or(format.clone());
+                            }
+                            None => regions.push((*region, format.clone())),
+                        }
+                    }
+                    TableStyle {
+                        edges: near.edges.or(style.edges.clone()),
+                        cell_margins_twips: [0, 1, 2, 3].map(|side| {
+                            near.cell_margins_twips[side].or(style.cell_margins_twips[side])
+                        }),
+                        whole: near.whole.or(style.whole.clone()),
+                        regions,
+                    }
+                }
+            });
+        }
+        resolved
+    }
+
     /// The font a character style gives its runs.
     pub(crate) fn character_look(&self, style_id: &str) -> RunLook {
         let mut look = RunLook::default();
@@ -368,6 +517,60 @@ fn role_from_name(name: &str) -> Option<ParagraphRole> {
         Some(ParagraphRole::HorizontalRule)
     } else {
         None
+    }
+}
+
+/// A `w:style` of type table: its own table properties and its conditional formats.
+fn read_table_style(style: &Element) -> TableStyleDefinition {
+    let properties = style.child(W, "tblPr");
+    let margins = properties.and_then(|properties| properties.child(W, "tblCellMar"));
+    let margin = |names: &[&str]| {
+        margins.and_then(|margins| {
+            names
+                .iter()
+                .find_map(|name| margins.child(W, name))
+                .and_then(|margin| margin.attribute(W, "w"))
+                .and_then(|width| width.parse::<u32>().ok())
+                .map(|width| width.min(MAX_CELL_MARGIN_TWIPS))
+        })
+    };
+    let regions = style
+        .elements()
+        .filter(|element| element.is(W, "tblStylePr"))
+        .filter_map(|conditional| {
+            let region = match conditional.attribute(W, "type")? {
+                "band1Vert" => TableRegion::OddColumn,
+                "band2Vert" => TableRegion::EvenColumn,
+                "band1Horz" => TableRegion::OddRow,
+                "band2Horz" => TableRegion::EvenRow,
+                "firstCol" => TableRegion::FirstColumn,
+                "lastCol" => TableRegion::LastColumn,
+                "firstRow" => TableRegion::FirstRow,
+                "lastRow" => TableRegion::LastRow,
+                _ => return None,
+            };
+            Some((region, TableFormat::parse(conditional)))
+        })
+        .collect();
+    TableStyleDefinition {
+        based_on: style
+            .child(W, "basedOn")
+            .and_then(|based_on| based_on.attribute(W, "val"))
+            .map(str::to_owned),
+        style: TableStyle {
+            edges: properties
+                .and_then(|properties| properties.child(W, "tblBorders"))
+                .map(Borders::parse)
+                .unwrap_or_default(),
+            cell_margins_twips: [
+                margin(&["top"]),
+                margin(&["left", "start"]),
+                margin(&["bottom"]),
+                margin(&["right", "end"]),
+            ],
+            whole: TableFormat::parse(style),
+            regions,
+        },
     }
 }
 

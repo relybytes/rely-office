@@ -8,8 +8,10 @@
 //! and inline runs, the embedded images, and a report of what the tree could not carry.
 
 mod convert;
+mod edges;
 mod look;
 mod media;
+mod notes;
 mod numbering;
 mod styles;
 mod write;
@@ -19,7 +21,10 @@ use crate::relationships::{main_part_path, read_relationships};
 use crate::xml_tree::{Element, Namespace, parse_tree};
 use crate::{DocumentFormat, Limits, OfficeError, detect_format};
 
-pub use look::{LineSpacing, ParagraphLook, RunLook, TableLook};
+pub use edges::{
+    Border, BorderStyle, Borders, CellLook, TabKind, TabLeader, TabStop, VerticalAlignment,
+};
+pub use look::{LabelSuffix, LineSpacing, ListLabel, PageField, ParagraphLook, RunLook, TableLook};
 pub use media::sniff_image_type;
 pub use write::write_docx;
 
@@ -27,9 +32,15 @@ const MAIN_PART: &str = "word/document.xml";
 /// A page side shorter than an inch is damaged; one longer than 22 inches is Word's own maximum.
 const MIN_PAGE_TWIPS: u32 = 1_440;
 const MAX_PAGE_TWIPS: u64 = 31_680;
+/// Word's own limit of text columns.
+const MAX_COLUMNS: u32 = 45;
+/// Word's default distance of the header and the footer from the page edge, 1.25 cm.
+const DEFAULT_HEADER_TWIPS: u32 = 708;
+/// Word's default gap between text columns and between default tab stops, 1.25 cm.
+const DEFAULT_GAP_TWIPS: u32 = 708;
 
 /// A document read for an editor.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DocumentTree {
     pub blocks: Vec<Block>,
     /// The embedded images, referenced from [`Inline::Image`] by their index in this list.
@@ -37,6 +48,76 @@ pub struct DocumentTree {
     pub report: ImportReport,
     /// The page and body font the document is laid out with, for rendering.
     pub layout: PageLayout,
+    /// The footnotes and endnotes, referenced from [`Inline::NoteReference`] by their index in
+    /// this list, in the order the text refers to them.
+    pub notes: Vec<Note>,
+    /// The headers and footers of the last section.
+    pub headers_footers: HeadersFooters,
+}
+
+/// A footnote or an endnote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
+pub struct Note {
+    pub kind: NoteKind,
+    pub blocks: Vec<Block>,
+}
+
+/// Where a note is printed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
+pub enum NoteKind {
+    /// At the foot of the page that refers to it.
+    Footnote,
+    /// At the end of the document.
+    Endnote,
+}
+
+/// The headers and footers of a section. The first-page ones are set only when the section has
+/// a different first page, the even-page ones only when the document has different odd and even
+/// pages; every other page uses the default ones.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase", default)
+)]
+pub struct HeadersFooters {
+    pub header: Vec<Block>,
+    pub footer: Vec<Block>,
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub first_header: Option<Vec<Block>>,
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub first_footer: Option<Vec<Block>>,
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub even_header: Option<Vec<Block>>,
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub even_footer: Option<Vec<Block>>,
+}
+
+impl HeadersFooters {
+    /// Whether the section has no header or footer at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.header.is_empty()
+            && self.footer.is_empty()
+            && [
+                &self.first_header,
+                &self.first_footer,
+                &self.even_header,
+                &self.even_footer,
+            ]
+            .into_iter()
+            .all(|part| part.as_ref().is_none_or(Vec::is_empty))
+    }
 }
 
 /// The page geometry of the last section and the font of body text, in the units Word stores.
@@ -47,6 +128,14 @@ pub struct PageLayout {
     pub height_twips: u32,
     /// Margins in twentieths of a point: top, right, bottom, left.
     pub margins_twips: [u32; 4],
+    /// The distance of the header from the top edge and of the footer from the bottom edge.
+    pub header_distance_twips: u32,
+    pub footer_distance_twips: u32,
+    /// Text columns and the gap between them.
+    pub columns: u32,
+    pub column_gap_twips: u32,
+    /// The distance between default tab stops.
+    pub default_tab_twips: u32,
     /// The typeface of body text, as the document names it.
     pub font_family: Option<String>,
     /// The size of body text in half points.
@@ -60,6 +149,11 @@ impl Default for PageLayout {
             width_twips: 11_906,
             height_twips: 16_838,
             margins_twips: [1_417; 4],
+            header_distance_twips: DEFAULT_HEADER_TWIPS,
+            footer_distance_twips: DEFAULT_HEADER_TWIPS,
+            columns: 1,
+            column_gap_twips: DEFAULT_GAP_TWIPS,
+            default_tab_twips: DEFAULT_GAP_TWIPS,
             font_family: None,
             font_size_half_points: None,
         }
@@ -159,6 +253,8 @@ pub struct TableCell {
     pub col_span: u32,
     pub row_span: u32,
     pub blocks: Vec<Block>,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub look: CellLook,
 }
 
 /// An inline piece of a block.
@@ -196,6 +292,9 @@ pub enum Inline {
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         height: Option<u32>,
     },
+    /// The reference to a footnote or an endnote: `note` is its index in [`DocumentTree::notes`].
+    /// The number it shows is its position among the notes of its kind.
+    NoteReference { note: usize },
 }
 
 /// A formatting mark of a text run, in this order when several apply.
@@ -203,7 +302,11 @@ pub enum Inline {
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(tag = "type", rename_all = "camelCase")
+    serde(
+        tag = "type",
+        rename_all = "camelCase",
+        rename_all_fields = "camelCase"
+    )
 )]
 pub enum Mark {
     Bold,
@@ -214,6 +317,29 @@ pub enum Mark {
     Code,
     Superscript,
     Subscript,
+    /// The font, size and colour a run sets itself, as CSS values: `"Arial"`, `"14pt"`,
+    /// `"#1F3864"`. The paragraph's own font is not repeated here.
+    TextStyle {
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
+        font_family: Option<String>,
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
+        font_size: Option<String>,
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
+        color: Option<String>,
+    },
+    /// A highlight behind the text, as a CSS colour: `"#FFFF00"`.
+    Highlight {
+        color: String,
+    },
     /// A hyperlink; only `http`, `https` and `mailto` targets are kept.
     Link {
         href: String,
@@ -320,6 +446,31 @@ pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree,
     )?;
     let styles = styles::Styles::parse(styles.as_deref())?;
     let numbering = numbering::Numbering::parse(numbering.as_deref())?;
+    let settings = read_text_member(
+        &mut package,
+        &part_of("settings", "word/settings.xml"),
+        limits,
+    )
+    .ok()
+    .flatten();
+    let settings = notes::Settings::parse(settings.as_deref());
+    let side_part = |package: &mut crate::archive::ZipPackage<'_>, kind: &str| {
+        relationships
+            .iter()
+            .find(|relationship| !relationship.external && relationship.is_kind(kind))
+            .and_then(|relationship| notes::read_part(package, &relationship.target, limits))
+    };
+    let note_parts = notes::NoteParts {
+        footnotes: side_part(&mut package, "footnotes"),
+        endnotes: side_part(&mut package, "endnotes"),
+    };
+    let section = body.child(Namespace::Word, "sectPr");
+    let section_parts = section
+        .map(|section| notes::section_parts(section, &relationships, &mut package, limits))
+        .unwrap_or_default();
+    let title_page = section
+        .and_then(|section| section.child(Namespace::Word, "titlePg"))
+        .is_some_and(styles::on_off);
 
     let mut report = ImportReport {
         headers_and_footers: relationships
@@ -333,22 +484,66 @@ pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree,
         &relationships,
         &styles,
         &numbering,
+        &note_parts,
         limits,
         &mut report,
     );
     let blocks = converter.convert_blocks(body);
-    let media = converter.into_media();
+    let headers_footers = headers_footers(
+        &mut converter,
+        &section_parts,
+        title_page,
+        settings.even_and_odd_headers,
+    );
+    let (media, notes) = converter.finish();
     let font = styles.body_font();
     let mut layout = page_layout(body);
     layout.font_family = font.family;
     layout.font_size_half_points = font.size_half_points;
+    layout.default_tab_twips = settings.default_tab_twips;
 
     Ok(DocumentTree {
         blocks,
         media,
         report,
         layout,
+        notes,
+        headers_footers,
     })
+}
+
+/// The headers and footers of the section: a first-page pair when the section has a different
+/// first page, an even-page pair when the document has different odd and even pages.
+fn headers_footers<'a>(
+    converter: &mut convert::Converter<'a, '_>,
+    section_parts: &'a [(notes::Slot, notes::Part)],
+    title_page: bool,
+    even_and_odd: bool,
+) -> HeadersFooters {
+    let mut parts = HeadersFooters::default();
+    if title_page {
+        parts.first_header = Some(Vec::new());
+        parts.first_footer = Some(Vec::new());
+    }
+    if even_and_odd {
+        parts.even_header = Some(Vec::new());
+        parts.even_footer = Some(Vec::new());
+    }
+    for (slot, part) in section_parts {
+        let blocks = converter.convert_part(&part.root, &part.relationships);
+        let target = match slot {
+            notes::Slot::Header => Some(&mut parts.header),
+            notes::Slot::Footer => Some(&mut parts.footer),
+            notes::Slot::FirstHeader => parts.first_header.as_mut(),
+            notes::Slot::FirstFooter => parts.first_footer.as_mut(),
+            notes::Slot::EvenHeader => parts.even_header.as_mut(),
+            notes::Slot::EvenFooter => parts.even_footer.as_mut(),
+        };
+        if let Some(target) = target {
+            *target = blocks;
+        }
+    }
+    parts
 }
 
 /// The page size and margins of the body's own section, the last one; A4 when it says nothing.
@@ -376,6 +571,20 @@ fn page_layout(body: &Element) -> PageLayout {
             if let Some(margin) = twips(margins, name) {
                 layout.margins_twips[index] = margin;
             }
+        }
+        if let Some(header) = twips(margins, "header") {
+            layout.header_distance_twips = header;
+        }
+        if let Some(footer) = twips(margins, "footer") {
+            layout.footer_distance_twips = footer;
+        }
+    }
+    if let Some(columns) = section.child(Namespace::Word, "cols") {
+        if let Some(count) = twips(columns, "num") {
+            layout.columns = count.clamp(1, MAX_COLUMNS);
+        }
+        if let Some(gap) = twips(columns, "space") {
+            layout.column_gap_twips = gap;
         }
     }
     // Margins that leave no room for text are damaged, not a layout.

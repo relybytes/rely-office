@@ -5,7 +5,9 @@
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
 use super::*;
-use crate::document::{ImportReport, PageLayout, ParagraphLook, RunLook, TableCell, TableLook};
+use crate::document::{
+    CellLook, ImportReport, PageLayout, ParagraphLook, RunLook, TableCell, TableLook,
+};
 use crate::{Limits, read_document_tree};
 
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01";
@@ -41,6 +43,7 @@ fn cell(value: &str, col_span: u32, row_span: u32) -> TableCell {
         col_span,
         row_span,
         blocks: vec![paragraph(vec![text(value, Vec::new())], None)],
+        look: CellLook::default(),
     }
 }
 
@@ -50,6 +53,7 @@ fn tree(blocks: Vec<Block>, media: Vec<Media>) -> DocumentTree {
         media,
         report: ImportReport::default(),
         layout: PageLayout::default(),
+        ..DocumentTree::default()
     }
 }
 

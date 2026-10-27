@@ -4,8 +4,9 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
-//! A docx document tree written out as Typst source, with the page, spacing, indents, fonts,
-//! column widths and borders the document declares.
+//! A docx document tree written out as Typst source, with the page, headers and footers, notes,
+//! spacing, indents, tab stops, fonts, list labels, borders, shading and table looks the document
+//! declares.
 //!
 //! Spacing follows the office suites rather than Typst: the space after a paragraph and the
 //! space before the next add up instead of collapsing, so every block sits with no spacing of
@@ -18,8 +19,9 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use rely_office_core::{
-    Alignment, Block, DocumentTree, Inline, LineSpacing, Mark, Media, ParagraphLook, RunLook,
-    TableLook, TableRow,
+    Alignment, Block, Border, BorderStyle, Borders, CellLook, DocumentTree, Inline, LabelSuffix,
+    LineSpacing, ListLabel, Mark, Media, Note, NoteKind, PageField, ParagraphLook, RunLook,
+    TabKind, TabLeader, TabStop, TableLook, TableRow, VerticalAlignment,
 };
 
 use crate::fonts::{MONO, body_fonts};
@@ -40,6 +42,43 @@ const LINK_COLOUR: &str = "0563C1";
 const DEFAULT_CELL_MARGINS_TWIPS: [u32; 4] = [0, 108, 0, 108];
 /// Word's own limit; a wider table is a crafted file.
 const MAX_COLUMNS: usize = 63;
+/// Word draws a paragraph border a point above and below the text and four points beside it.
+const PARAGRAPH_BORDER_SPACE: [f64; 4] = [1.0, 4.0, 1.0, 4.0];
+/// The stroke of a table that draws borders but names none.
+const DEFAULT_STROKE: &str = "0.5pt";
+
+/// Lays out the text after each tab: at the next stop past the text before it, left, centre or
+/// right aligned to the stop, or at the next default stop. Positions are from the left margin;
+/// `origin` is where the line starts.
+const TAB_FUNCTION: &str = r#"#let rely-tabbed(origin, step, stops, parts) = context {
+  let x = origin
+  let pieces = ()
+  for (index, part) in parts.enumerate() {
+    let width = measure(part).width
+    if index > 0 {
+      let found = stops.find(stop => stop.at(0) > x + 0.5pt)
+      let (position, kind, leader) = if found == none {
+        ((calc.floor((x + 0.5pt) / step) + 1) * step, "left", none)
+      } else { found }
+      let start = if kind == "right" { position - width } else if kind == "center" { position - width / 2 } else { position }
+      if start < x { start = x }
+      let gap = start - x
+      pieces.push(if leader == none { h(gap) } else { box(width: gap, repeat(leader)) })
+      x = start
+    }
+    pieces.push(part)
+    x += width
+  }
+  pieces.join()
+}
+"#;
+
+/// Footnotes as Word prints them: the number raised beside the note's first line, not above it.
+const FOOTNOTE_RULES: &str = concat!(
+    "#set footnote.entry(separator: line(length: 33%, stroke: 0.5pt), gap: 2pt)\n",
+    "#show footnote.entry: it => grid(columns: (auto, 1fr), column-gutter: 2pt, ",
+    "super(numbering(it.note.numbering, ..counter(footnote).at(it.note.location()))), it.note.body)\n",
+);
 
 /// The source and the image files of a document. With `with_images` false every image is drawn
 /// as an empty frame of its size, for a document whose images Typst cannot decode.
@@ -58,21 +97,37 @@ pub(crate) fn document_source(
         .font_size_half_points
         .map_or(DEFAULT_FONT_POINTS, |size| f64::from(size) / 2.0);
     let body_family = layout.font_family.clone();
+    let columns = layout.columns.max(1);
+    let column_gap = f64::from(layout.column_gap_twips) / TWIPS_PER_POINT;
+    let text_width = (width - left - right).max(1.0);
+    let column_width = if columns > 1 {
+        ((text_width - column_gap * f64::from(columns - 1)) / f64::from(columns)).max(1.0)
+    } else {
+        text_width
+    };
 
     let mut writer = Writer {
         media: &tree.media,
+        notes: &tree.notes,
         with_images,
         lines,
         body_family,
         body_size,
-        text_width: (width - left - right).max(1.0),
+        text_width: column_width,
+        default_tab: (f64::from(layout.default_tab_twips) / TWIPS_PER_POINT).max(1.0),
         files: HashMap::new(),
         list_counters: HashMap::new(),
+        endnotes: Vec::new(),
+        in_note: false,
     };
-    let mut source = String::new();
-    let _ = writeln!(
+    let page_parts = writer.page_parts(tree, top, bottom);
+    let body = writer.blocks(&tree.blocks);
+    let endnotes = writer.endnote_list();
+
+    let mut source = String::from(TAB_FUNCTION);
+    let _ = write!(
         source,
-        "#set page(width: {}, height: {}, margin: (top: {}, right: {}, bottom: {}, left: {}))",
+        "#set page(width: {}, height: {}, margin: (top: {}, right: {}, bottom: {}, left: {})",
         points(width),
         points(height),
         points(top),
@@ -80,6 +135,14 @@ pub(crate) fn document_source(
         points(bottom),
         points(left)
     );
+    if columns > 1 {
+        let _ = write!(source, ", columns: {columns}");
+    }
+    source.push_str(&page_parts);
+    source.push_str(")\n");
+    if columns > 1 {
+        let _ = writeln!(source, "#set columns(gutter: {})", points(column_gap));
+    }
     let _ = writeln!(
         source,
         "#set text(font: {}, size: {}, lang: \"it\", hyphenate: false, top-edge: \"ascender\", bottom-edge: \"descender\")",
@@ -98,7 +161,9 @@ pub(crate) fn document_source(
         "#show link: it => underline(text(fill: rgb(\"#{LINK_COLOUR}\"), it))"
     );
     source.push_str("#show heading: it => it.body\n");
-    source.push_str(&writer.blocks(&tree.blocks));
+    source.push_str(FOOTNOTE_RULES);
+    source.push_str(&body);
+    source.push_str(&endnotes);
 
     let mut files: Vec<(String, Vec<u8>)> = writer
         .files
@@ -141,20 +206,110 @@ struct ParagraphParts {
     page_break: bool,
 }
 
+/// The tab stops a paragraph's text is laid out against.
+struct TabContext {
+    /// Where the first line starts, from the left margin.
+    origin: f64,
+    /// The paragraph's stops, from the left margin.
+    stops: Vec<TabStop>,
+}
+
 struct Writer<'a> {
     media: &'a [Media],
+    notes: &'a [Note],
     with_images: bool,
     lines: &'a FontLines,
     body_family: Option<String>,
     body_size: f64,
     text_width: f64,
+    default_tab: f64,
     /// The media index of each image written out, with its path.
     files: HashMap<usize, String>,
     /// The counters of each numbered list, one per level.
     list_counters: HashMap<u32, Vec<u32>>,
+    /// The endnotes referred to so far, in order: their number is their position plus one.
+    endnotes: Vec<usize>,
+    /// Inside a note, where a reference to another note is not followed.
+    in_note: bool,
 }
 
 impl Writer<'_> {
+    /// The `header` and `footer` arguments of the page: the first page, even pages and the
+    /// others each with their own when the document has them.
+    fn page_parts(&mut self, tree: &DocumentTree, top: f64, bottom: f64) -> String {
+        let parts = &tree.headers_footers;
+        if parts.is_empty() {
+            return String::new();
+        }
+        let header_distance = (f64::from(tree.layout.header_distance_twips) / TWIPS_PER_POINT)
+            .clamp(0.0, top.max(0.0));
+        let footer_distance = (f64::from(tree.layout.footer_distance_twips) / TWIPS_PER_POINT)
+            .clamp(0.0, bottom.max(0.0));
+        let header = self.page_part(
+            &parts.header,
+            parts.first_header.as_deref(),
+            parts.even_header.as_deref(),
+            &format!("align(top, pad(top: {}, ", points(header_distance)),
+        );
+        let footer = self.page_part(
+            &parts.footer,
+            parts.first_footer.as_deref(),
+            parts.even_footer.as_deref(),
+            &format!("align(bottom, pad(bottom: {}, ", points(footer_distance)),
+        );
+        format!(", header: {header}, header-ascent: 0pt, footer: {footer}, footer-descent: 0pt")
+    }
+
+    fn page_part(
+        &mut self,
+        default: &[Block],
+        first: Option<&[Block]>,
+        even: Option<&[Block]>,
+        frame: &str,
+    ) -> String {
+        let wrap = |blocks: &[Block], writer: &mut Self| {
+            format!("{frame}block(width: 100%)[{}]))", writer.blocks(blocks))
+        };
+        let default = wrap(default, self);
+        let first = first.map(|blocks| wrap(blocks, self));
+        let even = even.map(|blocks| wrap(blocks, self));
+        let mut choice = String::from("context { let page-number = here().page(); ");
+        if let Some(first) = &first {
+            let _ = write!(choice, "if page-number == 1 {{ {first} }} else ");
+        }
+        if let Some(even) = &even {
+            let _ = write!(choice, "if calc.even(page-number) {{ {even} }} else ");
+        }
+        let _ = write!(choice, "{{ {default} }} }}");
+        choice
+    }
+
+    /// The endnotes at the end of the document, numbered in roman numerals as Word numbers them.
+    fn endnote_list(&mut self) -> String {
+        let mut markup = String::new();
+        if self.endnotes.is_empty() {
+            return markup;
+        }
+        markup.push_str("#v(12pt, weak: true)\n#line(length: 33%, stroke: 0.5pt)\n");
+        let mut index = 0;
+        // Rendering an endnote may not add another: notes inside notes are not followed.
+        while let Some(&note) = self.endnotes.get(index) {
+            index += 1;
+            let Some(content) = self.notes.get(note) else {
+                continue;
+            };
+            self.in_note = true;
+            let blocks = self.blocks(&content.blocks);
+            self.in_note = false;
+            let _ = writeln!(
+                markup,
+                "#grid(columns: (auto, 1fr), column-gutter: 3pt, super({}), [{blocks}])",
+                string_literal(&roman(u32::try_from(index).unwrap_or(1)))
+            );
+        }
+        markup
+    }
+
     /// Blocks as markup, each gap between two blocks the sum of their spacing.
     fn blocks(&mut self, blocks: &[Block]) -> String {
         let mut markup = String::new();
@@ -228,7 +383,10 @@ impl Writer<'_> {
         look: &ParagraphLook,
         heading: Option<u8>,
     ) -> Placed {
-        let parts = self.paragraph_parts(content, look, heading);
+        if let Some(label) = &look.list_label {
+            return self.labelled(label, content, look, heading, align);
+        }
+        let parts = self.paragraph_parts(content, look, heading, 0.0);
         let mut par_arguments = format!("leading: {}", points(parts.leading));
         if align == Some(Alignment::Justify) {
             par_arguments.push_str(", justify: true");
@@ -252,6 +410,8 @@ impl Writer<'_> {
             "text({}, par({par_arguments})[{}])",
             parts.text_arguments, parts.inlines
         );
+        expression = aligned(align, expression);
+        expression = framed(look, expression);
         if left > 0.0 || parts.right > 0.0 {
             expression = format!(
                 "pad(left: {}, right: {}, {expression})",
@@ -259,7 +419,6 @@ impl Writer<'_> {
                 points(parts.right.max(0.0))
             );
         }
-        expression = aligned(align, expression);
         if let Some(level) = heading {
             expression = format!("heading(level: {})[#{expression}]", level.clamp(1, 6));
         }
@@ -276,6 +435,7 @@ impl Writer<'_> {
         content: &[Inline],
         look: &ParagraphLook,
         heading: Option<u8>,
+        label_width: f64,
     ) -> ParagraphParts {
         let family = look
             .font
@@ -315,24 +475,30 @@ impl Writer<'_> {
             Some(LineSpacing::Exact(height)) => f64::from(height) / TWIPS_PER_POINT,
             Some(LineSpacing::AtLeast(height)) => (f64::from(height) / TWIPS_PER_POINT).max(single),
         };
-        let inlines = if content.is_empty() {
-            "#hide[x]".to_owned()
-        } else {
-            self.inlines(content)
-        };
         let twips =
             |value: Option<u32>| value.map_or(0.0, |value| f64::from(value) / TWIPS_PER_POINT);
         let signed =
             |value: Option<i32>| value.map_or(0.0, |value| f64::from(value) / TWIPS_PER_POINT);
+        let left = signed(look.indent_left_twips);
+        let first_line = signed(look.indent_first_line_twips);
+        let tabs = TabContext {
+            origin: left + first_line + label_width,
+            stops: tab_stops(look, left, first_line),
+        };
+        let inlines = if content.is_empty() {
+            "#hide[x]".to_owned()
+        } else {
+            self.inlines(content, Some(&tabs), &look.font)
+        };
         ParagraphParts {
             text_arguments,
             leading: (line_height - metrics.box_em * size).max(0.0),
             inlines,
             before: twips(look.space_before_twips),
             after: twips(look.space_after_twips),
-            left: signed(look.indent_left_twips),
+            left,
             right: signed(look.indent_right_twips),
-            first_line: signed(look.indent_first_line_twips),
+            first_line,
             page_break: look.page_break_before,
         }
     }
@@ -345,26 +511,75 @@ impl Writer<'_> {
         content: &[Inline],
         look: &ParagraphLook,
     ) -> Placed {
-        let marker = self.list_marker(ordered, level, list_id);
-        let parts = self.paragraph_parts(content, look, None);
+        let label = look.list_label.clone().unwrap_or_else(|| ListLabel {
+            text: self.list_marker(ordered, level, list_id),
+            suffix: LabelSuffix::Tab,
+            font: RunLook::default(),
+        });
+        let look = if look.indent_left_twips.is_some() {
+            look.clone()
+        } else {
+            let left = (f64::from(level) + 1.0) * LIST_INDENT_POINTS;
+            ParagraphLook {
+                indent_left_twips: Some(twips_of(left)),
+                indent_first_line_twips: look
+                    .indent_first_line_twips
+                    .or(Some(-twips_of(LIST_INDENT_POINTS))),
+                ..look.clone()
+            }
+        };
+        self.labelled(&label, content, &look, None, None)
+    }
+
+    /// A paragraph that starts with a label: the label in the hanging indent, the text after it.
+    fn labelled(
+        &mut self,
+        label: &ListLabel,
+        content: &[Inline],
+        look: &ParagraphLook,
+        heading: Option<u8>,
+        align: Option<Alignment>,
+    ) -> Placed {
+        let parts = self.paragraph_parts(content, look, heading, 0.0);
         let hanging = if parts.first_line < 0.0 {
             -parts.first_line
         } else {
-            LIST_INDENT_POINTS
+            0.0
         };
-        let left = if look.indent_left_twips.is_some() {
-            parts.left
-        } else {
-            (f64::from(level) + 1.0) * LIST_INDENT_POINTS
-        };
-        let expression = format!(
-            "pad(left: {}, text({}, grid(columns: ({}, 1fr), [{marker}], par(leading: {})[{}])))",
-            points((left - hanging).max(0.0)),
-            parts.text_arguments,
-            points(hanging),
-            points(parts.leading),
-            parts.inlines
+        let label_markup = format!(
+            "#{}",
+            marked(&label.text, &[], &label.font, &RunLook::default())
         );
+        let (columns, gutter) = match label.suffix {
+            LabelSuffix::Tab if hanging > 0.0 => (
+                format!(
+                    "(calc.max({}, measure([{label_markup}]).width + 2pt), 1fr)",
+                    points(hanging)
+                ),
+                "0pt".to_owned(),
+            ),
+            LabelSuffix::Tab => ("(auto, 1fr)".to_owned(), points(self.default_tab / 2.0)),
+            LabelSuffix::Space => ("(auto, 1fr)".to_owned(), "0.25em".to_owned()),
+            LabelSuffix::Nothing => ("(auto, 1fr)".to_owned(), "0pt".to_owned()),
+        };
+        let start = (parts.left - hanging).max(0.0);
+        let mut text = format!("par(leading: {})[{}]", points(parts.leading), parts.inlines);
+        text = aligned(align, text);
+        let mut expression = format!(
+            "text({}, context grid(columns: {columns}, column-gutter: {gutter}, [{label_markup}], {text}))",
+            parts.text_arguments
+        );
+        expression = framed(look, expression);
+        if start > 0.0 || parts.right > 0.0 {
+            expression = format!(
+                "pad(left: {}, right: {}, {expression})",
+                points(start),
+                points(parts.right.max(0.0))
+            );
+        }
+        if let Some(level) = heading {
+            expression = format!("heading(level: {})[#{expression}]", level.clamp(1, 6));
+        }
         Placed {
             expression,
             before: parts.before,
@@ -373,23 +588,114 @@ impl Writer<'_> {
         }
     }
 
-    /// Inline content as markup, one expression after the other with nothing between them.
-    fn inlines(&mut self, content: &[Inline]) -> String {
-        let mut markup = String::new();
+    /// Inline content as markup, one expression after the other with nothing between them; text
+    /// with tabs is laid out against the paragraph's stops.
+    fn inlines(
+        &mut self,
+        content: &[Inline],
+        tabs: Option<&TabContext>,
+        paragraph_font: &RunLook,
+    ) -> String {
+        let has_tab = content
+            .iter()
+            .any(|inline| matches!(inline, Inline::Text { text, .. } if text.contains('\t')));
+        let mut segments = vec![String::new()];
         for inline in content {
-            markup.push('#');
             match inline {
-                Inline::Text { text, marks, look } => markup.push_str(&marked(text, marks, look)),
-                Inline::HardBreak => markup.push_str("linebreak()"),
+                Inline::Text { text, marks, look } => {
+                    for (index, piece) in text.split('\t').enumerate() {
+                        if index > 0 {
+                            if has_tab && tabs.is_some() {
+                                segments.push(String::new());
+                            } else {
+                                push_expression(&mut segments, "h(2em)");
+                            }
+                        }
+                        if !piece.is_empty() || look.field.is_some() {
+                            let expression = marked(piece, marks, look, paragraph_font);
+                            push_expression(&mut segments, &expression);
+                        }
+                    }
+                }
+                Inline::HardBreak => push_expression(&mut segments, "linebreak()"),
                 Inline::Image {
                     media,
                     width,
                     height,
                     ..
-                } => markup.push_str(&self.image(*media, *width, *height)),
+                } => {
+                    let image = self.image(*media, *width, *height);
+                    push_expression(&mut segments, &image);
+                }
+                Inline::NoteReference { note } => {
+                    let reference = self.note_reference(*note);
+                    push_expression(&mut segments, &reference);
+                }
             }
         }
-        markup
+        match tabs {
+            Some(tabs) if segments.len() > 1 => {
+                let mut stops = String::new();
+                for stop in &tabs.stops {
+                    let kind = match stop.kind {
+                        TabKind::Center => "center",
+                        TabKind::Right | TabKind::Decimal => "right",
+                        TabKind::Left | TabKind::Clear => "left",
+                    };
+                    let leader = match stop.leader {
+                        TabLeader::None => "none".to_owned(),
+                        TabLeader::Dot => string_literal("."),
+                        TabLeader::Hyphen => string_literal("-"),
+                        TabLeader::Underscore => string_literal("_"),
+                        TabLeader::MiddleDot => string_literal("\u{b7}"),
+                    };
+                    let _ = write!(
+                        stops,
+                        "({}, {}, {leader}), ",
+                        points(f64::from(stop.position_twips) / TWIPS_PER_POINT),
+                        string_literal(kind)
+                    );
+                }
+                let mut parts = String::new();
+                for segment in &segments {
+                    let _ = write!(parts, "[{segment}], ");
+                }
+                format!(
+                    "#rely-tabbed({}, {}, ({stops}), ({parts}))",
+                    points(tabs.origin),
+                    points(self.default_tab)
+                )
+            }
+            _ => segments.concat(),
+        }
+    }
+
+    /// A footnote where it is referred to, an endnote's number with the note kept for the end.
+    fn note_reference(&mut self, note: usize) -> String {
+        let Some(content) = self.notes.get(note).filter(|_| !self.in_note) else {
+            return "[]".to_owned();
+        };
+        match content.kind {
+            NoteKind::Footnote => {
+                self.in_note = true;
+                let blocks = self.blocks(&content.blocks);
+                self.in_note = false;
+                format!("footnote[{blocks}]")
+            }
+            NoteKind::Endnote => {
+                let position =
+                    if let Some(known) = self.endnotes.iter().position(|known| *known == note) {
+                        known
+                    } else {
+                        self.endnotes.push(note);
+                        self.endnotes.len() - 1
+                    };
+                format!(
+                    "super({})",
+                    string_literal(&roman(u32::try_from(position + 1).unwrap_or(1)))
+                )
+            }
+        }
     }
 
     fn image(&mut self, media: usize, width: Option<u32>, height: Option<u32>) -> String {
@@ -435,16 +741,15 @@ impl Writer<'_> {
         }
     }
 
+    /// The label of a list item whose document names none: bullets, numbers, letters and roman
+    /// numerals by level.
     fn list_marker(&mut self, ordered: bool, level: u8, list_id: u32) -> String {
         let level = usize::from(level.min(8));
         let counters = self.list_counters.entry(list_id).or_default();
         counters.resize(level + 1, 0);
         counters[level] += 1;
         if !ordered {
-            return format!(
-                "#{}",
-                string_literal(["\u{2022}", "\u{25e6}", "\u{25aa}"][level % 3])
-            );
+            return ["\u{2022}", "\u{25e6}", "\u{25aa}"][level % 3].to_owned();
         }
         let number = counters[level];
         let label = match level % 3 {
@@ -452,31 +757,64 @@ impl Writer<'_> {
             1 => alphabetic(number),
             _ => roman(number),
         };
-        format!("#{}", string_literal(&format!("{label}.")))
+        format!("{label}.")
     }
 
     fn table(&mut self, rows: &[TableRow], look: &TableLook) -> String {
-        let columns = column_count(rows);
+        let placement = place_cells(rows);
+        let columns = placement.columns;
         if columns == 0 {
             return "[]".to_owned();
         }
         let row_count = rows.len();
         let header_rows = header_row_count(rows);
+        let draws_edges = look.edges.any_visible()
+            || rows
+                .iter()
+                .any(|row| row.cells.iter().any(|cell| cell.look.borders.any_visible()));
         let mut header = Vec::new();
         let mut body = Vec::new();
         for (row_index, row) in rows.iter().enumerate() {
             let in_header = row_index < header_rows;
-            for cell in &row.cells {
-                let col_span = cell
-                    .col_span
-                    .clamp(1, u32::try_from(columns).unwrap_or(u32::MAX));
-                let remaining_rows = u32::try_from(row_count - row_index).unwrap_or(u32::MAX);
-                let row_span = cell.row_span.clamp(1, remaining_rows);
+            for (cell_index, cell) in row.cells.iter().enumerate() {
+                let (x, col_span, row_span) = placement.cells[row_index][cell_index];
                 let content = self.blocks(&cell.blocks);
-                let cell = if col_span == 1 && row_span == 1 {
+                let mut arguments = Vec::new();
+                if col_span > 1 {
+                    arguments.push(format!("colspan: {col_span}"));
+                }
+                if row_span > 1 {
+                    arguments.push(format!("rowspan: {row_span}"));
+                }
+                if let Some(fill) = &cell.look.fill {
+                    arguments.push(format!("fill: rgb(\"#{fill}\")"));
+                }
+                if let Some(vertical) = cell.look.vertical {
+                    arguments.push(
+                        match vertical {
+                            VerticalAlignment::Top => "align: top",
+                            VerticalAlignment::Center => "align: horizon",
+                            VerticalAlignment::Bottom => "align: bottom",
+                        }
+                        .to_owned(),
+                    );
+                }
+                if draws_edges {
+                    let edges = CellEdges {
+                        first_row: row_index == 0,
+                        last_row: row_index + row_span >= row_count,
+                        first_column: x == 0,
+                        last_column: x + col_span >= columns,
+                    };
+                    arguments.push(format!(
+                        "stroke: {}",
+                        cell_stroke(&cell.look, &look.edges, edges, look.borders)
+                    ));
+                }
+                let cell = if arguments.is_empty() {
                     format!("[{content}]")
                 } else {
-                    format!("table.cell(colspan: {col_span}, rowspan: {row_span})[{content}]")
+                    format!("table.cell({})[{content}]", arguments.join(", "))
                 };
                 if in_header {
                     header.push(cell);
@@ -485,7 +823,13 @@ impl Writer<'_> {
                 }
             }
         }
-        let stroke = if look.borders { "0.5pt" } else { "none" };
+        let stroke = if draws_edges {
+            "none"
+        } else if look.borders {
+            DEFAULT_STROKE
+        } else {
+            "none"
+        };
         let [top, left, bottom, right] = [0, 1, 2, 3].map(|side| {
             f64::from(look.cell_margins_twips[side].unwrap_or(DEFAULT_CELL_MARGINS_TWIPS[side]))
                 / TWIPS_PER_POINT
@@ -537,6 +881,184 @@ impl Writer<'_> {
     }
 }
 
+/// Add an inline expression to the last segment of a paragraph.
+fn push_expression(segments: &mut [String], expression: &str) {
+    if let Some(segment) = segments.last_mut() {
+        segment.push('#');
+        segment.push_str(expression);
+    }
+}
+
+/// The paragraph's stops a tab can reach, in points from the left margin: its own, and the
+/// hanging indent, which Word treats as a stop.
+fn tab_stops(look: &ParagraphLook, left: f64, first_line: f64) -> Vec<TabStop> {
+    let mut stops: Vec<TabStop> = look
+        .tabs
+        .iter()
+        .filter(|stop| stop.kind != TabKind::Clear)
+        .copied()
+        .collect();
+    if first_line < 0.0 {
+        let position = twips_of(left);
+        if !stops.iter().any(|stop| stop.position_twips == position) {
+            stops.push(TabStop {
+                position_twips: position,
+                kind: TabKind::Left,
+                leader: TabLeader::None,
+            });
+            stops.sort_by_key(|stop| stop.position_twips);
+        }
+    }
+    stops
+}
+
+fn twips_of(points: f64) -> i32 {
+    let twips = (points * TWIPS_PER_POINT).round();
+    if twips.is_finite() && twips.abs() < 1e9 {
+        // The range is checked, so the conversion is exact.
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "the value is finite, rounded and within the range of i32"
+        )]
+        let twips = twips as i32;
+        twips
+    } else {
+        0
+    }
+}
+
+/// Which outer edges of its table a cell touches.
+#[derive(Debug, Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one flag per side of the cell, each decided on its own"
+)]
+struct CellEdges {
+    first_row: bool,
+    last_row: bool,
+    first_column: bool,
+    last_column: bool,
+}
+
+/// The stroke of each side of a cell: its own border, else the table's outer edge or its inside
+/// line, else the default line of a table that draws borders without naming them.
+fn cell_stroke(cell: &CellLook, table: &Borders, edges: CellEdges, borders: bool) -> String {
+    let pick =
+        |own: Option<&Border>, outer: Option<&Border>, inner: Option<&Border>, is_outer: bool| {
+            own.or(if is_outer { outer } else { inner }).cloned()
+        };
+    let sides = [
+        (
+            "top",
+            pick(
+                cell.borders.top.as_ref(),
+                table.top.as_ref(),
+                table.inside_horizontal.as_ref(),
+                edges.first_row,
+            ),
+        ),
+        (
+            "bottom",
+            pick(
+                cell.borders.bottom.as_ref(),
+                table.bottom.as_ref(),
+                table.inside_horizontal.as_ref(),
+                edges.last_row,
+            ),
+        ),
+        (
+            "left",
+            pick(
+                cell.borders.left.as_ref(),
+                table.left.as_ref(),
+                table.inside_vertical.as_ref(),
+                edges.first_column,
+            ),
+        ),
+        (
+            "right",
+            pick(
+                cell.borders.right.as_ref(),
+                table.right.as_ref(),
+                table.inside_vertical.as_ref(),
+                edges.last_column,
+            ),
+        ),
+    ];
+    let mut stroke = String::from("(");
+    for (side, border) in sides {
+        let value = match border {
+            Some(border) => border_stroke(&border),
+            None if borders && !table.any_visible() => DEFAULT_STROKE.to_owned(),
+            None => "none".to_owned(),
+        };
+        let _ = write!(stroke, "{side}: {value}, ");
+    }
+    stroke.push(')');
+    stroke
+}
+
+/// A Typst stroke for a border edge.
+fn border_stroke(border: &Border) -> String {
+    if border.style == BorderStyle::None {
+        return "none".to_owned();
+    }
+    let width = f64::from(border.width_eighths) / 8.0;
+    let width = if border.style == BorderStyle::Double {
+        width * 2.0
+    } else {
+        width
+    };
+    let paint = border.colour.as_ref().map_or_else(
+        || "black".to_owned(),
+        |colour| format!("rgb(\"#{colour}\")"),
+    );
+    let dash = match border.style {
+        BorderStyle::Dotted => ", dash: \"dotted\"",
+        BorderStyle::Dashed => ", dash: \"dashed\"",
+        _ => "",
+    };
+    format!("(paint: {paint}, thickness: {}{dash})", points(width))
+}
+
+/// A paragraph's shading and borders drawn around it, outside its text as Word draws them.
+fn framed(look: &ParagraphLook, expression: String) -> String {
+    let borders = &look.borders;
+    let visible = borders.any_visible();
+    if look.shading.is_none() && !visible {
+        return expression;
+    }
+    let mut arguments = String::from("width: 100%");
+    if let Some(fill) = &look.shading {
+        let _ = write!(arguments, ", fill: rgb(\"#{fill}\")");
+    }
+    if visible {
+        let side = |border: &Option<Border>| {
+            border
+                .as_ref()
+                .map_or_else(|| "none".to_owned(), border_stroke)
+        };
+        let _ = write!(
+            arguments,
+            ", stroke: (top: {}, right: {}, bottom: {}, left: {})",
+            side(&borders.top),
+            side(&borders.right),
+            side(&borders.bottom),
+            side(&borders.left)
+        );
+    }
+    let [top, right, bottom, left] = PARAGRAPH_BORDER_SPACE;
+    let _ = write!(
+        arguments,
+        ", outset: (top: {}, right: {}, bottom: {}, left: {})",
+        points(top),
+        points(right),
+        points(bottom),
+        points(left)
+    );
+    format!("block({arguments}, {expression})")
+}
+
 /// How many leading rows repeat as the header: the rows marked so, unless a cell of theirs spans
 /// into the body, which Typst does not accept in a header.
 fn header_row_count(rows: &[TableRow]) -> usize {
@@ -549,13 +1071,20 @@ fn header_row_count(rows: &[TableRow]) -> usize {
     if spans_out { 0 } else { marked }
 }
 
-/// How many columns the rows fill once each cell takes the first free place, as Typst places
-/// them.
-fn column_count(rows: &[TableRow]) -> usize {
+/// Where every cell lands once each takes the first free place, as Typst places them.
+struct Placement {
+    /// For each row, each cell's first column, column span and row span, cut to the table.
+    cells: Vec<Vec<(usize, usize, usize)>>,
+    columns: usize,
+}
+
+fn place_cells(rows: &[TableRow]) -> Placement {
     let mut occupied: Vec<Vec<bool>> = Vec::new();
     let mut columns = 0;
+    let mut cells = Vec::with_capacity(rows.len());
     for (row_index, row) in rows.iter().enumerate() {
         let mut column = 0;
+        let mut placed_row = Vec::with_capacity(row.cells.len());
         for cell in &row.cells {
             while occupied
                 .get(row_index)
@@ -582,13 +1111,21 @@ fn column_count(rows: &[TableRow]) -> usize {
                     *slot = true;
                 }
             }
+            placed_row.push((column, col_span, row_span));
             column += col_span;
             columns = columns.max(column);
         }
+        cells.push(placed_row);
     }
-    columns
+    let columns = columns
         .max(occupied.iter().map(Vec::len).max().unwrap_or(0))
-        .min(MAX_COLUMNS)
+        .min(MAX_COLUMNS);
+    for row in &mut cells {
+        for (column, col_span, _) in row.iter_mut() {
+            *col_span = (*col_span).min(columns.saturating_sub(*column).max(1));
+        }
+    }
+    Placement { cells, columns }
 }
 
 fn aligned(align: Option<Alignment>, expression: String) -> String {
@@ -599,10 +1136,26 @@ fn aligned(align: Option<Alignment>, expression: String) -> String {
     }
 }
 
-/// A text run with its font and marks, innermost first in the order they are listed.
-fn marked(text: &str, marks: &[Mark], look: &RunLook) -> String {
-    let mut expression = string_literal(text);
+/// A text run with its font and marks, innermost first in the order they are listed; a page
+/// number field shows the page it is drawn on.
+fn marked(text: &str, marks: &[Mark], look: &RunLook, paragraph_font: &RunLook) -> String {
+    let mut expression = match look.field {
+        Some(PageField::Page) => "[#context counter(page).display()]".to_owned(),
+        Some(PageField::Pages) => "[#context str(counter(page).final().first())]".to_owned(),
+        None => string_literal(text),
+    };
+    if look.caps.or(paragraph_font.caps) == Some(true) {
+        expression = format!("upper({expression})");
+    } else if look.small_caps.or(paragraph_font.small_caps) == Some(true) {
+        expression = format!("smallcaps({expression})");
+    }
     let mut font = Vec::new();
+    if look.bold == Some(true) {
+        font.push("weight: \"bold\"".to_owned());
+    }
+    if look.italic == Some(true) {
+        font.push("style: \"italic\"".to_owned());
+    }
     if let Some(family) = &look.family {
         font.push(format!("font: {}", font_list(&body_fonts(Some(family)))));
     }
@@ -625,7 +1178,16 @@ fn marked(text: &str, marks: &[Mark], look: &RunLook) -> String {
             Mark::Superscript => format!("super({expression})"),
             Mark::Subscript => format!("sub({expression})"),
             Mark::Link { href } => format!("link({}, {expression})", string_literal(href)),
+            // The look already draws the run's own font, size and colour.
+            Mark::TextStyle { .. } | Mark::Highlight { .. } => expression,
         };
+    }
+    if let Some(highlight) = look
+        .highlight
+        .as_ref()
+        .or(paragraph_font.highlight.as_ref())
+    {
+        expression = format!("highlight(fill: rgb(\"#{highlight}\"), {expression})");
     }
     expression
 }
@@ -681,3 +1243,6 @@ fn roman(number: u32) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod parts_tests;

@@ -4,7 +4,7 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
-use rely_office_core::{ImportReport, PageLayout, TableCell};
+use rely_office_core::{CellLook, ImportReport, PageLayout, TableCell};
 
 use super::*;
 
@@ -31,6 +31,7 @@ fn cell(value: &str, col_span: u32, row_span: u32) -> TableCell {
         col_span,
         row_span,
         blocks: vec![paragraph(value)],
+        look: CellLook::default(),
     }
 }
 
@@ -40,6 +41,7 @@ fn tree(blocks: Vec<Block>, media: Vec<Media>) -> DocumentTree {
         media,
         report: ImportReport::default(),
         layout: PageLayout::default(),
+        ..DocumentTree::default()
     }
 }
 
@@ -51,8 +53,12 @@ fn writer(media: &[Media]) -> Writer<'_> {
         body_family: None,
         body_size: 11.0,
         text_width: 400.0,
+        default_tab: 35.4,
+        notes: &[],
         files: HashMap::new(),
         list_counters: HashMap::new(),
+        endnotes: Vec::new(),
+        in_note: false,
     }
 }
 
@@ -123,7 +129,9 @@ fn applies_the_look_of_a_paragraph() {
             colour: Some("FF0000".to_owned()),
             bold: Some(true),
             italic: Some(true),
+            ..RunLook::default()
         },
+        ..ParagraphLook::default()
     };
     let placed = writer.paragraph(&[text("a")], Some(Alignment::Right), &look, None);
     assert_eq!((placed.before, placed.page_break), (12.0, true));
@@ -134,7 +142,7 @@ fn applies_the_look_of_a_paragraph() {
     );
     assert_eq!(
         placed.expression,
-        r##"align(right, pad(left: 18pt, right: 18pt, text(font: ("Arial", "Liberation Sans", "Carlito", ), size: 14pt, weight: "bold", style: "italic", fill: rgb("#FF0000"), par(leading: 18.2pt, hanging-indent: 18pt)[#"a"])))"##
+        r##"pad(left: 18pt, right: 18pt, align(right, text(font: ("Arial", "Liberation Sans", "Carlito", ), size: 14pt, weight: "bold", style: "italic", fill: rgb("#FF0000"), par(leading: 18.2pt, hanging-indent: 18pt)[#"a"])))"##
     );
 
     let exact = ParagraphLook {
@@ -193,13 +201,8 @@ fn numbers_lists_per_list_and_level_and_indents_them() {
         .iter()
         .map(|(level, list)| writer.list_marker(true, *level, *list))
         .collect();
-    assert_eq!(
-        markers,
-        vec![
-            r#"#"1.""#, r#"#"2.""#, r#"#"a.""#, r#"#"b.""#, r#"#"3.""#, r#"#"i.""#, r#"#"1.""#
-        ]
-    );
-    assert_eq!(writer.list_marker(false, 1, 3), "#\"\u{25e6}\"");
+    assert_eq!(markers, vec!["1.", "2.", "a.", "b.", "3.", "i.", "1."]);
+    assert_eq!(writer.list_marker(false, 1, 3), "\u{25e6}");
     assert_eq!(alphabetic(27), "aa");
     assert_eq!(roman(1_994), "mcmxciv");
 
@@ -214,10 +217,24 @@ fn numbers_lists_per_list_and_level_and_indents_them() {
             ..ParagraphLook::default()
         },
     );
-    assert!(indented.expression.starts_with("pad(left: 36pt, text("));
-    assert!(indented.expression.contains("grid(columns: (36pt, 1fr)"));
+    assert!(
+        indented
+            .expression
+            .starts_with("pad(left: 36pt, right: 0pt, text(")
+    );
+    assert!(
+        indented
+            .expression
+            .contains("grid(columns: (calc.max(36pt, measure("),
+        "{}",
+        indented.expression
+    );
     let defaulted = writer.list_item(false, 1, 9, &[text("voce")], &ParagraphLook::default());
-    assert!(defaulted.expression.starts_with("pad(left: 18pt, text("));
+    assert!(
+        defaulted
+            .expression
+            .starts_with("pad(left: 18pt, right: 0pt, text(")
+    );
 }
 
 #[test]
@@ -232,14 +249,14 @@ fn counts_the_columns_a_table_fills_with_its_spans() {
             cells: vec![cell("c", 1, 1), cell("d", 1, 1)],
         },
     ];
-    assert_eq!(column_count(&rows), 3);
-    assert_eq!(column_count(&[]), 0);
+    assert_eq!(place_cells(&rows).columns, 3);
+    assert_eq!(place_cells(&[]).columns, 0);
     assert_eq!(header_row_count(&rows), 0);
 
     let mut writer = writer(&[]);
     let table = writer.table(&rows, &TableLook::default());
     assert!(table.starts_with(
-        "table(columns: (1fr, 1fr, 1fr, ), stroke: none, inset: (top: 0pt, left: 5.4pt, bottom: 0pt, right: 5.4pt), table.cell(colspan: 1, rowspan: 2)"
+        "table(columns: (1fr, 1fr, 1fr, ), stroke: none, inset: (top: 0pt, left: 5.4pt, bottom: 0pt, right: 5.4pt), table.cell(rowspan: 2)"
     ));
     assert!(!table.contains("table.header"));
 
@@ -258,6 +275,7 @@ fn counts_the_columns_a_table_fills_with_its_spans() {
         column_widths_twips: vec![4_000, 12_000],
         borders: true,
         cell_margins_twips: [Some(28), None, Some(40), Some(20)],
+        edges: Borders::default(),
     };
     let table = writer.table(&rows, &bordered);
     assert!(table.starts_with("table(columns: (100pt, 300pt, ), stroke: 0.5pt, inset: (top: 1.4pt, left: 5.4pt, bottom: 2pt, right: 1pt), table.header(["));
@@ -276,7 +294,7 @@ fn counts_the_columns_a_table_fills_with_its_spans() {
         header: false,
         cells: vec![cell("a", 1_000, 1)],
     }];
-    assert_eq!(column_count(&wide), MAX_COLUMNS);
+    assert_eq!(place_cells(&wide).columns, MAX_COLUMNS);
 }
 
 #[test]
@@ -336,8 +354,11 @@ fn sets_the_font_of_a_run() {
         ..RunLook::default()
     };
     assert_eq!(
-        marked("x", &[Mark::Italic], &look),
+        marked("x", &[Mark::Italic], &look, &RunLook::default()),
         r##"text(style: "italic", text(font: ("Courier New", "Liberation Mono", "Carlito", "Liberation Sans", ), size: 9pt, fill: rgb("#00FF00"), "x"))"##
     );
-    assert_eq!(marked("y", &[], &RunLook::default()), r#""y""#);
+    assert_eq!(
+        marked("y", &[], &RunLook::default(), &RunLook::default()),
+        r#""y""#
+    );
 }

@@ -342,3 +342,124 @@ fn caps_the_thumbnail_width() {
         MAX_THUMBNAIL_WIDTH
     );
 }
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one document exercises every case together"
+)]
+fn typesets_headers_footers_notes_tabs_labels_and_cell_looks() {
+    use rely_office_core::{
+        Block, Border, BorderStyle, Borders, CellLook, DocumentTree, HeadersFooters, Inline, Note,
+        NoteKind, PageField, ParagraphLook, RunLook, TabKind, TabLeader, TabStop, TableCell,
+        TableLook, TableRow, write_docx,
+    };
+    let text = |value: &str| Inline::Text {
+        text: value.to_owned(),
+        marks: Vec::new(),
+        look: RunLook::default(),
+    };
+    let paragraph = |content: Vec<Inline>, look: ParagraphLook| Block::Paragraph {
+        content,
+        align: None,
+        look,
+    };
+    let page = Inline::Text {
+        text: "1".to_owned(),
+        marks: Vec::new(),
+        look: RunLook {
+            field: Some(PageField::Page),
+            ..RunLook::default()
+        },
+    };
+    let border = Border {
+        style: BorderStyle::Single,
+        width_eighths: 8,
+        colour: Some("2F5496".to_owned()),
+    };
+    let tabbed = ParagraphLook {
+        tabs: vec![TabStop {
+            position_twips: 9_000,
+            kind: TabKind::Right,
+            leader: TabLeader::Dot,
+        }],
+        shading: Some("DEEAF6".to_owned()),
+        borders: Borders {
+            top: Some(border.clone()),
+            ..Borders::default()
+        },
+        ..ParagraphLook::default()
+    };
+    let cell = |value: &str| TableCell {
+        col_span: 1,
+        row_span: 1,
+        blocks: vec![paragraph(vec![text(value)], ParagraphLook::default())],
+        look: CellLook {
+            fill: Some("D9E2F3".to_owned()),
+            borders: Borders {
+                bottom: Some(border.clone()),
+                ..Borders::default()
+            },
+            vertical: Some(rely_office_core::VerticalAlignment::Center),
+        },
+    };
+    let tree = DocumentTree {
+        blocks: vec![
+            paragraph(
+                vec![text("Premesse\t1"), Inline::NoteReference { note: 0 }],
+                tabbed,
+            ),
+            Block::ListItem {
+                ordered: true,
+                level: 0,
+                list_id: 1,
+                content: vec![text("voce"), Inline::NoteReference { note: 1 }],
+                look: ParagraphLook::default(),
+            },
+            Block::Table {
+                rows: vec![TableRow {
+                    header: false,
+                    cells: vec![cell("a"), cell("b")],
+                }],
+                look: TableLook {
+                    edges: Borders {
+                        inside_vertical: Some(border.clone()),
+                        ..Borders::default()
+                    },
+                    ..TableLook::default()
+                },
+            },
+        ],
+        notes: vec![
+            Note {
+                kind: NoteKind::Footnote,
+                blocks: vec![paragraph(vec![text("a piede")], ParagraphLook::default())],
+            },
+            Note {
+                kind: NoteKind::Endnote,
+                blocks: vec![paragraph(vec![text("alla fine")], ParagraphLook::default())],
+            },
+        ],
+        headers_footers: HeadersFooters {
+            header: vec![paragraph(vec![text("Testa")], ParagraphLook::default())],
+            footer: vec![paragraph(
+                vec![text("Pagina "), page],
+                ParagraphLook::default(),
+            )],
+            first_header: Some(vec![paragraph(
+                vec![text("Copertina")],
+                ParagraphLook::default(),
+            )]),
+            even_footer: Some(Vec::new()),
+            ..HeadersFooters::default()
+        },
+        ..DocumentTree::default()
+    };
+    let bytes = write_docx(&tree).unwrap();
+    let rendered = RENDERER
+        .render(&bytes, Some("completo.docx"), &thumbnail_request(200))
+        .unwrap();
+    assert_eq!(rendered.fidelity, Fidelity::Layout);
+    assert_eq!(rendered.page_count, 1);
+    assert!(rendered.pdf.unwrap().starts_with(b"%PDF-"));
+}

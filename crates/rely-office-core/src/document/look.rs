@@ -7,6 +7,9 @@
 //! How paragraphs, runs and tables look on the page: spacing, indents, fonts, column widths and
 //! borders. A renderer needs them and an editor does not, so they never reach the JSON of the tree.
 
+use super::edges::{
+    Borders, TabStop, hex_colour, highlight_colour, merge_tabs, parse_tabs, shading_fill,
+};
 use super::styles::on_off;
 use crate::xml_tree::{Element, Namespace};
 
@@ -38,6 +41,21 @@ pub struct RunLook {
     pub colour: Option<String>,
     pub bold: Option<bool>,
     pub italic: Option<bool>,
+    /// The highlight or shading behind the text, as `RRGGBB`.
+    pub highlight: Option<String>,
+    pub caps: Option<bool>,
+    pub small_caps: Option<bool>,
+    /// The page number field this run shows the last result of.
+    pub field: Option<PageField>,
+}
+
+/// A field whose result depends on the page it is drawn on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageField {
+    /// `PAGE`: the number of the page.
+    Page,
+    /// `NUMPAGES` and `SECTIONPAGES`: how many pages there are.
+    Pages,
 }
 
 impl RunLook {
@@ -60,17 +78,27 @@ impl RunLook {
             .and_then(|size| size.attribute(W, "val"))
             .and_then(|size| size.parse::<u32>().ok())
             .filter(|size| (2..=3_276).contains(size));
-        let colour = properties
-            .child(W, "color")
-            .and_then(|colour| colour.attribute(W, "val"))
-            .filter(|value| value.len() == 6 && value.chars().all(|c| c.is_ascii_hexdigit()))
-            .map(str::to_ascii_uppercase);
+        let colour = hex_colour(
+            properties
+                .child(W, "color")
+                .and_then(|colour| colour.attribute(W, "val")),
+        );
+        let highlight = properties
+            .child(W, "highlight")
+            .and_then(|highlight| highlight.attribute(W, "val"))
+            .and_then(highlight_colour)
+            .map(str::to_owned)
+            .or_else(|| properties.child(W, "shd").and_then(shading_fill));
         Self {
             family,
             size_half_points,
             colour,
             bold: properties.child(W, "b").map(on_off),
             italic: properties.child(W, "i").map(on_off),
+            highlight,
+            caps: properties.child(W, "caps").map(on_off),
+            small_caps: properties.child(W, "smallCaps").map(on_off),
+            field: None,
         }
     }
 
@@ -83,6 +111,10 @@ impl RunLook {
             colour: self.colour.or(fallback.colour),
             bold: self.bold.or(fallback.bold),
             italic: self.italic.or(fallback.italic),
+            highlight: self.highlight.or(fallback.highlight),
+            caps: self.caps.or(fallback.caps),
+            small_caps: self.small_caps.or(fallback.small_caps),
+            field: self.field.or(fallback.field),
         }
     }
 }
@@ -110,6 +142,32 @@ pub struct ParagraphLook {
     /// The paragraph starts a new page.
     pub page_break_before: bool,
     /// The font of the paragraph's style chain over the document defaults.
+    pub font: RunLook,
+    /// The tab stops of the paragraph and its style; cleared ones stay as [`TabKind::Clear`].
+    ///
+    /// [`TabKind::Clear`]: super::TabKind::Clear
+    pub tabs: Vec<TabStop>,
+    /// The background as `RRGGBB`.
+    pub shading: Option<String>,
+    pub borders: Borders,
+    /// The label a numbered or bulleted paragraph shows, as the numbering part writes it.
+    pub list_label: Option<ListLabel>,
+}
+
+/// What separates a list label from the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelSuffix {
+    Tab,
+    Space,
+    Nothing,
+}
+
+/// The label of a list paragraph: `1.`, `a)`, `2.3`, a bullet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListLabel {
+    pub text: String,
+    pub suffix: LabelSuffix,
+    /// The font the level gives its label.
     pub font: RunLook,
 }
 
@@ -145,6 +203,15 @@ impl ParagraphLook {
                 .or_else(|| signed_twips(indent, "firstLine"));
         }
         look.page_break_before = properties.child(W, "pageBreakBefore").is_some_and(on_off);
+        look.tabs = properties
+            .child(W, "tabs")
+            .map(parse_tabs)
+            .unwrap_or_default();
+        look.shading = properties.child(W, "shd").and_then(shading_fill);
+        look.borders = properties
+            .child(W, "pBdr")
+            .map(Borders::parse)
+            .unwrap_or_default();
         look
     }
 
@@ -162,6 +229,10 @@ impl ParagraphLook {
                 .or(fallback.indent_first_line_twips),
             page_break_before: self.page_break_before || fallback.page_break_before,
             font: self.font.or(fallback.font),
+            tabs: merge_tabs(self.tabs, fallback.tabs),
+            shading: self.shading.or(fallback.shading),
+            borders: self.borders.or(fallback.borders),
+            list_label: self.list_label.or(fallback.list_label),
         }
     }
 }
@@ -176,6 +247,8 @@ pub struct TableLook {
     /// The default cell margins, `w:tblCellMar`: top, left, bottom, right, in twentieths of a
     /// point; unset means Word's defaults.
     pub cell_margins_twips: [Option<u32>; 4],
+    /// The table's borders, its own over its style's.
+    pub edges: Borders,
 }
 
 impl TableLook {
@@ -217,6 +290,10 @@ impl TableLook {
         Self {
             column_widths_twips,
             borders: table_borders || grid_style || cell_borders,
+            edges: properties
+                .and_then(|properties| properties.child(W, "tblBorders"))
+                .map(Borders::parse)
+                .unwrap_or_default(),
             cell_margins_twips: [
                 margin(&["top"]),
                 margin(&["left", "start"]),
@@ -321,6 +398,7 @@ mod tests {
                 colour: Some("1F3864".to_owned()),
                 bold: Some(true),
                 italic: Some(false),
+                ..RunLook::default()
             }
         );
         let theme = RunLook::parse(&element(

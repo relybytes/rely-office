@@ -136,6 +136,7 @@ fn serializes_every_block_kind_in_camel_case() {
                     col_span: 2,
                     row_span: 1,
                     blocks: vec![Block::HorizontalRule],
+                    look: rely_office_core::CellLook::default(),
                 }],
             }],
             look: rely_office_core::TableLook::default(),

@@ -52,6 +52,19 @@ fn without_looks(blocks: &[Block]) -> Vec<Block> {
                 align,
                 look: ParagraphLook::default(),
             },
+            Block::ListItem {
+                ordered,
+                level,
+                list_id,
+                content,
+                ..
+            } => Block::ListItem {
+                ordered,
+                level,
+                list_id,
+                content: inlines_without_looks(&content),
+                look: ParagraphLook::default(),
+            },
             other => other,
         })
         .collect()
@@ -307,7 +320,16 @@ fn keeps_field_results_and_links_hyperlink_fields() {
                         href: "https://example.com".to_owned()
                     }]
                 ),
-                text(" pagina 3 semplice"),
+                text(" pagina "),
+                Inline::Text {
+                    text: "3".to_owned(),
+                    marks: Vec::new(),
+                    look: RunLook {
+                        field: Some(PageField::Page),
+                        ..RunLook::default()
+                    },
+                },
+                text(" semplice"),
             ]
         }]
     );
@@ -357,8 +379,27 @@ fn reads_bullet_and_numbered_lists_with_their_levels() {
     ]
     .concat();
     let read = tree_with(&body, &[("word/numbering.xml", numbering.as_bytes())]);
+    let labels: Vec<Option<String>> = read
+        .blocks
+        .iter()
+        .map(|block| match block {
+            Block::ListItem { look, .. } => {
+                look.list_label.as_ref().map(|label| label.text.clone())
+            }
+            _ => None,
+        })
+        .collect();
     assert_eq!(
-        read.blocks,
+        labels,
+        vec![
+            Some("\u{2022}".to_owned()),
+            Some("1.".to_owned()),
+            Some("A.".to_owned()),
+            None
+        ]
+    );
+    assert_eq!(
+        without_looks(&read.blocks),
         vec![
             Block::ListItem {
                 look: ParagraphLook::default(),
@@ -406,7 +447,7 @@ fn takes_list_numbering_from_the_paragraph_style() {
         ],
     );
     assert_eq!(
-        read.blocks,
+        without_looks(&read.blocks),
         vec![Block::ListItem {
             look: ParagraphLook::default(),
             ordered: false,
@@ -671,9 +712,17 @@ fn counts_what_an_editor_cannot_hold() {
     .concat();
     let read = tree_with(&body, &[(RELS_PART, rels.as_bytes())]);
     assert_eq!(
-        read.blocks,
-        vec![paragraph("commentato")],
-        "only the visible body text remains"
+        without_looks(&read.blocks),
+        vec![
+            paragraph("commentato"),
+            paragraph("casella"),
+            Block::Paragraph {
+                look: ParagraphLook::default(),
+                align: None,
+                content: vec![]
+            }
+        ],
+        "the visible body text, then the text boxes"
     );
     let report = read.report;
     assert_eq!(report.text_boxes, 2);
@@ -996,7 +1045,17 @@ fn gives_each_block_the_look_of_its_style_list_and_direct_formatting() {
     else {
         panic!("not text");
     };
-    assert_eq!(marks, &vec![Mark::Bold]);
+    assert_eq!(
+        marks,
+        &vec![
+            Mark::Bold,
+            Mark::TextStyle {
+                font_family: None,
+                font_size: Some("15pt".to_owned()),
+                color: Some("#FF0000".to_owned())
+            }
+        ]
+    );
     assert_eq!(
         run,
         &RunLook {
@@ -1021,6 +1080,9 @@ fn gives_each_block_the_look_of_its_style_list_and_direct_formatting() {
             column_widths_twips: vec![3_000, 6_000],
             borders: true,
             cell_margins_twips: [None; 4],
+            edges: look.edges.clone(),
         }
     );
 }
+
+mod parts;
