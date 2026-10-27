@@ -962,6 +962,8 @@ impl Converter<'_, '_> {
     /// shape counted.
     fn drawing(&mut self, element: &Element, scope: Scope, content: &mut Vec<Inline>) {
         match element.name.as_str() {
+            // The parts of a shape's outline, not shapes of their own.
+            "enhanced-geometry" | "glue-point" | "equation" | "handle" => {}
             "frame" => {
                 // An object comes with a picture of itself: the formula or chart it holds is
                 // read first, and the picture only stands in for what cannot be.
@@ -1001,8 +1003,10 @@ impl Converter<'_, '_> {
                 self.group_style = outer_style;
             }
             _ => {
-                // A shape keeps its text in its picture; only a plain box of text is a text box.
-                let is_text_box = element.name != "custom-shape"
+                // A shape whose outline is a preset keeps its text editable in a text box of that
+                // shape; any other keeps its text in its picture.
+                let is_text_box = (element.name != "custom-shape"
+                    || frames::frame_shape(element).is_some())
                     && element
                         .descendant(TEXT, "p")
                         .is_some_and(|paragraph| !all_text(paragraph).trim().is_empty());

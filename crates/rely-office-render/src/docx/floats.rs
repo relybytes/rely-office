@@ -284,6 +284,45 @@ impl Writer<'_> {
                 format!("{} + rgb(\"#{colour}\")", points(f64::from(*eighths) / 8.0))
             },
         );
+        // A shaped box draws its outline behind the text and no rectangle of its own.
+        let outline = frame
+            .shape
+            .as_deref()
+            .filter(|_| height > 0.0)
+            .and_then(|preset| {
+                rely_office_core::preset_outline(
+                    preset,
+                    frame.anchor.width_emu,
+                    frame.anchor.height_emu,
+                )
+            })
+            .map(|paths| {
+                paths
+                    .iter()
+                    .map(|path| {
+                        crate::slides::curve_of(
+                            path,
+                            if path.filled { &fill } else { "none" },
+                            if path.stroked { &stroke } else { "none" },
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            });
+        let (fill, stroke, content) = match outline {
+            Some(curves) => (
+                "none".to_owned(),
+                "none".to_owned(),
+                format!(
+                    "#place(top + left, dx: -{}, dy: -{}, box(width: {}, height: {}, {curves}))#align(horizon + center, block[{content}])",
+                    points(TEXT_BOX_INSET.0),
+                    points(TEXT_BOX_INSET.1),
+                    points(width),
+                    points(height)
+                ),
+            ),
+            None => (fill, stroke, content),
+        };
         let height = if height > 0.0 {
             format!(", height: {}", points(height))
         } else {

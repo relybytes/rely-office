@@ -99,6 +99,13 @@ impl From<PathCommandJson> for PathCommand {
     }
 }
 
+/// The outline of a `DrawingML` preset at a size in EMU, with its default adjust values;
+/// `None` for a name no preset has.
+#[must_use]
+pub fn preset_outline(preset: &str, width: i64, height: i64) -> Option<Vec<ShapePath>> {
+    preset_geometry(preset, None, width, height)
+}
+
 /// A path of a shape, with whether it is filled and whether its outline is drawn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(

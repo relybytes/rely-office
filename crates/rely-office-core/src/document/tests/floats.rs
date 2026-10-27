@@ -116,6 +116,7 @@ fn frames_each_drawingml_text_box_with_its_fill_and_outline() {
     assert_eq!(
         frames[1],
         Some(TextFrame {
+            shape: None,
             id: 1,
             anchor,
             fill: Some("FFF2CC".to_owned()),
@@ -125,6 +126,7 @@ fn frames_each_drawingml_text_box_with_its_fill_and_outline() {
     assert_eq!(
         frames[2],
         Some(TextFrame {
+            shape: None,
             id: 2,
             anchor,
             fill: None,
@@ -134,6 +136,7 @@ fn frames_each_drawingml_text_box_with_its_fill_and_outline() {
     assert_eq!(
         frames[3],
         Some(TextFrame {
+            shape: None,
             id: 3,
             anchor,
             fill: None,

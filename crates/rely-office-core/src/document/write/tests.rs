@@ -439,6 +439,7 @@ fn writes_floating_pictures_and_text_boxes_where_they_float() {
         at(AnchorBase::Paragraph, 127_000, None),
     );
     let boxed = TextFrame {
+        shape: Some("ellipse".to_owned()),
         id: 1,
         anchor: floating_anchor(
             Wrap::InFront,
@@ -449,6 +450,7 @@ fn writes_floating_pictures_and_text_boxes_where_they_float() {
         line: Some(("C00000".to_owned(), 12)),
     };
     let behind = TextFrame {
+        shape: None,
         id: 2,
         anchor: floating_anchor(
             Wrap::Behind,
@@ -459,6 +461,7 @@ fn writes_floating_pictures_and_text_boxes_where_they_float() {
         line: None,
     };
     let above_and_below = TextFrame {
+        shape: None,
         id: 3,
         anchor: floating_anchor(
             Wrap::TopAndBottom,
@@ -549,7 +552,13 @@ fn writes_floating_pictures_and_text_boxes_where_they_float() {
     assert_eq!(first.anchor, boxed.anchor);
     assert_eq!(first.fill.as_deref(), Some("FFF2CC"));
     assert_eq!(first.line, Some(("C00000".to_owned(), 12)));
+    assert_eq!(
+        first.shape.as_deref(),
+        Some("ellipse"),
+        "a box keeps its shape"
+    );
     let dietro = frame_of(&read.blocks[5]).unwrap();
+    assert_eq!(dietro.shape, None);
     assert_eq!(dietro.anchor, behind.anchor);
     assert_eq!((dietro.fill, dietro.line), (None, None));
     let column = frame_of(&read.blocks[1]).unwrap();

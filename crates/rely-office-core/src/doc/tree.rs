@@ -1081,6 +1081,9 @@ impl Converter<'_> {
         self.report.text_boxes += 1;
         self.next_frame += 1;
         let frame = TextFrame {
+            shape: crate::office_art::preset_of_shape_type(shape.kind)
+                .filter(|preset| *preset != "rect")
+                .map(str::to_owned),
             id: self.next_frame,
             anchor: placed,
             fill: shape

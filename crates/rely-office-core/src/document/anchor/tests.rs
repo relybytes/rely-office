@@ -25,6 +25,7 @@ fn element(xml: &str) -> Element {
 
 fn frame(id: u32) -> TextFrame {
     TextFrame {
+        shape: None,
         id,
         anchor: Anchor::from_vml_style("position:absolute;width:10pt;height:10pt")
             .expect("anchored"),

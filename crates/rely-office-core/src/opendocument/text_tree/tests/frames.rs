@@ -157,7 +157,7 @@ fn draws_shapes_lines_and_groups_as_pictures_where_they_float() {
         .iter()
         .map(|media| String::from_utf8(media.bytes.clone()).unwrap())
         .collect();
-    assert_eq!(svgs.len(), 5, "{:?}", tree.report);
+    assert_eq!(svgs.len(), 4, "{:?}", tree.report);
     assert_eq!(
         tree.report.shapes, 2,
         "a shape of no size and one it cannot draw"
@@ -166,10 +166,18 @@ fn draws_shapes_lines_and_groups_as_pictures_where_they_float() {
         svgs[1].contains("stroke=") && !svgs[1].contains("fill=\"#"),
         "a line is never filled"
     );
+    let boxes = frames(&tree.blocks);
+    let diamond = boxes
+        .iter()
+        .flatten()
+        .find(|frame| frame.shape.as_deref() == Some("diamond"))
+        .expect("the shape with text, a text box in its shape");
+    assert_eq!(diamond.anchor.width_emu, 360_000);
     assert!(
-        svgs[3].contains(">Sì</text>"),
-        "the text of a shape: {}",
-        svgs[3]
+        tree.blocks.iter().any(
+            |block| matches!(block, Block::Paragraph { content, .. } if texts(content) == "Sì")
+        ),
+        "its text stays editable"
     );
     let placed = anchors(&tree);
     let first = placed[0].expect("anchored");

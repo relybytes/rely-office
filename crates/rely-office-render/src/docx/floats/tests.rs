@@ -298,6 +298,7 @@ fn takes_the_floating_images_out_of_a_paragraph() {
 fn draws_a_text_box_with_its_fill_outline_and_size() {
     let mut writer = writer(&[]);
     let frame = TextFrame {
+        shape: None,
         id: 3,
         anchor: anchor(
             Wrap::InFront,
@@ -324,6 +325,30 @@ fn draws_a_text_box_with_its_fill_outline_and_size() {
     assert_eq!(writer.text_width, 400.0);
     assert_eq!(writer.open_frame, None);
 
+    let shaped = TextFrame {
+        shape: Some("ellipse".to_owned()),
+        ..frame.clone()
+    };
+    let drawn = writer.frame_box(&blocks, &shaped);
+    assert!(
+        drawn.starts_with("block(width: 100pt, height: 50pt, fill: none, stroke: none,"),
+        "{drawn}"
+    );
+    assert!(
+        drawn.contains("#place(top + left, dx: -7.2pt, dy: -3.6pt, box(width: 100pt, height: 50pt, curve(fill: rgb(\"#FFF2CC\")"),
+        "the outline behind the text: {drawn}"
+    );
+    assert!(drawn.contains("curve.cubic(") && drawn.contains("#align(horizon + center, block["));
+    let unknown = TextFrame {
+        shape: Some("noSuchShape".to_owned()),
+        ..frame.clone()
+    };
+    assert!(
+        writer
+            .frame_box(&blocks, &unknown)
+            .starts_with("block(width: 100pt, height: 50pt, fill: rgb(")
+    );
+
     let bare = TextFrame {
         fill: None,
         line: None,
@@ -345,6 +370,7 @@ fn draws_a_text_box_with_its_fill_outline_and_size() {
 fn writes_a_text_box_from_the_paragraph_before_it() {
     let mut writer = writer(&[]);
     let frame = TextFrame {
+        shape: None,
         id: 1,
         anchor: anchor(
             Wrap::InFront,
@@ -386,6 +412,7 @@ fn writes_a_text_box_from_the_paragraph_before_it() {
 #[test]
 fn finds_the_text_box_a_block_is_in() {
     let frame = TextFrame {
+        shape: None,
         id: 9,
         anchor: anchor(
             Wrap::InFront,

@@ -96,12 +96,22 @@ pub(super) fn text_box_run(frame: &TextFrame, content: &str, id: u32) -> String 
             "<w:r><w:drawing>{start}<wp:cNvGraphicFramePr/>",
             r#"<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">"#,
             r#"<wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>"#,
-            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>{fill}{line}</wps:spPr>"#,
+            r#"<a:prstGeom prst="{preset}"><a:avLst/></a:prstGeom>{fill}{line}</wps:spPr>"#,
             "<wps:txbx><w:txbxContent>{content}</w:txbxContent></wps:txbx>",
             r#"<wps:bodyPr rot="0" vert="horz" wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="t"><a:noAutofit/></wps:bodyPr>"#,
             "</wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>",
         ),
         start = anchor_start(&frame.anchor, cx, cy, &doc_properties, id),
+        preset = frame
+            .shape
+            .as_deref()
+            .filter(|preset| {
+                !preset.is_empty()
+                    && preset
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric())
+            })
+            .unwrap_or("rect"),
         cx = cx,
         cy = cy,
         fill = fill,

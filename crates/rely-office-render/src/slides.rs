@@ -445,7 +445,6 @@ fn run_markup(run: &SlideRun) -> String {
     expression
 }
 
-/// A path as a Typst curve, in points from the frame's top-left corner.
 /// A Typst gradient, each colour shaded; the stops in order, as Typst needs them.
 fn gradient_fill(gradient: &Gradient, shade: FillShade) -> String {
     let mut stops: Vec<(f64, String)> = gradient
@@ -480,7 +479,8 @@ fn gradient_fill(gradient: &Gradient, shade: FillShade) -> String {
     }
 }
 
-fn curve_of(path: &ShapePath, fill: &str, stroke: &str) -> String {
+/// A path as a Typst curve, in points from the frame's top-left corner.
+pub(crate) fn curve_of(path: &ShapePath, fill: &str, stroke: &str) -> String {
     let at = |point: &PathPoint| format!("({}, {})", points(emu(point.x)), points(emu(point.y)));
     let mut curve = format!("curve(fill: {fill}, fill-rule: \"even-odd\", stroke: {stroke}");
     for command in &path.commands {

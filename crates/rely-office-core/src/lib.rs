@@ -57,7 +57,7 @@ pub use document::{
 };
 pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};
-pub use geometry::{FillShade, PathCommand, PathPoint, ShapePath};
+pub use geometry::{FillShade, PathCommand, PathPoint, ShapePath, preset_outline};
 pub use limits::Limits;
 pub use math::latex_to_typst;
 pub use metafile::convert_metafile_to_svg;

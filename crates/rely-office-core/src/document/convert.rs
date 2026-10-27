@@ -1175,6 +1175,11 @@ impl<'a, 'p> Converter<'a, 'p> {
                 Some((colour, (width * 8 / 12_700).max(1)))
             });
         TextFrame {
+            shape: properties
+                .and_then(|properties| properties.child(Namespace::Drawing, "prstGeom"))
+                .and_then(|preset| preset.attribute(Namespace::None, "prst"))
+                .filter(|preset| *preset != "rect")
+                .map(str::to_owned),
             id: self.next_frame,
             anchor,
             fill,
@@ -1211,6 +1216,7 @@ impl<'a, 'p> Converter<'a, 'p> {
             ))
         };
         TextFrame {
+            shape: None,
             id: self.next_frame,
             anchor,
             fill,

@@ -248,6 +248,9 @@ pub struct TextFrame {
     pub fill: Option<String>,
     /// The outline's colour and width in eighths of a point.
     pub line: Option<(String, u32)>,
+    /// The shape the box is drawn as, by its `DrawingML` preset name: `ellipse`, `roundRect`,
+    /// `wedgeRoundRectCallout`; unset is a rectangle.
+    pub shape: Option<String>,
 }
 
 /// Put the blocks of a text box in its frame.

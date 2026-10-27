@@ -206,6 +206,7 @@ impl Converter<'_, '_> {
         };
         self.next_frame += 1;
         Some(TextFrame {
+            shape: frame_shape(frame),
             id: self.next_frame,
             anchor,
             fill,
@@ -342,5 +343,57 @@ impl Converter<'_, '_> {
             anchor
         });
         Some((self.media.len() - 1, width, height, anchor))
+    }
+}
+
+/// The `DrawingML` preset a drawn shape is, when its text can be kept as a text box in that
+/// shape: an ellipse, and a custom shape whose enhanced geometry names a preset, its own or the
+/// one `LibreOffice` maps from `DrawingML` (`ooxml-...`); `None` for a rectangle.
+pub(super) fn frame_shape(element: &Element) -> Option<String> {
+    match element.name.as_str() {
+        "ellipse" | "circle" => Some("ellipse".to_owned()),
+        "custom-shape" => {
+            let kind = element
+                .child(DRAW, "enhanced-geometry")?
+                .attribute(DRAW, "type")?;
+            if let Some(preset) = kind.strip_prefix("ooxml-") {
+                return (preset != "rect"
+                    && preset
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric()))
+                .then(|| preset.to_owned());
+            }
+            Some(
+                match kind {
+                    "ellipse" => "ellipse",
+                    "round-rectangle" => "roundRect",
+                    "diamond" => "diamond",
+                    "isosceles-triangle" => "triangle",
+                    "right-triangle" => "rtTriangle",
+                    "parallelogram" => "parallelogram",
+                    "trapezoid" => "trapezoid",
+                    "hexagon" => "hexagon",
+                    "octagon" => "octagon",
+                    "pentagon" => "pentagon",
+                    "right-arrow" => "rightArrow",
+                    "left-arrow" => "leftArrow",
+                    "up-arrow" => "upArrow",
+                    "down-arrow" => "downArrow",
+                    "star5" => "star5",
+                    "heart" => "heart",
+                    "cloud" => "cloudCallout",
+                    "smiley" => "smileyFace",
+                    "flowchart-process" => "flowChartProcess",
+                    "flowchart-decision" => "flowChartDecision",
+                    "flowchart-terminator" => "flowChartTerminator",
+                    "round-rectangular-callout" => "wedgeRoundRectCallout",
+                    "rectangular-callout" => "wedgeRectCallout",
+                    "round-callout" => "wedgeEllipseCallout",
+                    _ => return None,
+                }
+                .to_owned(),
+            )
+        }
+        _ => None,
     }
 }
