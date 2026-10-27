@@ -258,7 +258,7 @@ fn parses_every_preset_of_the_table_into_a_drawn_outline() {
             }
         }
     }
-    assert!(presets().len() > 90);
+    assert!(presets().len() > 80);
 }
 
 #[test]

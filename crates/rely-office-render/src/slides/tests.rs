@@ -4,7 +4,7 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
-use rely_office_core::{ShapeLine, SlideTableCell, SlideTableRow};
+use rely_office_core::{FillShade, ShapeLine, SlideTableCell, SlideTableRow};
 
 use super::*;
 
@@ -336,7 +336,7 @@ fn rounds_angles_and_names_image_types() {
 }
 
 #[test]
-fn draws_a_path_geometry_as_curves_under_its_text() {
+fn draws_a_path_geometry_as_curves_under_its_text_its_faces_before_its_outlines() {
     let at = |x: i64, y: i64| PathPoint { x, y };
     let paths = vec![
         ShapePath {
@@ -348,6 +348,7 @@ fn draws_a_path_geometry_as_curves_under_its_text() {
             ],
             filled: true,
             stroked: true,
+            shade: FillShade::Darken,
         },
         ShapePath {
             commands: vec![
@@ -355,7 +356,14 @@ fn draws_a_path_geometry_as_curves_under_its_text() {
                 PathCommand::LineTo(at(12_700, 12_700)),
             ],
             filled: false,
+            stroked: true,
+            shade: FillShade::Normal,
+        },
+        ShapePath {
+            commands: vec![PathCommand::MoveTo(at(0, 0))],
+            filled: false,
             stroked: false,
+            shade: FillShade::Normal,
         },
     ];
     let mut arrow = shape(
@@ -374,7 +382,13 @@ fn draws_a_path_geometry_as_curves_under_its_text() {
     }];
     let (markup, _) = source(&presentation(slides, Vec::new()), true);
     assert!(markup.contains(
-        "block(width: 100pt, height: 50pt)[#place(top + left, curve(fill: rgb(\"#4472C4\"), fill-rule: \"even-odd\", stroke: 1pt + rgb(\"#1F3864\"), curve.move((0pt, 0pt)), curve.line((10pt, 0pt)), curve.cubic((10pt, 1pt), (0pt, 1pt), (0pt, 2pt)), curve.close(mode: \"straight\")))#place(top + left, curve(fill: none, fill-rule: \"even-odd\", stroke: none, curve.move((0pt, 0pt)), curve.line((1pt, 1pt))))#block(width: 100%, height: 100%, inset: "
+        concat!(
+            "block(width: 100pt, height: 50pt)[",
+            "#place(top + left, curve(fill: rgb(\"#294476\"), fill-rule: \"even-odd\", stroke: none, curve.move((0pt, 0pt)), curve.line((10pt, 0pt)), curve.cubic((10pt, 1pt), (0pt, 1pt), (0pt, 2pt)), curve.close(mode: \"straight\")))",
+            "#place(top + left, curve(fill: none, fill-rule: \"even-odd\", stroke: 1pt + rgb(\"#1F3864\"), curve.move((0pt, 0pt)), curve.line((10pt, 0pt)), curve.cubic((10pt, 1pt), (0pt, 1pt), (0pt, 2pt)), curve.close(mode: \"straight\")))",
+            "#place(top + left, curve(fill: none, fill-rule: \"even-odd\", stroke: 1pt + rgb(\"#1F3864\"), curve.move((0pt, 0pt)), curve.line((1pt, 1pt))))",
+            "#block(width: 100%, height: 100%, inset: "
+        )
     ));
     assert!(markup.contains("Avanti"));
     assert!(markup.contains("#place(top + left, curve(fill: none, fill-rule: \"even-odd\", stroke: none, curve.move((0pt, 0pt)), curve.line((10pt, 0pt))"));

@@ -563,7 +563,9 @@ fn reads_colour_references_and_shape_types() {
         width: 100,
         height: 100,
     };
-    for kind in [2, 4, 12, 13, 55, 74, 96, 116, 184, 187] {
+    let every_mapped_kind =
+        (2..=200).filter(|kind| !matches!(kind, 3 | 20 | 24..=32 | 109 | 120 | 136..=175));
+    for kind in every_mapped_kind {
         assert!(
             matches!(geometry(kind, frame, false, false), ShapeGeometry::Path(_)),
             "{kind}"

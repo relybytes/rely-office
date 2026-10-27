@@ -268,3 +268,93 @@ fn has_no_geometry_without_a_path() {
         None
     );
 }
+
+#[test]
+fn draws_every_preset_of_the_enhanced_table_inside_its_frame() {
+    assert!(enhanced_presets().len() > 90);
+    for name in enhanced_presets().keys() {
+        let paths = enhanced_preset_geometry(name, &[], &[], 200, 100)
+            .unwrap_or_else(|| panic!("{name} draws nothing"));
+        for path in &paths {
+            for (x, y) in points(path) {
+                assert!(
+                    (-200..=400).contains(&x) && (-200..=300).contains(&y),
+                    "{name} reaches {x}, {y}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        enhanced_preset_geometry("noSuchShape", &[], &[], 10, 10),
+        None
+    );
+}
+
+#[test]
+fn reads_enhanced_preset_modifiers_by_name_over_their_position() {
+    let crest = |paths: &[ShapePath]| points(&paths[0])[0].1;
+    let flat = enhanced_preset_geometry("wave", &[0.0], &[], 21_600, 21_600).expect("a wave");
+    assert_eq!(crest(&flat), 0);
+    let positional =
+        enhanced_preset_geometry("wave", &[20_000.0], &[], 21_600, 21_600).expect("a wave");
+    let named = enhanced_preset_geometry(
+        "wave",
+        &[0.0],
+        &[("adj1".to_owned(), 20_000.0)],
+        21_600,
+        21_600,
+    )
+    .expect("a wave");
+    assert_eq!(crest(&positional), 4_320);
+    assert_eq!(crest(&named), 4_320, "the name wins over the position");
+    let single = enhanced_preset_geometry("diagStripe", &[], &[("adj1".to_owned(), 0.0)], 100, 100)
+        .expect("a stripe");
+    let default = enhanced_preset_geometry("diagStripe", &[], &[], 100, 100).expect("a stripe");
+    assert_ne!(
+        single, default,
+        "adj1 reaches a preset whose only modifier is adj"
+    );
+}
+
+#[test]
+fn scales_each_subpath_from_its_own_view() {
+    let paths = enhanced_preset_geometry("chartPlus", &[], &[], 200, 100).expect("a chart");
+    assert_eq!(points(&paths[0])[..2], [(100, 0), (100, 100)]);
+    assert!(!paths[0].filled && paths[0].stroked);
+    assert!(paths[1].filled && !paths[1].stroked);
+}
+
+#[test]
+fn shades_the_faces_the_path_marks() {
+    let paths =
+        drawn("M 0 0 L 1 1 H N M 0 0 L 1 1 I N M 0 0 L 1 1 J N M 0 0 L 1 1 K N M 0 0 L 1 1");
+    let shades: Vec<FillShade> = paths.iter().map(|path| path.shade).collect();
+    assert_eq!(
+        shades,
+        [
+            FillShade::Darken,
+            FillShade::DarkenLess,
+            FillShade::Lighten,
+            FillShade::LightenLess,
+            FillShade::Normal
+        ]
+    );
+    let can = enhanced_preset_geometry("can", &[], &[], 100, 200).expect("a can");
+    assert_eq!(
+        can[1].shade,
+        FillShade::Lighten,
+        "the top of a can is lighter"
+    );
+}
+
+#[test]
+fn computes_a_chain_of_equations_longer_than_the_depth_limit() {
+    let mut equations = vec!["1".to_owned()];
+    for index in 0..200 {
+        equations.push(format!("?f{index} +1"));
+    }
+    let formulas: Vec<&str> = equations.iter().map(String::as_str).collect();
+    let chained = context(Vec::new(), &formulas);
+    chained.compute_in_order();
+    assert!((chained.equation(200, 0) - 201.0).abs() < f64::EPSILON);
+}

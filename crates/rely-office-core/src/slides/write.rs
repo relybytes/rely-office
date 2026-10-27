@@ -17,7 +17,7 @@ use super::{
 };
 use crate::OfficeError;
 use crate::document::{Alignment, escape_xml as escape, image_extension, zip_members};
-use crate::geometry::{PathCommand, PathPoint, ShapePath};
+use crate::geometry::{FillShade, PathCommand, PathPoint, ShapePath};
 
 const PRESENTATION_NAMESPACES: &str = concat!(
     r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,
@@ -344,7 +344,11 @@ fn custom_geometry(paths: &[ShapePath], width: i64, height: i64) -> String {
         r#"<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="l" t="t" r="r" b="b"/><a:pathLst>"#,
     );
     for path in paths {
-        let fill = if path.filled { "" } else { r#" fill="none""# };
+        let fill = match (path.filled, path.shade) {
+            (false, _) => r#" fill="none""#.to_owned(),
+            (true, FillShade::Normal) => String::new(),
+            (true, shade) => format!(r#" fill="{}""#, shade.drawingml_name()),
+        };
         let stroke = if path.stroked { "" } else { r#" stroke="0""# };
         let _ = write!(xml, r#"<a:path w="{width}" h="{height}"{fill}{stroke}>"#);
         for command in &path.commands {

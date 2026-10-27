@@ -54,7 +54,7 @@ pub use document::{
 };
 pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};
-pub use geometry::{PathCommand, PathPoint, ShapePath};
+pub use geometry::{FillShade, PathCommand, PathPoint, ShapePath};
 pub use limits::Limits;
 pub use number_format::{
     FormattedNumber, NumberLocale, builtin_format_code, format_number, format_text, general_number,

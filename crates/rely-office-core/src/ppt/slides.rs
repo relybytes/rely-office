@@ -913,15 +913,14 @@ fn reference_colour(value: u32, scheme: &[String]) -> Option<String> {
     Some(format!("{red:02X}{green:02X}{blue:02X}"))
 }
 
-/// The outline of a shape type (`MSOSPT`), drawn from the `DrawingML` preset of the same shape.
-fn geometry(kind: u16, frame: Frame, flip_horizontal: bool, flip_vertical: bool) -> ShapeGeometry {
-    let preset = match kind {
-        3 | 120 => return ShapeGeometry::Ellipse,
-        20 | 32..=40 => {
-            return ShapeGeometry::Line {
-                flipped: flip_horizontal != flip_vertical,
-            };
-        }
+/// The `DrawingML` preset that draws a shape type (`MSOSPT`) the same; `None` for a rectangle
+/// and for the types with no outline of their own.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per shape type of the binary format"
+)]
+fn preset_of_shape_type(kind: u16) -> Option<&'static str> {
+    Some(match kind {
         2 => "roundRect",
         4 => "diamond",
         5 => "triangle",
@@ -941,14 +940,36 @@ fn geometry(kind: u16, frame: Frame, flip_horizontal: bool, flip_vertical: bool)
         21 => "plaque",
         22 => "can",
         23 => "donut",
-        41 | 44 | 47 | 50 => "borderCallout1",
-        42 | 43 | 45 | 46 | 48 | 49 | 51 | 52 => "borderCallout2",
+        33 => "bentConnector2",
+        34 => "bentConnector3",
+        35 => "bentConnector4",
+        36 => "bentConnector5",
+        37 => "curvedConnector2",
+        38 => "curvedConnector3",
+        39 => "curvedConnector4",
+        40 => "curvedConnector5",
+        41 | 178 => "callout1",
+        42 => "callout2",
+        43 => "callout3",
+        44 | 179 => "accentCallout1",
+        45 => "accentCallout2",
+        46 => "accentCallout3",
+        47 | 180 => "borderCallout1",
+        48 => "borderCallout2",
+        49 => "borderCallout3",
+        50 | 181 => "accentBorderCallout1",
+        51 => "accentBorderCallout2",
+        52 => "accentBorderCallout3",
+        53 => "ribbon2",
+        54 => "ribbon",
         55 => "chevron",
         56 => "pentagon",
+        57 => "noSmoking",
         58 => "star8",
         60 => "star32",
         61 => "wedgeRectCallout",
-        63 | 106 => "wedgeEllipseCallout",
+        63 => "wedgeEllipseCallout",
+        64 => "wave",
         65 => "foldedCorner",
         66 => "leftArrow",
         67 => "downArrow",
@@ -959,15 +980,39 @@ fn geometry(kind: u16, frame: Frame, flip_horizontal: bool, flip_vertical: bool)
         72 => "irregularSeal2",
         73 => "lightningBolt",
         74 => "heart",
+        75 => "frame",
         76 => "quadArrow",
+        77 => "leftArrowCallout",
+        78 => "rightArrowCallout",
+        79 => "upArrowCallout",
+        80 => "downArrowCallout",
+        81 => "leftRightArrowCallout",
+        82 => "upDownArrowCallout",
+        83 => "quadArrowCallout",
         84 => "bevel",
         85 => "leftBracket",
         86 => "rightBracket",
+        87 => "leftBrace",
+        88 => "rightBrace",
+        89 => "leftUpArrow",
+        90 => "bentUpArrow",
+        91 => "bentArrow",
         92 => "star24",
         93 => "stripedRightArrow",
         94 => "notchedRightArrow",
         95 => "blockArc",
         96 => "smileyFace",
+        97 => "verticalScroll",
+        98 => "horizontalScroll",
+        99 | 100 => "circularArrow",
+        101 => "uturnArrow",
+        102 => "curvedRightArrow",
+        103 => "curvedLeftArrow",
+        104 => "curvedUpArrow",
+        105 => "curvedDownArrow",
+        106 => "cloudCallout",
+        107 => "ellipseRibbon",
+        108 => "ellipseRibbon2",
         110 => "flowChartDecision",
         111 => "flowChartInputOutput",
         112 => "flowChartPredefinedProcess",
@@ -979,20 +1024,58 @@ fn geometry(kind: u16, frame: Frame, flip_horizontal: bool, flip_vertical: bool)
         118 => "flowChartManualInput",
         119 => "flowChartManualOperation",
         121 => "flowChartPunchedCard",
+        122 => "flowChartPunchedTape",
         123 => "flowChartSummingJunction",
         124 => "flowChartOr",
         125 => "flowChartCollate",
         126 => "flowChartSort",
         127 => "flowChartExtract",
         128 => "flowChartMerge",
+        129 => "flowChartOfflineStorage",
         130 => "flowChartOnlineStorage",
+        131 => "flowChartMagneticTape",
         132 => "flowChartMagneticDisk",
+        133 => "flowChartMagneticDrum",
         134 => "flowChartDisplay",
         135 => "flowChartDelay",
+        176 => "flowChartAlternateProcess",
+        177 => "flowChartOffpageConnector",
+        182 => "leftRightUpArrow",
+        183 => "sun",
         184 => "moon",
         185 => "bracketPair",
+        186 => "bracePair",
         187 => "star4",
-        _ => return ShapeGeometry::Rectangle,
+        188 => "doubleWave",
+        189 => "actionButtonBlank",
+        190 => "actionButtonHome",
+        191 => "actionButtonHelp",
+        192 => "actionButtonInformation",
+        193 => "actionButtonForwardNext",
+        194 => "actionButtonBackPrevious",
+        195 => "actionButtonEnd",
+        196 => "actionButtonBeginning",
+        197 => "actionButtonReturn",
+        198 => "actionButtonDocument",
+        199 => "actionButtonSound",
+        200 => "actionButtonMovie",
+        _ => return None,
+    })
+}
+
+/// The outline of a shape type (`MSOSPT`), drawn from the `DrawingML` preset of the same shape.
+fn geometry(kind: u16, frame: Frame, flip_horizontal: bool, flip_vertical: bool) -> ShapeGeometry {
+    let preset = match kind {
+        3 | 120 => return ShapeGeometry::Ellipse,
+        20 | 32 => {
+            return ShapeGeometry::Line {
+                flipped: flip_horizontal != flip_vertical,
+            };
+        }
+        _ => match preset_of_shape_type(kind) {
+            Some(preset) => preset,
+            None => return ShapeGeometry::Rectangle,
+        },
     };
     match preset_geometry(preset, None, frame.width, frame.height) {
         Some(mut paths) => {

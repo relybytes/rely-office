@@ -5,7 +5,7 @@
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
 //! The preset shapes of `DrawingML`, in the guide language of ECMA-376 20.1.9 written one
-//! statement to a line. A preset missing here is drawn as its frame's rectangle.
+//! statement to a line. A preset missing here is looked up in `enhanced_presets.rs`.
 
 pub(super) const PRESETS: &str = r"
 [rect]
@@ -382,7 +382,6 @@ L l y2
 L x1 vc
 Z
 
-[stripedRightArrow=rightArrow]
 
 [chevron]
 av adj 50000
@@ -581,7 +580,6 @@ L xl yl
 L l y1
 Z
 
-[wedgeRoundRectCallout=wedgeRectCallout]
 
 [wedgeEllipseCallout]
 av adj1 -20833
@@ -611,7 +609,6 @@ L x1 y1
 A wd2 hd2 stAng1 swAng
 Z
 
-[cloudCallout=wedgeEllipseCallout]
 
 [borderCallout1]
 av adj1 18750
@@ -631,9 +628,6 @@ path fill=none
 M x1 y1
 L x2 y2
 
-[callout1=borderCallout1]
-[accentCallout1=borderCallout1]
-[accentBorderCallout1=borderCallout1]
 
 [borderCallout2]
 av adj1 18750
@@ -658,13 +652,6 @@ M x1 y1
 L x2 y2
 L x3 y3
 
-[callout2=borderCallout2]
-[accentCallout2=borderCallout2]
-[accentBorderCallout2=borderCallout2]
-[borderCallout3=borderCallout2]
-[callout3=borderCallout2]
-[accentCallout3=borderCallout2]
-[accentBorderCallout3=borderCallout2]
 
 [heart]
 gd dx1 */ w 49 48
@@ -702,46 +689,6 @@ gd iw +- w 0 g0
 M r t
 A w hd2 3cd4 -10800000
 A iw hd2 cd4 10800000
-Z
-
-[can]
-av adj 25000
-gd maxAdj */ 50000 h ss
-gd a pin 0 adj maxAdj
-gd y1 */ ss a 200000
-gd y3 +- b 0 y1
-M l y1
-A wd2 y1 cd2 -10800000
-L r y3
-A wd2 y1 0 cd2
-Z
-M l y1
-A wd2 y1 cd2 cd2
-A wd2 y1 0 cd2
-Z
-
-[flowChartMagneticDisk=can]
-
-[cube]
-av adj 25000
-gd a pin 0 adj 100000
-gd y1 */ ss a 100000
-gd y4 +- b 0 y1
-gd x4 +- r 0 y1
-M l y1
-L x4 y1
-L x4 b
-L l b
-Z
-M l y1
-L y1 t
-L r t
-L x4 y1
-Z
-M x4 b
-L x4 y1
-L r t
-L r y4
 Z
 
 [donut]
@@ -823,49 +770,6 @@ L r y2
 A x1 x1 3cd4 -5400000
 L x1 b
 A x1 x1 0 -5400000
-Z
-
-[bevel]
-av adj 12500
-gd a pin 0 adj 50000
-gd x1 */ ss a 100000
-gd x2 +- r 0 x1
-gd y2 +- b 0 x1
-M l t
-L r t
-L r b
-L l b
-Z
-M x1 x1
-L x2 x1
-L x2 y2
-L x1 y2
-Z
-path fill=none
-M l t
-L x1 x1
-M r t
-L x2 x1
-M l b
-L x1 y2
-M r b
-L x2 y2
-
-[foldedCorner]
-av adj 16667
-gd a pin 0 adj 50000
-gd dy2 */ ss a 100000
-gd x1 +- r 0 dy2
-gd y2 +- b 0 dy2
-M l t
-L r t
-L r y2
-L x1 b
-L l b
-Z
-M x1 b
-L x1 y2
-L r y2
 Z
 
 [snip1Rect]
@@ -1093,31 +997,6 @@ L x3 y3
 A iwd2 ihd2 istAng iswAng
 Z
 
-[smileyFace]
-gd ex1 */ w 6215 21600
-gd ex2 */ w 15385 21600
-gd ey */ h 7570 21600
-gd er */ w 1470 21600
-gd erh */ h 1470 21600
-gd ex1l +- ex1 0 er
-gd ex2l +- ex2 0 er
-gd sx1 */ w 4870 21600
-gd sx2 */ w 16730 21600
-gd sy */ h 15510 21600
-gd sc */ h 19890 21600
-M l vc
-A wd2 hd2 cd2 21600000
-Z
-M ex1l ey
-A er erh cd2 21600000
-Z
-M ex2l ey
-A er erh cd2 21600000
-Z
-path fill=none
-M sx1 sy
-Q hc sc sx2 sy
-
 [leftBracket]
 av adj 8333
 gd maxAdj */ 50000 h ss
@@ -1212,7 +1091,6 @@ L 21600 17322
 C 10800 17322 10800 23922 0 20172
 Z
 
-[flowChartMultidocument=flowChartDocument]
 
 [flowChartTerminator]
 path w=21600 h=21600

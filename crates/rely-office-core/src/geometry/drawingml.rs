@@ -11,8 +11,9 @@ use std::collections::HashMap;
 use std::f64::consts::{PI, TAU};
 use std::sync::OnceLock;
 
+use super::enhanced::enhanced_preset_geometry;
 use super::presets::PRESETS;
-use super::{PathBuilder, ShapePath};
+use super::{FillShade, PathBuilder, ShapePath};
 use crate::xml_tree::{Element, Namespace};
 
 const A: Namespace = Namespace::Drawing;
@@ -123,6 +124,7 @@ struct PathDefinition {
     width: Option<f64>,
     height: Option<f64>,
     filled: bool,
+    shade: FillShade,
     stroked: bool,
     steps: Vec<Step>,
 }
@@ -133,6 +135,7 @@ impl Default for PathDefinition {
             width: None,
             height: None,
             filled: true,
+            shade: FillShade::Normal,
             stroked: true,
             steps: Vec::new(),
         }
@@ -260,7 +263,12 @@ fn draw_path(
             }
         }
     }
-    builder.finish(path.filled, path.stroked)
+    builder
+        .finish(path.filled, path.stroked)
+        .map(|finished| ShapePath {
+            shade: path.shade,
+            ..finished
+        })
 }
 
 /// The `arcTo` of `DrawingML`: the arc of the ellipse with these radii that passes through the
@@ -370,7 +378,10 @@ fn parse_presets(table: &str) -> HashMap<String, Definition> {
                 let mut path = PathDefinition::default();
                 for option in rest {
                     match option.split_once('=') {
-                        Some(("fill", "none")) => path.filled = false,
+                        Some(("fill", fill)) => match FillShade::from_drawingml(Some(fill)) {
+                            Some(shade) => path.shade = shade,
+                            None => path.filled = false,
+                        },
                         Some(("stroke", "false")) => path.stroked = false,
                         Some(("w", value)) => path.width = value.parse().ok(),
                         Some(("h", value)) => path.height = value.parse().ok(),
@@ -462,7 +473,17 @@ pub(crate) fn preset_geometry(
     width: i64,
     height: i64,
 ) -> Option<Vec<ShapePath>> {
-    let definition = presets().get(preset)?;
+    let Some(definition) = presets().get(preset) else {
+        let named: Vec<(String, f64)> = adjust_values(adjust_list)
+            .into_iter()
+            .filter(|(_, formula)| formula.operator == "val")
+            .filter_map(|(name, formula)| match formula.arguments.first() {
+                Some(Argument::Number(value)) => Some((name, *value)),
+                _ => None,
+            })
+            .collect();
+        return enhanced_preset_geometry(preset, &[], &named, width, height);
+    };
     let paths = definition.evaluate(size(width), size(height), &adjust_values(adjust_list));
     (!paths.is_empty()).then_some(paths)
 }
@@ -475,7 +496,9 @@ pub(crate) fn preset_geometry_with_values(
     width: i64,
     height: i64,
 ) -> Option<Vec<ShapePath>> {
-    let definition = presets().get(preset)?;
+    let Some(definition) = presets().get(preset) else {
+        return enhanced_preset_geometry(preset, values, &[], width, height);
+    };
     let overrides: Vec<(String, Formula)> = definition
         .adjust
         .iter()
@@ -539,6 +562,8 @@ pub(crate) fn custom_geometry(
             width: length("w"),
             height: length("h"),
             filled: path.attribute(Namespace::None, "fill") != Some("none"),
+            shade: FillShade::from_drawingml(path.attribute(Namespace::None, "fill"))
+                .unwrap_or_default(),
             stroked: !matches!(
                 path.attribute(Namespace::None, "stroke"),
                 Some("0" | "false")

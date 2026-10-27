@@ -132,6 +132,7 @@ fn presentation() -> Presentation {
         ],
         filled: true,
         stroked: true,
+        shade: FillShade::Darken,
     };
     let open = ShapePath {
         commands: vec![
@@ -140,6 +141,7 @@ fn presentation() -> Presentation {
         ],
         filled: false,
         stroked: false,
+        shade: FillShade::Normal,
     };
     let mut unfilled = shape(
         ShapeGeometry::Ellipse,
@@ -308,6 +310,11 @@ fn writes_slides_that_read_back_as_they_were() {
         PathCommand::LineTo(PathPoint { x: 1_270_000, y: 0 })
     );
     assert!(!paths[1].filled && !paths[1].stroked);
+    assert_eq!(
+        paths[0].shade,
+        FillShade::Darken,
+        "a shaded face keeps its shade"
+    );
     assert!(
         matches!(first.shapes[4].geometry, ShapeGeometry::Path(_)),
         "a rounded rectangle's preset"
@@ -343,6 +350,7 @@ fn writes_the_parts_a_pptx_needs() {
     assert!(presentation_xml.contains(r#"<p:sldId id="257" r:id="rId4"/>"#));
     let slide = member(&written, "ppt/slides/slide1.xml");
     assert!(slide.contains("<a:buAutoNum"));
+    assert!(slide.contains(r#"fill="darken""#));
     assert!(slide.contains("<a:buNone/>"));
     assert!(slide.contains(r#"algn="just""#));
     assert!(slide.contains("<a:p><a:pPr"));

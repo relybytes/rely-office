@@ -10,6 +10,7 @@
 
 mod drawingml;
 mod enhanced;
+mod enhanced_presets;
 mod presets;
 mod svg;
 
@@ -44,6 +45,88 @@ pub struct ShapePath {
     pub commands: Vec<PathCommand>,
     pub filled: bool,
     pub stroked: bool,
+    /// How the fill is shaded against the shape's own colour, as a face of a cube.
+    pub shade: FillShade,
+}
+
+/// A face drawn darker or lighter than the shape's fill, as `DrawingML` paths and the shading
+/// commands of `OpenDocument` enhanced paths ask.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FillShade {
+    #[default]
+    Normal,
+    Darken,
+    DarkenLess,
+    Lighten,
+    LightenLess,
+}
+
+impl FillShade {
+    /// The shade a `DrawingML` path's `fill` names; `None` for no fill.
+    pub(crate) fn from_drawingml(fill: Option<&str>) -> Option<Self> {
+        Some(match fill {
+            Some("none") => return None,
+            Some("darken") => Self::Darken,
+            Some("darkenLess") => Self::DarkenLess,
+            Some("lighten") => Self::Lighten,
+            Some("lightenLess") => Self::LightenLess,
+            _ => Self::Normal,
+        })
+    }
+
+    /// The `fill` attribute of a `DrawingML` path with this shade.
+    #[must_use]
+    pub fn drawingml_name(self) -> &'static str {
+        match self {
+            Self::Normal => "norm",
+            Self::Darken => "darken",
+            Self::DarkenLess => "darkenLess",
+            Self::Lighten => "lighten",
+            Self::LightenLess => "lightenLess",
+        }
+    }
+
+    /// An `RRGGBB` colour shaded: darker faces scale the channels down, lighter ones mix them
+    /// with white.
+    #[must_use]
+    pub fn apply(self, colour: &str) -> String {
+        let factor = match self {
+            Self::Normal => return colour.to_owned(),
+            Self::Darken => -0.4,
+            Self::DarkenLess => -0.2,
+            Self::Lighten => 0.4,
+            Self::LightenLess => 0.2,
+        };
+        let channel = |index: usize| {
+            colour
+                .get(index..index + 2)
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+        };
+        let (Some(red), Some(green), Some(blue)) = (channel(0), channel(2), channel(4)) else {
+            return colour.to_owned();
+        };
+        let shaded = |value: u8| {
+            let value = f64::from(value);
+            let result = if factor < 0.0 {
+                value * (1.0 + factor)
+            } else {
+                value + (255.0 - value) * factor
+            };
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "the value is clamped to a byte"
+            )]
+            let byte = result.round().clamp(0.0, 255.0) as u8;
+            byte
+        };
+        format!(
+            "{:02X}{:02X}{:02X}",
+            shaded(red),
+            shaded(green),
+            shaded(blue)
+        )
+    }
 }
 
 /// No path runs more commands than this; a geometry past it is drawn as far as it goes.
@@ -184,6 +267,7 @@ impl PathBuilder {
             commands: self.commands,
             filled,
             stroked,
+            shade: FillShade::Normal,
         })
     }
 }

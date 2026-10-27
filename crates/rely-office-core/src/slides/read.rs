@@ -1047,10 +1047,7 @@ fn shape_geometry(properties: Option<&Element>, frame: Frame, flipped: bool) -> 
         match preset.attribute(Namespace::None, "prst") {
             None | Some("rect") => return ShapeGeometry::Rectangle,
             Some("ellipse") => return ShapeGeometry::Ellipse,
-            Some(
-                "line" | "straightConnector1" | "bentConnector2" | "bentConnector3"
-                | "curvedConnector3",
-            ) => return ShapeGeometry::Line { flipped },
+            Some("line" | "straightConnector1") => return ShapeGeometry::Line { flipped },
             Some(name) => {
                 preset_geometry(name, preset.child(A, "avLst"), frame.width, frame.height)
             }

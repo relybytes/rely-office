@@ -140,18 +140,25 @@ impl Writer<'_> {
                     ShapeContent::Text(text) => (insets(text), self.text(text)),
                     _ => ("0pt".to_owned(), "[]".to_owned()),
                 };
+                // Every face is filled before any outline is drawn, so a stroke-only path
+                // over a filled one stays visible.
                 let mut layers = String::new();
-                for path in paths {
-                    let path_fill = if path.filled { fill.as_str() } else { "none" };
-                    let path_stroke = if path.stroked {
-                        stroke.as_str()
-                    } else {
-                        "none"
-                    };
+                for path in paths.iter().filter(|path| path.filled) {
+                    let path_fill = shape.fill.as_ref().map_or_else(
+                        || "none".to_owned(),
+                        |colour| format!("rgb(\"#{}\")", path.shade.apply(colour)),
+                    );
                     let _ = write!(
                         layers,
                         "#place(top + left, {})",
-                        curve_of(path, path_fill, path_stroke)
+                        curve_of(path, &path_fill, "none")
+                    );
+                }
+                for path in paths.iter().filter(|path| path.stroked) {
+                    let _ = write!(
+                        layers,
+                        "#place(top + left, {})",
+                        curve_of(path, "none", &stroke)
                     );
                 }
                 format!(

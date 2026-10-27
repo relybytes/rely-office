@@ -36,6 +36,7 @@ fn starts_a_path_with_its_first_line() {
             ],
             filled: true,
             stroked: false,
+            shade: FillShade::Normal,
         }
     );
 }
@@ -131,6 +132,7 @@ fn mirrors_paths_across_their_frame() {
         ],
         filled: true,
         stroked: true,
+        shade: FillShade::Normal,
     }];
     let mut paths = original.clone();
     flip_paths(&mut paths, 100, 50, false, false);
@@ -144,4 +146,26 @@ fn mirrors_paths_across_their_frame() {
         PathCommand::CubicTo(at(1, 48), at(3, 46), at(5, 44))
     );
     assert_eq!(paths[0].commands[3], PathCommand::Close);
+}
+
+#[test]
+fn shades_a_colour_darker_or_lighter() {
+    assert_eq!(FillShade::Normal.apply("4472C4"), "4472C4");
+    assert_eq!(FillShade::Darken.apply("4472C4"), "294476");
+    assert_eq!(FillShade::DarkenLess.apply("FF0000"), "CC0000");
+    assert_eq!(FillShade::Lighten.apply("000000"), "666666");
+    assert_eq!(FillShade::LightenLess.apply("0000FF"), "3333FF");
+    assert_eq!(FillShade::Darken.apply("nope"), "nope");
+    for (name, shade) in [
+        ("norm", FillShade::Normal),
+        ("darken", FillShade::Darken),
+        ("darkenLess", FillShade::DarkenLess),
+        ("lighten", FillShade::Lighten),
+        ("lightenLess", FillShade::LightenLess),
+    ] {
+        assert_eq!(shade.drawingml_name(), name);
+        assert_eq!(FillShade::from_drawingml(Some(name)), Some(shade));
+    }
+    assert_eq!(FillShade::from_drawingml(Some("none")), None);
+    assert_eq!(FillShade::from_drawingml(None), Some(FillShade::Normal));
 }

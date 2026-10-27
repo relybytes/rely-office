@@ -647,7 +647,7 @@ fn draws_presets_and_custom_geometries_as_paths_mirrored_as_their_frame_says() {
         shape("<a:prstGeom/>", ""),
         shape("", ""),
         shape("<a:custGeom/>", ""),
-        shape(r#"<a:prstGeom prst="bentConnector3"/>"#, r#"flipH="1""#),
+        shape(r#"<a:prstGeom prst="straightConnector1"/>"#, r#"flipH="1""#),
     ]
     .concat()));
     let presentation = read(&[&slide]);
