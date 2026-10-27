@@ -8,11 +8,28 @@
 //! the fill and border of a text box.
 
 use super::super::styles::{FO, STYLE, Scope, TEXT, border, colour, points};
-use super::{Converter, DRAW, SVG};
-use crate::document::{Anchor, AnchorAlign, AnchorBase, AnchorPosition, TextFrame, Wrap};
+use super::{Converter, DRAW, SVG, all_text};
+use crate::document::{Anchor, AnchorAlign, AnchorBase, AnchorPosition, Media, TextFrame, Wrap};
+use crate::geometry::{
+    DrawnShape, TextLine, enhanced_geometry, flip_paths, preset_geometry, rectangle_paths,
+    shapes_svg, svg_path_geometry,
+};
 use crate::xml_tree::Element;
 
 const EMU_PER_POINT: f64 = 12_700.0;
+/// The properties a group gives the shapes inside it over their own styles.
+const GROUP_PLACED: [&str; 10] = [
+    "horizontal-pos",
+    "horizontal-rel",
+    "vertical-pos",
+    "vertical-rel",
+    "wrap",
+    "run-through",
+    "margin-top",
+    "margin-bottom",
+    "margin-left",
+    "margin-right",
+];
 
 fn emu(points: f64) -> i64 {
     #[expect(clippy::cast_possible_truncation, reason = "a frame is a page's size")]
@@ -21,7 +38,9 @@ fn emu(points: f64) -> i64 {
 }
 
 impl Converter<'_, '_> {
-    /// The attribute of a frame's graphic style, its own style first, then its parents.
+    /// The attribute of a frame's graphic style, its own style first, then its parents. Inside
+    /// a group the group's style places its shapes, so where and how text runs around them
+    /// comes from it first.
     fn graphic_property(
         &self,
         frame: &Element,
@@ -29,20 +48,25 @@ impl Converter<'_, '_> {
         namespace: crate::xml_tree::Namespace,
         name: &str,
     ) -> Option<String> {
-        self.styles
-            .properties(
-                scope,
-                "graphic",
-                frame.attribute(DRAW, "style-name"),
-                "graphic-properties",
-            )
-            .into_iter()
-            .find_map(|properties| properties.attribute(namespace, name).map(str::to_owned))
+        let from = |style: Option<&str>| {
+            self.styles
+                .properties(scope, "graphic", style, "graphic-properties")
+                .into_iter()
+                .find_map(|properties| properties.attribute(namespace, name).map(str::to_owned))
+        };
+        let own = frame.attribute(DRAW, "style-name");
+        match self.group_style.as_deref() {
+            Some(group) if GROUP_PLACED.contains(&name) => from(Some(group)).or_else(|| from(own)),
+            Some(group) => from(own).or_else(|| from(Some(group))),
+            None => from(own),
+        }
     }
 
     /// The anchor of a frame; `None` for one set as a character in the line.
     pub(super) fn frame_anchor(&self, frame: &Element, scope: Scope) -> Option<Anchor> {
-        let anchor_type = frame.attribute(TEXT, "anchor-type")?;
+        let anchor_type = frame
+            .attribute(TEXT, "anchor-type")
+            .or(self.group_anchor.as_deref())?;
         if !matches!(anchor_type, "paragraph" | "char" | "page" | "frame") {
             return None;
         }
@@ -187,5 +211,136 @@ impl Converter<'_, '_> {
             fill,
             line,
         })
+    }
+
+    /// The paragraphs of a shape as centred lines, each in the look of its paragraph style.
+    fn shape_text(&self, element: &Element, scope: Scope) -> Vec<TextLine> {
+        let paragraphs: Vec<&Element> = element
+            .elements()
+            .filter(|paragraph| paragraph.is(TEXT, "p"))
+            .collect();
+        if paragraphs
+            .iter()
+            .all(|paragraph| all_text(paragraph).trim().is_empty())
+        {
+            return Vec::new();
+        }
+        paragraphs
+            .into_iter()
+            .map(|paragraph| {
+                let style = paragraph.attribute(TEXT, "style-name");
+                let span = paragraph
+                    .elements()
+                    .find(|span| span.is(TEXT, "span"))
+                    .and_then(|span| span.attribute(TEXT, "style-name"));
+                let (paragraph_look, _) = self.styles.text_look(scope, "paragraph", style);
+                let (look, _) = self.styles.text_look(scope, "text", span);
+                let look = look.or(paragraph_look);
+                TextLine {
+                    text: all_text(paragraph),
+                    size_points: look
+                        .size_half_points
+                        .map_or(11.0, |half| f64::from(half) / 2.0),
+                    colour: look.colour.unwrap_or_else(|| "000000".to_owned()),
+                    bold: look.bold.unwrap_or(false),
+                    italic: look.italic.unwrap_or(false),
+                }
+            })
+            .collect()
+    }
+
+    /// A drawn shape as an SVG picture of its frame: its outline, the fill and
+    /// line of its graphic style. Its media, its size in points and its anchor.
+    pub(super) fn shape_picture(
+        &mut self,
+        element: &Element,
+        scope: Scope,
+    ) -> Option<(usize, f64, f64, Option<Anchor>)> {
+        let length = |name: &str| element.attribute(SVG, name).and_then(points);
+        let is_line = matches!(element.name.as_str(), "line" | "connector");
+        let (left, top, width, height) = if is_line {
+            let (x1, y1, x2, y2) = (length("x1")?, length("y1")?, length("x2")?, length("y2")?);
+            (x1.min(x2), y1.min(y2), (x2 - x1).abs(), (y2 - y1).abs())
+        } else {
+            (
+                length("x").unwrap_or(0.0),
+                length("y").unwrap_or(0.0),
+                length("width")?,
+                length("height")?,
+            )
+        };
+        if width <= 0.0 && height <= 0.0 {
+            return None;
+        }
+        let (width_emu, height_emu) = (emu(width).max(1), emu(height).max(1));
+        let mut paths = match element.name.as_str() {
+            "rect" => rectangle_paths(width_emu, height_emu),
+            "ellipse" | "circle" => preset_geometry("ellipse", None, width_emu, height_emu)?,
+            "polygon" | "polyline" | "path" => svg_path_geometry(element, width_emu, height_emu)?,
+            "custom-shape" => element
+                .child(DRAW, "enhanced-geometry")
+                .and_then(|geometry| enhanced_geometry(geometry, width_emu, height_emu))
+                .unwrap_or_else(|| rectangle_paths(width_emu, height_emu)),
+            "line" | "connector" => preset_geometry("line", None, width_emu, height_emu)?,
+            _ => return None,
+        };
+        if is_line {
+            let falling = |first: &str, second: &str| length(first) < length(second);
+            let flipped = falling("x1", "x2") != falling("y1", "y2");
+            flip_paths(&mut paths, width_emu, height_emu, flipped, false);
+        }
+        let property =
+            |namespace, name: &str| self.graphic_property(element, scope, namespace, name);
+        let fill = (!is_line && property(DRAW, "fill").as_deref() != Some("none"))
+            .then(|| property(DRAW, "fill-color").as_deref().and_then(colour))
+            .flatten();
+        let line = (property(DRAW, "stroke").as_deref() != Some("none")).then(|| {
+            (
+                property(SVG, "stroke-color")
+                    .as_deref()
+                    .and_then(colour)
+                    .unwrap_or_else(|| "000000".to_owned()),
+                property(SVG, "stroke-width")
+                    .as_deref()
+                    .and_then(points)
+                    .map_or(0, emu),
+            )
+        });
+        let drawn = DrawnShape {
+            x: 0,
+            y: 0,
+            width: width_emu,
+            height: height_emu,
+            rotation: 0.0,
+            paths,
+            fill,
+            line,
+            text: self.shape_text(element, scope),
+        };
+        let bytes = shapes_svg(&[drawn], width_emu, height_emu)?;
+        let size = bytes.len() as u64;
+        if self.media.len() >= self.limits.max_images
+            || self.media_bytes.saturating_add(size) > self.limits.max_total_image_bytes
+        {
+            self.report.images_over_limit += 1;
+            return None;
+        }
+        self.media_bytes += size;
+        self.media.push(Media {
+            content_type: "image/svg+xml",
+            bytes,
+        });
+        let anchor = self.frame_anchor(element, scope).map(|mut anchor| {
+            if anchor.horizontal.align.is_none() {
+                anchor.horizontal.offset_emu = emu(left);
+            }
+            if anchor.vertical.align.is_none() {
+                anchor.vertical.offset_emu = emu(top);
+            }
+            anchor.width_emu = width_emu;
+            anchor.height_emu = height_emu;
+            anchor
+        });
+        Some((self.media.len() - 1, width, height, anchor))
     }
 }

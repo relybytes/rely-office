@@ -73,6 +73,8 @@ pub(crate) fn read_odt_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTre
         outline: [0; MAX_LIST_LEVEL],
         floating: Vec::new(),
         next_frame: 0,
+        group_anchor: None,
+        group_style: None,
     };
     // A paragraph or table whose style names a master page other than the current one starts
     // a section on that page.
@@ -195,6 +197,10 @@ struct Converter<'a, 'p> {
     floating: Vec<Block>,
     /// The last id given to a text box frame.
     next_frame: u32,
+    /// The anchor type and the graphic style of the group being read, which its shapes take
+    /// where they name none of their own.
+    group_anchor: Option<String>,
+    group_style: Option<String>,
 }
 
 /// Where a paragraph sits in a list: its level, its list, the label of an item's first
@@ -764,15 +770,50 @@ impl Converter<'_, '_> {
                 }
             }
             "g" => {
+                let anchor = element
+                    .attribute(TEXT, "anchor-type")
+                    .map(str::to_owned)
+                    .or_else(|| self.group_anchor.clone());
+                let style = element
+                    .attribute(DRAW, "style-name")
+                    .map(str::to_owned)
+                    .or_else(|| self.group_style.clone());
+                let outer = std::mem::replace(&mut self.group_anchor, anchor);
+                let outer_style = std::mem::replace(&mut self.group_style, style);
                 for child in element.elements().filter(|child| child.namespace == DRAW) {
                     self.drawing(child, scope, content);
                 }
+                self.group_anchor = outer;
+                self.group_style = outer_style;
             }
             _ => {
-                if element.descendant(TEXT, "p").is_some() {
+                // A shape keeps its text in its picture; only a plain box of text is a text box.
+                let is_text_box = element.name != "custom-shape"
+                    && element
+                        .descendant(TEXT, "p")
+                        .is_some_and(|paragraph| !all_text(paragraph).trim().is_empty());
+                if is_text_box {
                     self.report.text_boxes += 1;
                     let frame = self.text_frame(element, scope);
                     self.text_box(element, scope, frame.as_ref());
+                } else if let Some((media, width, height, anchor)) =
+                    self.shape_picture(element, scope)
+                {
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "the size is a page's"
+                    )]
+                    let pixels = |points: f64| {
+                        Some((points * PIXELS_PER_POINT).round().clamp(1.0, 20_000.0) as u32)
+                    };
+                    content.push(Inline::Image {
+                        media,
+                        alt: None,
+                        width: pixels(width),
+                        height: pixels(height),
+                        anchor: anchor.map(Box::new),
+                    });
                 } else {
                     self.report.shapes += 1;
                 }
@@ -1429,6 +1470,19 @@ fn page_layout(
 }
 
 mod frames;
+
+/// The text of an element and all it holds, `text:s` and `text:tab` as spaces.
+pub(super) fn all_text(element: &Element) -> String {
+    let mut text = String::new();
+    for node in &element.children {
+        match node {
+            Node::Text(run) => text.push_str(run),
+            Node::Element(child) if child.is(TEXT, "s") || child.is(TEXT, "tab") => text.push(' '),
+            Node::Element(child) => text.push_str(&all_text(child)),
+        }
+    }
+    text
+}
 
 #[cfg(test)]
 mod tests;

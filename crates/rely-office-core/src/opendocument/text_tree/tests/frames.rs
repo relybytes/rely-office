@@ -118,8 +118,9 @@ fn frames_a_text_box_with_the_fill_and_outline_of_its_style() {
         r#"<draw:custom-shape text:anchor-type="paragraph" draw:style-name="gr1" svg:width="3cm" svg:height="1cm"><text:p>forma</text:p></draw:custom-shape>"#,
         "</text:p>"
     );
-    let frames = frames(&tree(body).blocks);
-    assert_eq!(frames.len(), 7);
+    let read = tree(body);
+    let frames = frames(&read.blocks);
+    assert_eq!(frames.len(), 6, "the shape's text is drawn in its picture");
     assert_eq!(frames[0], None);
     let first = frames[1].clone().expect("a frame");
     assert_eq!(first.id, 1);
@@ -136,7 +137,55 @@ fn frames_a_text_box_with_the_fill_and_outline_of_its_style() {
     assert_eq!(fourth.fill.as_deref(), Some("336699"));
     assert_eq!(fourth.line, Some(("000000".to_owned(), 6)));
     assert_eq!(frames[5], None);
-    let shape = frames[6].clone().expect("a frame");
-    assert_eq!(shape.id, 5);
-    assert_eq!(shape.anchor.height_emu, 360_000);
+    let shape = String::from_utf8(read.media[0].bytes.clone()).unwrap();
+    assert!(shape.contains(">forma</text>"), "{shape}");
+}
+
+#[test]
+fn draws_shapes_lines_and_groups_as_pictures_where_they_float() {
+    let tree = picture_tree(concat!(
+        r#"<draw:rect text:anchor-type="paragraph" svg:x="1cm" svg:y="0cm" svg:width="2cm" svg:height="1cm"/>"#,
+        r#"<draw:line text:anchor-type="paragraph" svg:x1="5cm" svg:y1="2cm" svg:x2="3cm" svg:y2="0cm"/>"#,
+        r#"<draw:g text:anchor-type="paragraph"><draw:ellipse svg:x="0cm" svg:y="3cm" svg:width="1cm" svg:height="1cm"/>"#,
+        r#"<draw:custom-shape svg:x="2cm" svg:y="3cm" svg:width="1cm" svg:height="1cm"><text:p><text:span>Sì</text:span></text:p>"#,
+        r#"<draw:enhanced-geometry draw:type="ooxml-diamond" draw:enhanced-path="M 0 0 Z"/></draw:custom-shape>"#,
+        r#"<draw:polygon svg:x="0cm" svg:y="0cm" svg:width="1cm" svg:height="1cm" svg:viewBox="0 0 10 10" draw:points="0,0 10,0 5,10"/>"#,
+        r#"<draw:circle/><draw:measure/></draw:g>"#
+    ));
+    let svgs: Vec<String> = tree
+        .media
+        .iter()
+        .map(|media| String::from_utf8(media.bytes.clone()).unwrap())
+        .collect();
+    assert_eq!(svgs.len(), 5, "{:?}", tree.report);
+    assert_eq!(
+        tree.report.shapes, 2,
+        "a shape of no size and one it cannot draw"
+    );
+    assert!(
+        svgs[1].contains("stroke=") && !svgs[1].contains("fill=\"#"),
+        "a line is never filled"
+    );
+    assert!(
+        svgs[3].contains(">Sì</text>"),
+        "the text of a shape: {}",
+        svgs[3]
+    );
+    let placed = anchors(&tree);
+    let first = placed[0].expect("anchored");
+    assert_eq!(
+        (first.horizontal.offset_emu, first.width_emu),
+        (360_000, 720_000)
+    );
+    let line = placed[1].expect("anchored");
+    assert_eq!(
+        (
+            line.horizontal.offset_emu,
+            line.vertical.offset_emu,
+            line.width_emu
+        ),
+        (1_080_000, 0, 720_000)
+    );
+    let in_group = placed[2].expect("the group's anchor");
+    assert_eq!(in_group.vertical.offset_emu, 1_080_000);
 }
