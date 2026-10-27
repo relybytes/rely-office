@@ -18,7 +18,12 @@ const MAX_TAB_STOPS: usize = 64;
 const MAX_TWIPS: i64 = 31_680;
 
 /// How a border line is drawn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub enum BorderStyle {
     /// Explicitly no line, which hides the line a style would draw.
     None,
@@ -29,7 +34,12 @@ pub enum BorderStyle {
 }
 
 /// One edge of a border.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct Border {
     pub style: BorderStyle,
     /// The width in eighths of a point.
@@ -215,7 +225,12 @@ pub(crate) fn merge_tabs(own: Vec<TabStop>, inherited: Vec<TabStop>) -> Vec<TabS
 }
 
 /// How the content of a cell sits in its height.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub enum VerticalAlignment {
     Top,
     Center,

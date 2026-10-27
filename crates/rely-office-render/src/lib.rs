@@ -25,8 +25,8 @@ mod sheet;
 mod world;
 
 use rely_office_core::{
-    DocumentFormat, Limits, OfficeError, detect_format, extract_text, read_document_tree,
-    read_workbook,
+    DocumentFormat, Limits, NumberLocale, OfficeError, detect_format, extract_text,
+    read_document_tree, read_workbook_in,
 };
 use typst::LibraryExt;
 use typst::diag::SourceDiagnostic;
@@ -175,7 +175,8 @@ fn source_with(
         | DocumentFormat::Ods
         | DocumentFormat::Csv
         | DocumentFormat::Tsv => {
-            let workbook = read_workbook(bytes, file_name, limits)?;
+            // Sheets show their numbers and dates in Italian, the language the pages are set in.
+            let workbook = read_workbook_in(bytes, file_name, limits, NumberLocale::Italian)?;
             let truncated = workbook.sheets.iter().any(|sheet| {
                 sheet.total_rows > sheet.rows.len()
                     || sheet.total_columns > sheet.rows.first().map_or(0, Vec::len)

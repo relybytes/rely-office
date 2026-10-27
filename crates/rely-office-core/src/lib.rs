@@ -23,12 +23,14 @@ mod document;
 mod error;
 mod format;
 mod limits;
+mod number_format;
 mod opendocument;
 mod ppt;
 mod presentation;
 mod relationships;
 mod sheet;
 mod sheet_layout;
+mod sheet_styles;
 mod text;
 mod word;
 mod xml_text;
@@ -46,6 +48,11 @@ pub use document::{
 pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};
 pub use limits::Limits;
-pub use sheet::{Sheet, Workbook, read_workbook};
-pub use sheet_layout::{SheetLayout, read_xlsx_layouts};
+pub use number_format::{
+    FormattedNumber, NumberLocale, builtin_format_code, format_number, format_text, general_number,
+    is_date_code,
+};
+pub use sheet::{Sheet, Workbook, read_workbook, read_workbook_in};
+pub use sheet_layout::{CellRange, MergePlace, SheetLayout, read_xlsx_layouts};
+pub use sheet_styles::{CellBorders, CellFont, CellStyle, HorizontalAlignment};
 pub use text::{ExtractedText, extract_text};

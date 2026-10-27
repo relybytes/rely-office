@@ -4,10 +4,12 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
+use std::collections::HashMap;
 use std::io::Cursor;
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 
+use crate::number_format::{NumberLocale, format_number, format_text, general_number};
 use crate::sheet_layout::{SheetLayout, read_xlsx_layouts};
 use crate::{DocumentFormat, Limits, OfficeError, detect_format};
 
@@ -32,7 +34,8 @@ pub struct Workbook {
     pub sheets: Vec<Sheet>,
 }
 
-/// Read a spreadsheet (xlsx, xls, ods, csv, tsv) as tables of the values a reader sees.
+/// Read a spreadsheet (xlsx, xls, ods, csv, tsv) as tables of the values a reader sees, the
+/// numbers of an xlsx shown with their cells' number formats in English notation.
 ///
 /// # Errors
 ///
@@ -44,6 +47,20 @@ pub fn read_workbook(
     file_name: Option<&str>,
     limits: &Limits,
 ) -> Result<Workbook, OfficeError> {
+    read_workbook_in(bytes, file_name, limits, NumberLocale::English)
+}
+
+/// [`read_workbook`] with the numbers, dates and month names of an xlsx shown in `locale`.
+///
+/// # Errors
+///
+/// As [`read_workbook`].
+pub fn read_workbook_in(
+    bytes: &[u8],
+    file_name: Option<&str>,
+    limits: &Limits,
+    locale: NumberLocale,
+) -> Result<Workbook, OfficeError> {
     if bytes.len() as u64 > limits.max_input_bytes {
         return Err(OfficeError::TooLarge {
             what: "input".to_owned(),
@@ -54,14 +71,12 @@ pub fn read_workbook(
     let format = detect_format(bytes, file_name);
     let sheets = match format {
         DocumentFormat::Xlsx => {
-            let mut sheets = read_binary_workbook(bytes, limits)?;
             let mut layouts = read_xlsx_layouts(bytes, limits);
-            for sheet in &mut sheets {
-                sheet.layout = layouts.remove(&sheet.name).unwrap_or_default();
-            }
-            sheets
+            read_binary_workbook(bytes, limits, &mut layouts, locale)?
         }
-        DocumentFormat::Xls | DocumentFormat::Ods => read_binary_workbook(bytes, limits)?,
+        DocumentFormat::Xls | DocumentFormat::Ods => {
+            read_binary_workbook(bytes, limits, &mut HashMap::new(), locale)?
+        }
         DocumentFormat::Csv => vec![read_delimited(bytes, b',', limits)],
         DocumentFormat::Tsv => vec![read_delimited(bytes, b'\t', limits)],
         other => return Err(OfficeError::UnsupportedFormat(other)),
@@ -70,7 +85,14 @@ pub fn read_workbook(
     Ok(Workbook { format, sheets })
 }
 
-fn read_binary_workbook(bytes: &[u8], limits: &Limits) -> Result<Vec<Sheet>, OfficeError> {
+/// The sheets of a binary or zipped workbook; a sheet with a layout shows each value with its
+/// cell's number format.
+fn read_binary_workbook(
+    bytes: &[u8],
+    limits: &Limits,
+    layouts: &mut HashMap<String, SheetLayout>,
+    locale: NumberLocale,
+) -> Result<Vec<Sheet>, OfficeError> {
     let mut workbook = open_workbook_auto_from_rs(Cursor::new(bytes))
         .map_err(|error| OfficeError::UnreadableWorkbook(error.to_string()))?;
 
@@ -88,10 +110,18 @@ fn read_binary_workbook(bytes: &[u8], limits: &Limits) -> Result<Vec<Sheet>, Off
         let shown_rows = total_rows.min(limits.max_rows);
         let shown_columns = total_columns.min(limits.max_columns);
 
+        let layout = layouts.remove(&name).unwrap_or_default();
         let mut rows = vec![vec![String::new(); shown_columns]; shown_rows];
-        place_cells(&range, &mut rows, display_cell);
+        place_cells(&range, &mut rows, |row, column, cell| {
+            let code = u32::try_from(row)
+                .ok()
+                .zip(u32::try_from(column).ok())
+                .and_then(|(row, column)| layout.style_of(row, column))
+                .and_then(|style| style.number_format.as_deref());
+            display_value(cell, code, locale)
+        });
         if let Some(formulas) = &formulas {
-            place_cells(formulas, &mut rows, |formula| {
+            place_cells(formulas, &mut rows, |_, _, formula| {
                 if formula.is_empty() {
                     String::new()
                 } else {
@@ -105,7 +135,7 @@ fn read_binary_workbook(bytes: &[u8], limits: &Limits) -> Result<Vec<Sheet>, Off
             rows,
             total_rows,
             total_columns,
-            layout: SheetLayout::default(),
+            layout,
         });
     }
 
@@ -128,7 +158,7 @@ fn range_extent<T: calamine::CellType>(range: &calamine::Range<T>) -> (usize, us
 fn place_cells<T: calamine::CellType>(
     range: &calamine::Range<T>,
     rows: &mut [Vec<String>],
-    display: impl Fn(&T) -> String,
+    display: impl Fn(usize, usize, &T) -> String,
 ) {
     let (start_row, start_column) = range
         .start()
@@ -141,9 +171,30 @@ fn place_cells<T: calamine::CellType>(
             if let Some(target) = row.get_mut(start_column + column_offset)
                 && target.is_empty()
             {
-                *target = display(cell);
+                *target = display(start_row + row_offset, start_column + column_offset, cell);
             }
         }
+    }
+}
+
+/// The text a cell shows with its number format: numbers and dates as the code writes them,
+/// text through the code's text section.
+fn display_value(cell: &Data, code: Option<&str>, locale: NumberLocale) -> String {
+    let Some(code) = code else {
+        return match cell {
+            Data::Float(number) => general_number(*number, locale),
+            #[allow(clippy::cast_precision_loss)]
+            Data::Int(number) => general_number(*number as f64, locale),
+            other => display_cell(other),
+        };
+    };
+    match cell {
+        Data::Float(number) => format_number(*number, code, locale).text,
+        #[allow(clippy::cast_precision_loss)]
+        Data::Int(number) => format_number(*number as f64, code, locale).text,
+        Data::DateTime(moment) => format_number(moment.as_f64(), code, locale).text,
+        Data::String(text) => format_text(text, code),
+        other => display_cell(other),
     }
 }
 
@@ -349,5 +400,67 @@ mod tests {
         };
         let error = read_workbook(b"a,b,c", Some("a.csv"), &limits).unwrap_err();
         assert!(matches!(error, OfficeError::TooLarge { .. }));
+    }
+
+    #[test]
+    fn shows_the_numbers_of_an_xlsx_with_their_formats_and_reads_their_looks() {
+        use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder};
+        let mut workbook = rust_xlsxwriter::Workbook::new();
+        let sheet = workbook.add_worksheet().set_name("Conti").unwrap();
+        let euro = Format::new()
+            .set_num_format("#,##0.00 \"€\"")
+            .set_bold()
+            .set_background_color(Color::RGB(0x00FF_FF00))
+            .set_border(FormatBorder::Thin)
+            .set_align(FormatAlign::Center);
+        let date = Format::new().set_num_format("dd/mm/yyyy");
+        let month = Format::new().set_num_format("mmmm yyyy");
+        let percent = Format::new().set_num_format("0.0%");
+        let text = Format::new().set_num_format("\"Rif. \"@");
+        sheet.write_with_format(0, 0, 1_200.5, &euro).unwrap();
+        sheet.write_with_format(0, 1, 46_322, &date).unwrap();
+        sheet.write_with_format(0, 2, 46_322, &month).unwrap();
+        sheet.write_with_format(0, 3, 0.125, &percent).unwrap();
+        sheet.write_with_format(0, 4, "A12", &text).unwrap();
+        sheet.write(0, 5, 3.5).unwrap();
+        sheet
+            .merge_range(2, 0, 3, 2, "unite", &Format::new())
+            .unwrap();
+        sheet.set_row_height(2, 30).unwrap();
+        let bytes = workbook.save_to_buffer().unwrap();
+
+        let italian =
+            read_workbook_in(&bytes, None, &Limits::default(), NumberLocale::Italian).unwrap();
+        let conti = &italian.sheets[0];
+        assert_eq!(
+            conti.rows[0],
+            vec![
+                "1.200,50 €",
+                "27/10/2026",
+                "ottobre 2026",
+                "12,5%",
+                "Rif. A12",
+                "3,5"
+            ]
+        );
+        let english = read_workbook(&bytes, None, &Limits::default()).unwrap();
+        assert_eq!(english.sheets[0].rows[0][0], "1,200.50 €");
+        assert_eq!(english.sheets[0].rows[0][2], "October 2026");
+
+        let style = conti.layout.style_of(0, 0).unwrap();
+        assert!(style.font.bold);
+        assert_eq!(style.fill.as_deref(), Some("FFFF00"));
+        assert!(!style.borders.is_empty());
+        assert_eq!(style.horizontal, Some(crate::HorizontalAlignment::Center));
+        assert_eq!(
+            conti.layout.merges,
+            vec![crate::CellRange {
+                first_row: 2,
+                first_column: 0,
+                last_row: 3,
+                last_column: 2
+            }]
+        );
+        assert_eq!(conti.layout.row_heights.get(&2), Some(&600));
     }
 }

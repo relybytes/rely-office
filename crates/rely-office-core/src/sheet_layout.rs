@@ -4,23 +4,85 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
-//! How the sheets of an xlsx are printed: orientation, margins, column widths, header and footer,
-//! grid lines and the default font. The worksheet parts are read as a stream that skips the cells,
-//! which the spreadsheet reader has already read.
+//! How the sheets of an xlsx are printed and how their cells look: orientation, margins, column
+//! widths, row heights, header and footer, grid lines, the default font, the format of each cell
+//! and the merged cells. The worksheet parts are read as a stream that skips the values, which
+//! the spreadsheet reader has already read.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
 use crate::archive::{open_package, read_text_member};
 use crate::relationships::{main_part_path, read_relationships};
+use crate::sheet_styles::{CellStyle, cell_styles, default_theme, theme_colours};
 use crate::xml_text::attribute_value;
 use crate::{Limits, OfficeError};
 
 const WORKBOOK_PART: &str = "xl/workbook.xml";
 /// The most columns given a width; Excel's own limit is 16,384.
 const MAX_WIDTH_COLUMNS: u32 = 16_384;
+/// Excel's grid.
+const MAX_ROWS: u32 = 1_048_576;
+/// The most cells of a sheet whose format is kept, and the most merges.
+const MAX_STYLED_CELLS: usize = 1_000_000;
+const MAX_MERGES: usize = 100_000;
+/// Excel's tallest row, 409 points, in twentieths.
+const MAX_ROW_HEIGHT: u32 = 8_180;
+
+/// A rectangle of cells, rows and columns counted from 0, both ends included.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
+pub struct CellRange {
+    pub first_row: u32,
+    pub first_column: u32,
+    pub last_row: u32,
+    pub last_column: u32,
+}
+
+impl CellRange {
+    /// A range in A1 notation, `B2` or `A1:C3`; `None` for anything else.
+    #[must_use]
+    pub fn parse(reference: &str) -> Option<Self> {
+        let (first, last) = reference.split_once(':').unwrap_or((reference, reference));
+        let (first_row, first_column) = parse_cell(first)?;
+        let (last_row, last_column) = parse_cell(last)?;
+        Some(Self {
+            first_row: first_row.min(last_row),
+            first_column: first_column.min(last_column),
+            last_row: first_row.max(last_row),
+            last_column: first_column.max(last_column),
+        })
+    }
+
+    /// Whether the range holds the cell.
+    #[must_use]
+    pub fn contains(&self, row: u32, column: u32) -> bool {
+        (self.first_row..=self.last_row).contains(&row)
+            && (self.first_column..=self.last_column).contains(&column)
+    }
+}
+
+/// A cell in A1 notation as its row and column from 0, `$` signs allowed.
+fn parse_cell(reference: &str) -> Option<(u32, u32)> {
+    let reference = reference.trim().replace('$', "");
+    let split = reference.find(|character: char| character.is_ascii_digit())?;
+    let (letters, digits) = reference.split_at(split);
+    if letters.is_empty() || letters.len() > 3 || !letters.chars().all(|c| c.is_ascii_alphabetic())
+    {
+        return None;
+    }
+    let column = letters.chars().fold(0u32, |column, letter| {
+        column * 26 + u32::from(letter.to_ascii_uppercase() as u8 - b'A') + 1
+    }) - 1;
+    let row = digits.parse::<u32>().ok()?.checked_sub(1)?;
+    (row < MAX_ROWS && column < MAX_WIDTH_COLUMNS).then_some((row, column))
+}
 
 /// The print settings of a sheet; unset means the defaults of the suite that prints it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -41,6 +103,62 @@ pub struct SheetLayout {
     /// The family and size, in tenths of a point, of the workbook's default font.
     pub font_family: Option<String>,
     pub font_size_tenths: Option<u32>,
+    /// The cell formats of the workbook, which the cell, row and column formats index.
+    pub styles: Vec<CellStyle>,
+    /// The format of each cell that names one other than the first, by row and column from 0.
+    pub cell_styles: HashMap<(u32, u32), u32>,
+    /// The format of the rows that give one to their cells.
+    pub row_styles: BTreeMap<u32, u32>,
+    /// The format of columns that give one to their cells: first column, last column, format.
+    pub column_styles: Vec<(u32, u32, u32)>,
+    pub merges: Vec<CellRange>,
+    /// The height of each row that sets one, in twentieths of a point; 0 for a hidden row.
+    pub row_heights: BTreeMap<u32, u32>,
+    /// The height of the other rows, in twentieths of a point.
+    pub default_row_height: Option<u32>,
+}
+
+impl SheetLayout {
+    /// The look of a cell: its own format, else its row's, else its column's.
+    #[must_use]
+    pub fn style_of(&self, row: u32, column: u32) -> Option<&CellStyle> {
+        let index = self
+            .cell_styles
+            .get(&(row, column))
+            .or_else(|| self.row_styles.get(&row))
+            .or_else(|| {
+                self.column_styles
+                    .iter()
+                    .find(|(first, last, _)| (*first..=*last).contains(&column))
+                    .map(|(_, _, style)| style)
+            })?;
+        self.styles.get(usize::try_from(*index).ok()?)
+    }
+
+    /// The merged range that starts at a cell, and whether a merge covers a cell without
+    /// starting there.
+    #[must_use]
+    pub fn merge_at(&self, row: u32, column: u32) -> MergePlace {
+        for merge in &self.merges {
+            if merge.first_row == row && merge.first_column == column {
+                return MergePlace::Start(*merge);
+            }
+            if merge.contains(row, column) {
+                return MergePlace::Covered;
+            }
+        }
+        MergePlace::None
+    }
+}
+
+/// Where a cell stands among the merged ranges of its sheet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergePlace {
+    None,
+    /// The cell is the top-left one of the range and shows its content.
+    Start(CellRange),
+    /// The cell is inside a range another cell starts.
+    Covered,
 }
 
 /// The layout of every sheet of an xlsx, by sheet name; a package it cannot read gives none, as
@@ -60,13 +178,29 @@ fn read_layouts(
         return Ok(HashMap::new());
     };
     let relationships = read_relationships(&mut package, &workbook_part, limits)?;
-    let (font_family, font_size_tenths) = relationships
-        .iter()
-        .find(|relationship| !relationship.external && relationship.is_kind("styles"))
-        .map(|relationship| read_text_member(&mut package, &relationship.target, limits))
+    let part = |kind: &str| {
+        relationships
+            .iter()
+            .find(|relationship| !relationship.external && relationship.is_kind(kind))
+            .map(|relationship| relationship.target.clone())
+    };
+    let styles_xml = part("styles")
+        .map(|target| read_text_member(&mut package, &target, limits))
         .transpose()?
-        .flatten()
-        .map(|styles| default_font(&styles))
+        .flatten();
+    let theme = part("theme")
+        .and_then(|target| {
+            read_text_member(&mut package, &target, limits)
+                .ok()
+                .flatten()
+        })
+        .and_then(|xml| theme_colours(&xml))
+        .unwrap_or_else(default_theme);
+    let (font_family, font_size_tenths) =
+        styles_xml.as_deref().map(default_font).unwrap_or_default();
+    let styles = styles_xml
+        .as_deref()
+        .map(|xml| cell_styles(xml, &theme))
         .unwrap_or_default();
 
     let mut layouts = HashMap::new();
@@ -83,6 +217,7 @@ fn read_layouts(
         let mut layout = sheet_layout(&sheet)?;
         layout.font_family.clone_from(&font_family);
         layout.font_size_tenths = font_size_tenths;
+        layout.styles.clone_from(&styles);
         layouts.insert(name, layout);
     }
     Ok(layouts)
@@ -121,8 +256,19 @@ fn sheet_layout(sheet: &str) -> Result<SheetLayout, OfficeError> {
                 "sheetFormatPr" => {
                     layout.default_column_width = attribute(&element, "defaultColWidth")
                         .and_then(|width| character_width(&width));
+                    layout.default_row_height = attribute(&element, "defaultRowHeight")
+                        .and_then(|height| row_height(&height));
                 }
                 "col" => apply_column(&mut layout, &element),
+                "row" => apply_row(&mut layout, &element),
+                "c" => apply_cell(&mut layout, &element),
+                "mergeCell" if layout.merges.len() < MAX_MERGES => {
+                    if let Some(range) = attribute(&element, "ref")
+                        .and_then(|reference| CellRange::parse(&reference))
+                    {
+                        layout.merges.push(range);
+                    }
+                }
                 "pageMargins" => layout.margins_mils = page_margins(&element),
                 "pageSetup" => {
                     layout.landscape =
@@ -185,6 +331,11 @@ fn apply_column(layout: &mut SheetLayout, element: &BytesStart<'_>) {
         return;
     }
     let hidden = attribute(element, "hidden").is_some_and(|value| value == "1" || value == "true");
+    if let Some(style) = attribute(element, "style").and_then(|style| style.parse::<u32>().ok())
+        && style != 0
+    {
+        layout.column_styles.push((min - 1, max - 1, style));
+    }
     let width = if hidden {
         Some(0)
     } else {
@@ -198,6 +349,55 @@ fn apply_column(layout: &mut SheetLayout, element: &BytesStart<'_>) {
     for column in usize::try_from(min).unwrap_or(1)..=last {
         layout.column_widths[column - 1] = width;
     }
+}
+
+fn apply_row(layout: &mut SheetLayout, element: &BytesStart<'_>) {
+    let Some(row) = attribute(element, "r")
+        .and_then(|row| row.parse::<u32>().ok())
+        .and_then(|row| row.checked_sub(1))
+        .filter(|row| *row < MAX_ROWS)
+    else {
+        return;
+    };
+    let is_on =
+        |name: &str| attribute(element, name).is_some_and(|value| value == "1" || value == "true");
+    if is_on("hidden") {
+        layout.row_heights.insert(row, 0);
+    } else if is_on("customHeight")
+        && let Some(height) = attribute(element, "ht").and_then(|height| row_height(&height))
+    {
+        layout.row_heights.insert(row, height);
+    }
+    if is_on("customFormat")
+        && let Some(style) = attribute(element, "s").and_then(|style| style.parse::<u32>().ok())
+    {
+        layout.row_styles.insert(row, style);
+    }
+}
+
+fn apply_cell(layout: &mut SheetLayout, element: &BytesStart<'_>) {
+    if layout.cell_styles.len() >= MAX_STYLED_CELLS {
+        return;
+    }
+    let (Some(style), Some((row, column))) = (
+        attribute(element, "s").and_then(|style| style.parse::<u32>().ok()),
+        attribute(element, "r").and_then(|reference| parse_cell(&reference)),
+    ) else {
+        return;
+    };
+    if style != 0 || layout.row_styles.contains_key(&row) {
+        layout.cell_styles.insert((row, column), style);
+    }
+}
+
+/// A row height in points as twentieths of a point.
+fn row_height(height: &str) -> Option<u32> {
+    let points = height.parse::<f64>().ok()?;
+    if !(0.0..=409.5).contains(&points) {
+        return None;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Some(((points * 20.0).round() as u32).min(MAX_ROW_HEIGHT))
 }
 
 fn page_margins(element: &BytesStart<'_>) -> Option<[u32; 6]> {
@@ -347,5 +547,115 @@ mod tests {
             sheet_entries(workbook).unwrap(),
             vec![("Vendite".to_owned(), "rId3".to_owned())]
         );
+    }
+
+    #[test]
+    fn reads_row_heights_cell_formats_and_merges() {
+        let layout = sheet_layout(concat!(
+            r#"<worksheet><sheetFormatPr defaultRowHeight="15"/><cols><col min="2" max="3" width="9" style="7"/></cols>"#,
+            r#"<sheetData><row r="1" ht="30" customHeight="1"><c r="A1" s="2"><v>1</v></c><c r="B1" s="0"/></row>"#,
+            r#"<row r="2" hidden="1" s="5" customFormat="1"><c r="A2" s="0"/><c r="C2"/></row>"#,
+            r#"<row r="3" ht="12" s="9"><c r="$D$3" s="4"/><c s="3"/><c r="ZZZZ1" s="3"/></row>"#,
+            r#"<row r="x" ht="99" customHeight="1"/><row r="4" ht="9999" customHeight="1"/></sheetData>"#,
+            r#"<mergeCells count="3"><mergeCell ref="A1:C1"/><mergeCell ref="E5:D4"/><mergeCell ref="bad"/></mergeCells>"#,
+            "</worksheet>"
+        ))
+        .unwrap();
+        assert_eq!(layout.default_row_height, Some(300));
+        assert_eq!(
+            layout
+                .row_heights
+                .iter()
+                .map(|(row, height)| (*row, *height))
+                .collect::<Vec<_>>(),
+            vec![(0, 600), (1, 0)],
+            "a row that is hidden is 0 tall, a height past Excel's is refused"
+        );
+        assert_eq!(layout.row_styles.get(&1), Some(&5));
+        assert_eq!(
+            layout.row_styles.get(&2),
+            None,
+            "a row style counts only with customFormat"
+        );
+        assert_eq!(layout.cell_styles.get(&(0, 0)), Some(&2));
+        assert_eq!(layout.cell_styles.get(&(0, 1)), None);
+        assert_eq!(
+            layout.cell_styles.get(&(1, 0)),
+            Some(&0),
+            "a cell back to the default in a styled row"
+        );
+        assert_eq!(layout.cell_styles.get(&(2, 3)), Some(&4));
+        assert_eq!(layout.cell_styles.len(), 3);
+        assert_eq!(layout.column_styles, vec![(1, 2, 7)]);
+        assert_eq!(
+            layout.merges,
+            vec![
+                CellRange {
+                    first_row: 0,
+                    first_column: 0,
+                    last_row: 0,
+                    last_column: 2
+                },
+                CellRange {
+                    first_row: 3,
+                    first_column: 3,
+                    last_row: 4,
+                    last_column: 4
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn finds_the_style_and_the_merge_of_a_cell() {
+        let mut layout = SheetLayout {
+            styles: (0..10)
+                .map(|index| CellStyle {
+                    number_format: Some(index.to_string()),
+                    ..CellStyle::default()
+                })
+                .collect(),
+            ..SheetLayout::default()
+        };
+        layout.cell_styles.insert((0, 0), 2);
+        layout.row_styles.insert(1, 5);
+        layout.column_styles.push((1, 2, 7));
+        layout.cell_styles.insert((5, 5), 99);
+        let format = |row, column| {
+            layout
+                .style_of(row, column)
+                .and_then(|style| style.number_format.clone())
+        };
+        assert_eq!(format(0, 0).as_deref(), Some("2"));
+        assert_eq!(format(1, 4).as_deref(), Some("5"));
+        assert_eq!(format(3, 2).as_deref(), Some("7"));
+        assert_eq!(format(3, 3), None);
+        assert_eq!(format(5, 5), None, "an index past the formats");
+
+        layout.merges.push(CellRange::parse("B2:C3").unwrap());
+        assert_eq!(
+            layout.merge_at(1, 1),
+            MergePlace::Start(CellRange {
+                first_row: 1,
+                first_column: 1,
+                last_row: 2,
+                last_column: 2
+            })
+        );
+        assert_eq!(layout.merge_at(2, 2), MergePlace::Covered);
+        assert_eq!(layout.merge_at(0, 0), MergePlace::None);
+    }
+
+    #[test]
+    fn parses_cell_references() {
+        assert_eq!(parse_cell("A1"), Some((0, 0)));
+        assert_eq!(parse_cell("$AB$12"), Some((11, 27)));
+        assert_eq!(parse_cell("XFD1048576"), Some((1_048_575, 16_383)));
+        assert_eq!(parse_cell("XFE1"), None);
+        assert_eq!(parse_cell("A0"), None);
+        assert_eq!(parse_cell("1A"), None);
+        assert_eq!(parse_cell("A"), None);
+        assert_eq!(CellRange::parse("C3"), CellRange::parse("C3:C3"));
+        assert_eq!(CellRange::parse("A1:"), None);
     }
 }

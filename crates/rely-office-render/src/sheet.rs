@@ -5,14 +5,20 @@
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
 //! The sheets of a workbook printed as a spreadsheet prints them: the page, margins, column
-//! widths, header, footer and grid lines of each sheet, the used range from A1, and the columns
-//! that do not fit across a page continued on the next pages, all rows first.
+//! widths, row heights, header, footer and grid lines of each sheet, the used range from A1 with
+//! each cell's font, fill, borders and alignment and the merged cells, and the columns that do
+//! not fit across a page continued on the next pages, all rows first.
 //!
-//! A cell never wraps: text longer than its column runs over into the next one, as on screen.
+//! A cell wraps only when its format says so: other text longer than its column runs over into
+//! the next one, as on screen.
 
+use std::collections::HashMap;
 use std::fmt::Write;
 
-use rely_office_core::{Sheet, SheetLayout, Workbook};
+use rely_office_core::{
+    Border, BorderStyle, CellRange, CellStyle, HorizontalAlignment, Sheet, SheetLayout,
+    VerticalAlignment, Workbook,
+};
 
 use crate::fonts::body_fonts;
 use crate::markup::{font_list, points, string_literal};
@@ -30,6 +36,7 @@ const DEFAULT_FONT_POINTS: f64 = 11.0;
 /// A row of the default height is this much taller than its font.
 const ROW_HEIGHT_PER_FONT_POINT: f64 = 1.28;
 const CELL_INSET_X_POINTS: f64 = 2.0;
+const GRID_STROKE: &str = "0.4pt + luma(190)";
 
 pub(crate) fn workbook_source(workbook: &Workbook) -> String {
     let mut source = String::new();
@@ -104,19 +111,46 @@ fn write_sheet(source: &mut String, sheet: &Sheet) {
         "#set text(font: {fonts}, size: {}, lang: \"it\", hyphenate: false, top-edge: \"ascender\", bottom-edge: \"descender\")",
         points(font_size)
     );
+    // The lines of a wrapped cell sit as close as a spreadsheet sets them.
+    source.push_str("#set par(leading: 0.1em)\n");
 
     write_tables(source, sheet, width - left - right, font_size);
 }
 
-/// The cells of a sheet as tables, one group of columns that fits the page after the other.
+/// What a cell of a printed group of columns is: drawn alone, the first cell of the part of a
+/// merged range the group shows, or covered by such a cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Placement {
+    Single,
+    /// Spans `columns` and `rows` and shows the content of the merge's own first cell.
+    Span {
+        columns: usize,
+        rows: usize,
+        origin: (usize, usize),
+    },
+    Covered,
+}
+
+/// The cells of a sheet as tables, one group of columns that fits the page after the other;
+/// hidden rows are left out.
 fn write_tables(source: &mut String, sheet: &Sheet, text_width: f64, font_size: f64) {
+    let layout = &sheet.layout;
     let widths = column_widths(sheet);
     let inset_y = (font_size * (ROW_HEIGHT_PER_FONT_POINT - 1.15) / 2.0).max(0.0);
-    let stroke = if sheet.layout.grid_lines {
-        "0.4pt + luma(190)"
+    let stroke = if layout.grid_lines {
+        GRID_STROKE
     } else {
         "none"
     };
+    let visible_rows: Vec<usize> = (0..sheet.rows.len())
+        .filter(|row| {
+            u32::try_from(*row)
+                .ok()
+                .and_then(|row| layout.row_heights.get(&row))
+                != Some(&0)
+        })
+        .collect();
+    let merges = merged_cells(layout, sheet.rows.len(), widths.len());
     for (chunk_index, columns) in column_chunks(&widths, text_width).into_iter().enumerate() {
         if chunk_index > 0 {
             source.push_str("#pagebreak()\n");
@@ -125,30 +159,261 @@ fn write_tables(source: &mut String, sheet: &Sheet, text_width: f64, font_size: 
         for &column in &columns {
             let _ = write!(source, "{}, ", points(widths[column]));
         }
+        source.push_str("), rows: (");
+        for &row in &visible_rows {
+            let height = u32::try_from(row)
+                .ok()
+                .and_then(|row| layout.row_heights.get(&row))
+                .map_or_else(
+                    || "auto".to_owned(),
+                    |height| points(f64::from(*height) / 20.0),
+                );
+            let _ = write!(source, "{height}, ");
+        }
         let _ = write!(
             source,
-            "), stroke: {stroke}, inset: (x: {}, y: {}),",
+            "), stroke: {stroke}, align: bottom, inset: (x: {}, y: {}),",
             points(CELL_INSET_X_POINTS),
             points(inset_y)
         );
-        for row in &sheet.rows {
-            for &column in &columns {
-                let value = &row[column];
-                if value.is_empty() {
-                    source.push_str(" [],");
-                } else if looks_numeric(value) {
-                    let _ = write!(
-                        source,
-                        " table.cell(align: right, box({})),",
-                        string_literal(value)
-                    );
-                } else {
-                    let _ = write!(source, " box({}),", string_literal(value));
-                }
+        for (row_position, &row) in visible_rows.iter().enumerate() {
+            for (column_position, &column) in columns.iter().enumerate() {
+                let placement = placement(
+                    &merges,
+                    (row, column),
+                    &visible_rows[row_position..],
+                    &columns[column_position..],
+                    &visible_rows[..row_position],
+                    &columns[..column_position],
+                );
+                let (origin, spans) = match placement {
+                    Placement::Covered => continue,
+                    Placement::Single => ((row, column), None),
+                    Placement::Span {
+                        columns,
+                        rows,
+                        origin,
+                    } => (origin, Some((columns, rows))),
+                };
+                let value = sheet
+                    .rows
+                    .get(origin.0)
+                    .and_then(|cells| cells.get(origin.1))
+                    .map_or("", String::as_str);
+                let style = u32::try_from(origin.0)
+                    .ok()
+                    .zip(u32::try_from(origin.1).ok())
+                    .and_then(|(row, column)| layout.style_of(row, column));
+                source.push(' ');
+                source.push_str(&cell_markup(value, style, spans));
+                source.push(',');
             }
         }
         source.push_str(")\n");
     }
+}
+
+/// The merged range each shown cell belongs to, by row and column.
+fn merged_cells(
+    layout: &SheetLayout,
+    rows: usize,
+    columns: usize,
+) -> HashMap<(usize, usize), CellRange> {
+    let mut cells = HashMap::new();
+    for merge in &layout.merges {
+        let (Ok(first_row), Ok(first_column)) = (
+            usize::try_from(merge.first_row),
+            usize::try_from(merge.first_column),
+        ) else {
+            continue;
+        };
+        let last_row = usize::try_from(merge.last_row)
+            .unwrap_or(usize::MAX)
+            .min(rows.saturating_sub(1));
+        let last_column = usize::try_from(merge.last_column)
+            .unwrap_or(usize::MAX)
+            .min(columns.saturating_sub(1));
+        if first_row >= rows || first_column >= columns {
+            continue;
+        }
+        for row in first_row..=last_row {
+            for column in first_column..=last_column {
+                cells.entry((row, column)).or_insert(*merge);
+            }
+        }
+    }
+    cells
+}
+
+/// How a cell is drawn in a group of columns: a merged range starts at its first shown row and
+/// column there, which shows the merge's content when the merge's own first cell is shown.
+fn placement(
+    merges: &HashMap<(usize, usize), CellRange>,
+    cell: (usize, usize),
+    rows_after: &[usize],
+    columns_after: &[usize],
+    rows_before: &[usize],
+    columns_before: &[usize],
+) -> Placement {
+    let Some(merge) = merges.get(&cell) else {
+        return Placement::Single;
+    };
+    let inside_rows = |row: &usize| {
+        u32::try_from(*row).is_ok_and(|row| (merge.first_row..=merge.last_row).contains(&row))
+    };
+    let inside_columns = |column: &usize| {
+        u32::try_from(*column)
+            .is_ok_and(|column| (merge.first_column..=merge.last_column).contains(&column))
+    };
+    if rows_before.iter().any(inside_rows) || columns_before.iter().any(inside_columns) {
+        return Placement::Covered;
+    }
+    let rows = rows_after.iter().take_while(|row| inside_rows(row)).count();
+    let columns = columns_after
+        .iter()
+        .take_while(|column| inside_columns(column))
+        .count();
+    let origin = (
+        usize::try_from(merge.first_row).unwrap_or(0),
+        usize::try_from(merge.first_column).unwrap_or(0),
+    );
+    let origin_shown = origin == cell;
+    if rows <= 1 && columns <= 1 && origin_shown {
+        return Placement::Single;
+    }
+    Placement::Span {
+        columns: columns.max(1),
+        rows: rows.max(1),
+        origin: if origin_shown {
+            origin
+        } else {
+            (usize::MAX, usize::MAX)
+        },
+    }
+}
+
+/// One cell as table content: its text with the font of its format, its fill, borders and
+/// alignment; a number aligns right unless the format says otherwise.
+fn cell_markup(value: &str, style: Option<&CellStyle>, spans: Option<(usize, usize)>) -> String {
+    let mut arguments = Vec::new();
+    if let Some((columns, rows)) = spans {
+        if columns > 1 {
+            arguments.push(format!("colspan: {columns}"));
+        }
+        if rows > 1 {
+            arguments.push(format!("rowspan: {rows}"));
+        }
+    }
+    let horizontal = style.and_then(|style| style.horizontal).or_else(|| {
+        (!value.is_empty() && looks_numeric(value)).then_some(HorizontalAlignment::Right)
+    });
+    let vertical = style.and_then(|style| style.vertical);
+    let horizontal = horizontal.map(|alignment| match alignment {
+        HorizontalAlignment::Left | HorizontalAlignment::Justify => "left",
+        HorizontalAlignment::Center => "center",
+        HorizontalAlignment::Right => "right",
+    });
+    let vertical = vertical.map(|alignment| match alignment {
+        VerticalAlignment::Top => "top",
+        VerticalAlignment::Center => "horizon",
+        VerticalAlignment::Bottom => "bottom",
+    });
+    match (horizontal, vertical) {
+        (Some(horizontal), Some(vertical)) => {
+            arguments.push(format!("align: {horizontal} + {vertical}"));
+        }
+        (Some(horizontal), None) => arguments.push(format!("align: {horizontal} + bottom")),
+        (None, Some(vertical)) => arguments.push(format!("align: {vertical}")),
+        (None, None) => {}
+    }
+    if let Some(style) = style {
+        if let Some(fill) = &style.fill {
+            arguments.push(format!("fill: rgb(\"#{fill}\")"));
+        }
+        if !style.borders.is_empty() {
+            let mut stroke = String::from("stroke: (");
+            for (side, edge) in [
+                ("top", &style.borders.top),
+                ("right", &style.borders.right),
+                ("bottom", &style.borders.bottom),
+                ("left", &style.borders.left),
+            ] {
+                if let Some(edge) = edge {
+                    let _ = write!(stroke, "{side}: {}, ", border_stroke(edge));
+                }
+            }
+            stroke.push(')');
+            arguments.push(stroke);
+        }
+    }
+    let content = if value.is_empty() {
+        // An empty row keeps the height of a line, as a sheet keeps it.
+        "hide[0]".to_owned()
+    } else {
+        let mut text = string_literal(value);
+        if let Some(style) = style {
+            let font = &style.font;
+            let mut text_arguments = Vec::new();
+            if let Some(family) = &font.family {
+                text_arguments.push(format!("font: {}", font_list(&body_fonts(Some(family)))));
+            }
+            if let Some(size) = font.size_tenths {
+                text_arguments.push(format!("size: {}", points(f64::from(size) / 10.0)));
+            }
+            if font.bold {
+                text_arguments.push("weight: \"bold\"".to_owned());
+            }
+            if font.italic {
+                text_arguments.push("style: \"italic\"".to_owned());
+            }
+            if let Some(colour) = &font.colour {
+                text_arguments.push(format!("fill: rgb(\"#{colour}\")"));
+            }
+            if !text_arguments.is_empty() {
+                text = format!("text({}, {text})", text_arguments.join(", "));
+            }
+            if font.underline {
+                text = format!("underline({text})");
+            }
+            if font.strike {
+                text = format!("strike({text})");
+            }
+        }
+        if style.is_some_and(|style| style.wrap) {
+            text
+        } else {
+            format!("box({text})")
+        }
+    };
+    if arguments.is_empty() {
+        content
+    } else {
+        format!("table.cell({}, {content})", arguments.join(", "))
+    }
+}
+
+/// A Typst stroke for a cell border: hair and thin lines as Excel prints them, thicker ones by
+/// their width.
+fn border_stroke(border: &Border) -> String {
+    if border.style == BorderStyle::None {
+        return "none".to_owned();
+    }
+    let paint = border.colour.as_ref().map_or_else(
+        || "black".to_owned(),
+        |colour| format!("rgb(\"#{colour}\")"),
+    );
+    let width = f64::from(border.width_eighths) / 8.0
+        * if border.style == BorderStyle::Double {
+            2.0
+        } else {
+            1.0
+        };
+    let dash = match border.style {
+        BorderStyle::Dotted => ", dash: \"dotted\"",
+        BorderStyle::Dashed => ", dash: \"dashed\"",
+        _ => "",
+    };
+    format!("(paint: {paint}, thickness: {}{dash})", points(width))
 }
 
 /// The width of each column in points, from the sheet's layout; a hidden column is 0.
@@ -318,18 +583,21 @@ fn header_sections(codes: &str, sheet_name: &str) -> ([Vec<String>; 3], [Section
     (sections, fonts)
 }
 
-/// Whether a displayed value reads as a number, which a sheet aligns right.
+/// Whether a displayed value reads as a number or a date, which a sheet aligns right: digits
+/// with their separators, a sign, a currency or a percent.
 fn looks_numeric(value: &str) -> bool {
     let trimmed = value
         .trim()
-        .trim_end_matches('%')
-        .trim_start_matches(['€', '$', '-', '+']);
-    let trimmed = trimmed.trim();
+        .trim_matches(['%', '€', '$', '£', '-', '+', '(', ')', ' ', '\u{a0}']);
     !trimmed.is_empty()
         && trimmed.chars().any(|character| character.is_ascii_digit())
-        && trimmed
-            .chars()
-            .all(|character| character.is_ascii_digit() || matches!(character, '.' | ',' | ' '))
+        && trimmed.chars().all(|character| {
+            character.is_ascii_digit()
+                || matches!(
+                    character,
+                    '.' | ',' | ' ' | '/' | ':' | 'E' | '+' | '-' | '\u{a0}'
+                )
+        })
 }
 
 #[cfg(test)]
@@ -369,10 +637,12 @@ mod tests {
         assert!(
             source.contains(r#"font: ("Calibri", "Carlito", "Liberation Sans", ), size: 11pt"#)
         );
-        assert!(source.contains("#table(columns: (48pt, 48pt, ), stroke: none,"));
-        assert!(
-            source.contains(r#" box("Rossi \"srl\""), table.cell(align: right, box("1.234,50")),"#)
-        );
+        assert!(source.contains(
+            "#table(columns: (48pt, 48pt, ), rows: (auto, auto, ), stroke: none, align: bottom,"
+        ));
+        assert!(source.contains(
+            r#" box("Rossi \"srl\""), table.cell(align: right + bottom, box("1.234,50")),"#
+        ));
         assert!(source.contains("#pagebreak(weak: true)\n#set page("));
         assert_eq!(source.matches("#table(").count(), 1);
     }
@@ -390,6 +660,7 @@ mod tests {
             grid_lines: true,
             font_family: Some("Arial".to_owned()),
             font_size_tenths: Some(100),
+            ..SheetLayout::default()
         };
         let source = workbook_source(&Workbook {
             format: DocumentFormat::Xlsx,
@@ -405,8 +676,134 @@ mod tests {
         assert!(source.contains(r#"align(right, [#"&"])"#));
         assert!(source.contains("header-ascent: 24pt"));
         assert!(source.contains(r#"font: ("Arial", "Liberation Sans", "Carlito", ), size: 10pt"#));
-        assert!(source.contains("#table(columns: (105pt, 60pt, ), stroke: 0.4pt + luma(190),"));
+        assert!(source.contains(
+            "#table(columns: (105pt, 60pt, ), rows: (auto, ), stroke: 0.4pt + luma(190),"
+        ));
         assert!(!source.contains(r#""b""#), "a hidden column is not printed");
+    }
+
+    #[test]
+    fn prints_cell_formats_row_heights_and_merged_cells() {
+        use rely_office_core::{CellBorders, CellFont};
+        let mut printed = sheet(
+            "Conti",
+            &[
+                &["Titolo", "", "", "x"],
+                &["nascosta", "", "", ""],
+                &["a", "b", "c", "d"],
+                &["e", "f", "g", "h"],
+            ],
+        );
+        let border = Border {
+            style: BorderStyle::Double,
+            width_eighths: 4,
+            colour: Some("FF0000".to_owned()),
+        };
+        printed.layout.styles = vec![
+            CellStyle::default(),
+            CellStyle {
+                font: CellFont {
+                    family: Some("Arial".to_owned()),
+                    size_tenths: Some(140),
+                    colour: Some("FFFFFF".to_owned()),
+                    bold: true,
+                    italic: true,
+                    underline: true,
+                    strike: true,
+                },
+                fill: Some("4472C4".to_owned()),
+                borders: CellBorders {
+                    bottom: Some(border),
+                    left: Some(Border {
+                        style: BorderStyle::Dotted,
+                        width_eighths: 2,
+                        colour: None,
+                    }),
+                    top: Some(Border {
+                        style: BorderStyle::None,
+                        width_eighths: 4,
+                        colour: None,
+                    }),
+                    right: None,
+                },
+                horizontal: Some(HorizontalAlignment::Center),
+                vertical: Some(VerticalAlignment::Center),
+                wrap: true,
+                number_format: None,
+            },
+            CellStyle {
+                vertical: Some(VerticalAlignment::Top),
+                ..CellStyle::default()
+            },
+        ];
+        printed.layout.cell_styles.insert((0, 0), 1);
+        printed.layout.cell_styles.insert((2, 3), 2);
+        printed.layout.row_heights.insert(0, 600);
+        printed.layout.row_heights.insert(1, 0);
+        printed.layout.merges = vec![
+            CellRange::parse("A1:C1").unwrap(),
+            CellRange::parse("B3:C4").unwrap(),
+            CellRange::parse("Z99:Z100").unwrap(),
+        ];
+        let source = workbook_source(&Workbook {
+            format: DocumentFormat::Xlsx,
+            sheets: vec![printed],
+        });
+        assert!(source.contains("rows: (30pt, auto, auto, ),"), "{source}");
+        assert!(!source.contains("nascosta"), "a hidden row is left out");
+        assert!(source.contains(concat!(
+            r##"table.cell(colspan: 3, align: center + horizon, fill: rgb("#4472C4"), "##,
+            r##"stroke: (top: none, bottom: (paint: rgb("#FF0000"), thickness: 1pt), "##,
+            r##"left: (paint: black, thickness: 0.25pt, dash: "dotted"), ), "##,
+            r##"strike(underline(text(font: ("Arial", "Liberation Sans", "Carlito", ), size: 14pt, "##,
+            r##"weight: "bold", style: "italic", fill: rgb("#FFFFFF"), "Titolo"))))"##
+        )));
+        assert!(source.contains(r#"table.cell(colspan: 2, rowspan: 2, box("b"))"#));
+        assert!(!source.contains(r#""f""#), "a covered cell is not drawn");
+        assert!(source.contains(r#"table.cell(align: top, box("d"))"#));
+    }
+
+    #[test]
+    fn draws_the_part_of_a_merge_a_group_of_columns_shows() {
+        let mut layout = SheetLayout::default();
+        layout.merges.push(CellRange::parse("A1:B2").unwrap());
+        let merges = merged_cells(&layout, 3, 3);
+        assert_eq!(merges.len(), 4);
+        assert_eq!(
+            placement(&merges, (0, 0), &[0, 1, 2], &[0, 1, 2], &[], &[]),
+            Placement::Span {
+                columns: 2,
+                rows: 2,
+                origin: (0, 0)
+            }
+        );
+        assert_eq!(
+            placement(&merges, (0, 1), &[0, 1, 2], &[1, 2], &[], &[0]),
+            Placement::Covered
+        );
+        assert_eq!(
+            placement(&merges, (0, 1), &[0, 1, 2], &[1, 2], &[], &[]),
+            Placement::Span {
+                columns: 1,
+                rows: 2,
+                origin: (usize::MAX, usize::MAX)
+            },
+            "a group that starts inside the merge draws its part empty"
+        );
+        assert_eq!(
+            placement(&merges, (1, 0), &[1, 2], &[0, 1, 2], &[0], &[]),
+            Placement::Covered
+        );
+        assert_eq!(
+            placement(&merges, (2, 2), &[2], &[2], &[0, 1], &[0, 1]),
+            Placement::Single
+        );
+        layout.merges = vec![CellRange::parse("A1").unwrap()];
+        let single = merged_cells(&layout, 3, 3);
+        assert_eq!(
+            placement(&single, (0, 0), &[0, 1], &[0, 1], &[], &[]),
+            Placement::Single
+        );
     }
 
     #[test]
@@ -447,10 +844,24 @@ mod tests {
 
     #[test]
     fn tells_numbers_from_text() {
-        for number in ["12", "1.234,50", "-3,5", "€ 10", "45%", "1 000"] {
+        assert!(looks_numeric("1.200,50 €"));
+        assert!(looks_numeric("(1.200)"));
+        assert!(looks_numeric("27/10/2026"));
+        assert!(looks_numeric("12:30"));
+        assert!(looks_numeric("1,23E+04"));
+        assert!(!looks_numeric("Rif. 12"));
+        for number in [
+            "12",
+            "1.234,50",
+            "-3,5",
+            "€ 10",
+            "45%",
+            "1 000",
+            "2026-10-26",
+        ] {
             assert!(looks_numeric(number), "{number}");
         }
-        for text in ["", "abc", "12a", "-", "2026-10-26", "€"] {
+        for text in ["", "abc", "12a", "-", "€"] {
             assert!(!looks_numeric(text), "{text}");
         }
     }
