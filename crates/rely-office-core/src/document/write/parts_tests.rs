@@ -502,3 +502,120 @@ fn puts_the_reference_mark_at_the_start_of_a_note() {
         r#"<w:p><w:pPr><w:pStyle w:val="S"/></w:pPr><M/></w:p><w:tbl/>"#
     );
 }
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "three sections with their pages and headers"
+)]
+fn writes_each_section_with_its_page_and_headers() {
+    let header = |value: &str| vec![paragraph(vec![text(value, Vec::new())])];
+    let portrait = PageLayout::default();
+    let landscape = PageLayout {
+        width_twips: portrait.height_twips,
+        height_twips: portrait.width_twips,
+        columns: 2,
+        column_gap_twips: 500,
+        ..PageLayout::default()
+    };
+    let sections = vec![
+        Section {
+            end_block: 1,
+            layout: portrait.clone(),
+            headers_footers: HeadersFooters {
+                header: header("Verticale"),
+                first_header: Some(header("Copertina")),
+                ..HeadersFooters::default()
+            },
+            continuous: false,
+        },
+        Section {
+            end_block: 3,
+            layout: landscape.clone(),
+            headers_footers: HeadersFooters {
+                header: header("Orizzontale"),
+                footer: header("Piede"),
+                ..HeadersFooters::default()
+            },
+            continuous: false,
+        },
+        Section {
+            end_block: 4,
+            layout: landscape.clone(),
+            headers_footers: HeadersFooters::default(),
+            continuous: true,
+        },
+    ];
+    let original = DocumentTree {
+        blocks: vec![
+            paragraph(vec![text("Uno", Vec::new())]),
+            paragraph(vec![text("Due", Vec::new())]),
+            Block::Table {
+                rows: vec![TableRow {
+                    header: false,
+                    cells: vec![TableCell {
+                        col_span: 1,
+                        row_span: 1,
+                        blocks: vec![paragraph(vec![text("Cella", Vec::new())])],
+                        look: CellLook::default(),
+                    }],
+                }],
+                look: TableLook::default(),
+            },
+            paragraph(vec![text("Tre", Vec::new())]),
+        ],
+        layout: landscape.clone(),
+        sections,
+        ..DocumentTree::default()
+    };
+    let read = round_trip(&original);
+    assert_eq!(plain(&read.blocks)[..2], ["Uno", "Due"]);
+    assert_eq!(
+        read.blocks.len(),
+        4,
+        "the paragraphs that carry the sections read as none"
+    );
+    assert_eq!(read.sections.len(), 3);
+    assert_eq!(
+        read.sections
+            .iter()
+            .map(|section| section.end_block)
+            .collect::<Vec<_>>(),
+        [1, 3, 4]
+    );
+    assert_eq!(
+        (
+            read.sections[1].layout.width_twips,
+            read.sections[1].layout.columns
+        ),
+        (16_838, 2)
+    );
+    assert!(read.sections[2].continuous);
+    assert_eq!(
+        plain(&read.sections[0].headers_footers.header),
+        ["Verticale"]
+    );
+    assert_eq!(
+        plain(
+            read.sections[0]
+                .headers_footers
+                .first_header
+                .as_ref()
+                .unwrap()
+        ),
+        ["Copertina"]
+    );
+    assert_eq!(plain(&read.sections[1].headers_footers.footer), ["Piede"]);
+    let last = &read.sections[2].headers_footers;
+    assert_eq!(
+        (plain(&last.header), plain(&last.footer)),
+        (vec![String::new()], vec![String::new()]),
+        "written as empty parts, so the section before is not carried on"
+    );
+
+    let one = round_trip(&DocumentTree {
+        blocks: vec![paragraph(vec![text("Solo", Vec::new())])],
+        ..DocumentTree::default()
+    });
+    assert_eq!(one.sections, Vec::new());
+}

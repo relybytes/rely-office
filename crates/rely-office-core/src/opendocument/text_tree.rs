@@ -15,7 +15,7 @@ use crate::archive::{ZipPackage, open_package, read_member_bytes, read_text_memb
 use crate::chart::{odf_chart_picture, odf_object_part};
 use crate::document::{
     Block, Borders, CellLook, DocumentTree, HeadersFooters, ImportReport, Inline, LabelSuffix,
-    ListLabel, Mark, Media, Note, NoteKind, PageField, PageLayout, ParagraphLook, RunLook,
+    ListLabel, Mark, Media, Note, NoteKind, PageField, PageLayout, ParagraphLook, RunLook, Section,
     TableCell, TableLook, TableRow, bullet_label, number_label, plain_text, push_block,
     sniff_image_type,
 };
@@ -36,6 +36,10 @@ const PIXELS_PER_POINT: f64 = 96.0 / 72.0;
 const DEFAULT_TAB_TWIPS: u32 = 709;
 
 /// Read an odt as a document tree.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the parts, sections and master pages of an odt are read in order"
+)]
 pub(crate) fn read_odt_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree, OfficeError> {
     let mut package = open_package(bytes)?;
     let content = read_text_member(&mut package, "content.xml", limits)?.ok_or_else(|| {
@@ -69,33 +73,89 @@ pub(crate) fn read_odt_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTre
         outline: [0; MAX_LIST_LEVEL],
         floating: Vec::new(),
     };
+    // A paragraph or table whose style names a master page other than the current one starts
+    // a section on that page.
+    let master_of = |element: &Element| {
+        let style = match (element.namespace, element.name.as_str()) {
+            (TEXT, "p" | "h") => element.attribute(TEXT, "style-name"),
+            (TABLE, "table") => {
+                return element
+                    .attribute(TABLE, "style-name")
+                    .and_then(|name| {
+                        styles
+                            .chain(Scope::Body, "table", Some(name))
+                            .into_iter()
+                            .find_map(|style| style.attribute(STYLE, "master-page-name"))
+                    })
+                    .filter(|page| !page.is_empty())
+                    .map(str::to_owned);
+            }
+            _ => return None,
+        };
+        styles.master_page_of(Scope::Body, style)
+    };
+    let mut groups: Vec<(String, Vec<&Element>)> = Vec::new();
+    for element in body.elements() {
+        let named = master_of(element);
+        match (groups.last_mut(), named) {
+            (Some((current, _)), Some(named)) if *current != named => {
+                groups.push((named, vec![element]));
+            }
+            (Some((_, elements)), _) => elements.push(element),
+            (None, named) => groups.push((
+                named.unwrap_or_else(|| "Standard".to_owned()),
+                vec![element],
+            )),
+        }
+    }
+    if groups.is_empty() {
+        groups.push(("Standard".to_owned(), Vec::new()));
+    }
     let mut blocks = Vec::new();
-    converter.blocks(body, Scope::Body, &mut blocks);
-
-    let first_paragraph_style = body
-        .descendant(TEXT, "p")
-        .or_else(|| body.descendant(TEXT, "h"))
-        .and_then(|paragraph| paragraph.attribute(TEXT, "style-name"));
-    let master_name = styles
-        .master_page_of(Scope::Body, first_paragraph_style)
-        .unwrap_or_else(|| "Standard".to_owned());
-    let master = styles
-        .master_pages
-        .iter()
-        .find(|page| page.attribute(STYLE, "name") == Some(master_name.as_str()))
-        .or_else(|| styles.master_pages.first());
-    let headers_footers = master
-        .map(|master| converter.headers_footers(master))
-        .unwrap_or_default();
-    let layout = page_layout(&styles, master, &headers_footers);
+    let mut sections = Vec::new();
+    let mut by_master: HashMap<&str, HeadersFooters> = HashMap::new();
+    for (name, elements) in &groups {
+        converter.blocks_from(elements.iter().copied(), Scope::Body, &mut blocks);
+        let master = styles
+            .master_pages
+            .iter()
+            .find(|page| page.attribute(STYLE, "name") == Some(name.as_str()))
+            .or_else(|| styles.master_pages.first());
+        let headers_footers = if let Some(known) = by_master.get(name.as_str()) {
+            known.clone()
+        } else {
+            let read = master
+                .map(|master| converter.headers_footers(master))
+                .unwrap_or_default();
+            by_master.insert(name, read.clone());
+            read
+        };
+        let layout = page_layout(&styles, master, &headers_footers);
+        sections.push(Section {
+            end_block: blocks.len(),
+            layout,
+            headers_footers,
+            continuous: false,
+        });
+    }
+    let last = sections.last().cloned().unwrap_or_else(|| Section {
+        end_block: blocks.len(),
+        layout: PageLayout::default(),
+        headers_footers: HeadersFooters::default(),
+        continuous: false,
+    });
+    if sections.len() < 2 {
+        sections.clear();
+    }
 
     Ok(DocumentTree {
         blocks,
         media: converter.media,
         report: converter.report,
-        layout,
+        layout: last.layout,
         notes: converter.notes,
-        headers_footers,
+        headers_footers: last.headers_footers,
+        sections,
     })
 }
 
@@ -147,7 +207,16 @@ struct ListPlace {
 impl Converter<'_, '_> {
     /// The blocks of a container: the body, a section, a cell, a note, a header.
     fn blocks(&mut self, container: &Element, scope: Scope, blocks: &mut Vec<Block>) {
-        for element in container.elements() {
+        self.blocks_from(container.elements(), scope, blocks);
+    }
+
+    fn blocks_from<'e>(
+        &mut self,
+        elements: impl IntoIterator<Item = &'e Element>,
+        scope: Scope,
+        blocks: &mut Vec<Block>,
+    ) {
+        for element in elements {
             if self.remaining_chars == 0 {
                 self.report.truncated = true;
                 return;

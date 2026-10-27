@@ -555,3 +555,76 @@ fn draws_a_chart_as_an_image_in_the_colours_of_the_theme() {
         }
     );
 }
+
+#[test]
+fn reads_each_section_with_its_page_and_the_headers_it_inherits() {
+    let rels = rels_xml(&[
+        ("rId1", "header", "header1.xml", false),
+        ("rId2", "header", "header2.xml", false),
+        ("rId3", "footer", "footer1.xml", false),
+    ]);
+    let header = |text: &str| part("hdr", &format!("<w:p>{}</w:p>", run(text)));
+    let body = concat!(
+        r#"<w:p><w:r><w:t>Uno</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="rId1"/><w:footerReference w:type="default" r:id="rId3"/>"#,
+        r#"<w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr><w:r><w:t>Fine uno</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Due</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="rId2"/><w:titlePg/>"#,
+        r#"<w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/><w:cols w:num="2" w:space="567"/></w:sectPr></w:pPr></w:p>"#,
+        r#"<w:p><w:r><w:t>Tre</w:t></w:r></w:p>"#,
+        r#"<w:sectPr><w:type w:val="continuous"/><w:pgSz w:w="16838" w:h="11906"/></w:sectPr>"#
+    );
+    let read = tree_with(
+        body,
+        &[
+            (RELS_PART, rels.as_bytes()),
+            ("word/header1.xml", header("Prima").as_bytes()),
+            ("word/header2.xml", header("Seconda").as_bytes()),
+            ("word/footer1.xml", header("Piede").as_bytes()),
+        ],
+    );
+    assert_eq!(
+        plain(&read.blocks),
+        ["Uno", "Fine uno", "Due", "Tre"],
+        "the paragraph that only ends a section is left out"
+    );
+    let sections = &read.sections;
+    assert_eq!(sections.len(), 3);
+    assert_eq!(
+        sections
+            .iter()
+            .map(|section| section.end_block)
+            .collect::<Vec<_>>(),
+        [2, 3, 4]
+    );
+    assert_eq!(
+        (
+            sections[0].layout.width_twips,
+            sections[1].layout.width_twips
+        ),
+        (11_906, 16_838)
+    );
+    assert_eq!(sections[1].layout.columns, 2);
+    assert!(!sections[1].continuous && sections[2].continuous);
+    assert_eq!(plain(&sections[0].headers_footers.header), ["Prima"]);
+    assert_eq!(plain(&sections[1].headers_footers.header), ["Seconda"]);
+    assert_eq!(
+        plain(&sections[1].headers_footers.footer),
+        ["Piede"],
+        "inherited from the section before"
+    );
+    assert_eq!(
+        sections[1].headers_footers.first_header,
+        Some(Vec::new()),
+        "a first page of its own, empty"
+    );
+    assert_eq!(plain(&sections[2].headers_footers.header), ["Seconda"]);
+    assert_eq!(
+        read.layout, sections[2].layout,
+        "the last section is the document's page"
+    );
+    assert_eq!(read.headers_footers, sections[2].headers_footers);
+
+    let single = tree_with("<w:p/><w:sectPr/>", &[]);
+    assert!(single.sections.is_empty(), "one section needs no list");
+}

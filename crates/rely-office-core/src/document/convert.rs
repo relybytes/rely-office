@@ -269,8 +269,23 @@ impl<'a, 'p> Converter<'a, 'p> {
         blocks
     }
 
+    /// The blocks of some elements of the body: the elements of one section.
+    pub(super) fn convert_elements(&mut self, elements: &[&Element]) -> Vec<Block> {
+        let mut blocks = Vec::new();
+        self.append_children(elements.iter().copied(), &mut blocks);
+        blocks
+    }
+
     fn append_blocks(&mut self, container: &Element, blocks: &mut Vec<Block>) {
-        for element in container.elements() {
+        self.append_children(container.elements(), blocks);
+    }
+
+    fn append_children<'e>(
+        &mut self,
+        elements: impl IntoIterator<Item = &'e Element>,
+        blocks: &mut Vec<Block>,
+    ) {
+        for element in elements {
             if self.report.truncated {
                 return;
             }
@@ -356,6 +371,10 @@ impl<'a, 'p> Converter<'a, 'p> {
         }
         if blank && (scan.page_break_before || scan.page_break_after) {
             self.pending_page_break = true;
+            return;
+        }
+        // An empty paragraph that only ends a section holds no content of its own.
+        if blank && properties.is_some_and(|properties| properties.child(W, "sectPr").is_some()) {
             return;
         }
         look.page_break_before |=

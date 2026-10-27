@@ -14,7 +14,7 @@
 
 use rely_office_core::{
     Block, DocumentTree, HeadersFooters, ImportReport, Limits, Media, Note, OfficeError,
-    PageLayout, Sheet, detect_format, extract_text, read_document_tree, read_workbook,
+    PageLayout, Section, Sheet, detect_format, extract_text, read_document_tree, read_workbook,
     sniff_image_type, write_docx,
 };
 use serde::{Deserialize, Serialize};
@@ -146,6 +146,27 @@ struct DocumentTreeOutput<'a> {
     notes: &'a [Note],
     headers_footers: &'a HeadersFooters,
     page: PageOutput,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    sections: Vec<SectionOutput<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SectionOutput<'a> {
+    end_block: usize,
+    page: PageOutput,
+    headers_footers: &'a HeadersFooters,
+    continuous: bool,
+}
+
+impl PageOutput {
+    fn of(layout: &PageLayout) -> Self {
+        Self {
+            width_twips: layout.width_twips,
+            height_twips: layout.height_twips,
+            margins_twips: layout.margins_twips,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -263,6 +284,7 @@ pub fn document_tree(
         layout,
         notes,
         headers_footers,
+        sections,
     } = read_document_tree(bytes, &limits)?;
     let json = to_json(&DocumentTreeOutput {
         blocks: &blocks,
@@ -278,11 +300,16 @@ pub fn document_tree(
         report: &report,
         notes: &notes,
         headers_footers: &headers_footers,
-        page: PageOutput {
-            width_twips: layout.width_twips,
-            height_twips: layout.height_twips,
-            margins_twips: layout.margins_twips,
-        },
+        page: PageOutput::of(&layout),
+        sections: sections
+            .iter()
+            .map(|section| SectionOutput {
+                end_block: section.end_block,
+                page: PageOutput::of(&section.layout),
+                headers_footers: &section.headers_footers,
+                continuous: section.continuous,
+            })
+            .collect(),
     })?;
     Ok(DocumentTreeHandle { json, media })
 }
@@ -312,6 +339,30 @@ struct DocxInput {
     notes: Vec<Note>,
     #[serde(default)]
     headers_footers: HeadersFooters,
+    #[serde(default)]
+    sections: Vec<SectionInput>,
+}
+
+/// One section of a document to write: where it ends, its page and its headers and footers.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SectionInput {
+    end_block: usize,
+    page: PageInput,
+    #[serde(default)]
+    headers_footers: HeadersFooters,
+    #[serde(default)]
+    continuous: bool,
+}
+
+/// A page layout from its JSON, within the sizes Word accepts.
+fn layout_of(page: &PageInput) -> PageLayout {
+    PageLayout {
+        width_twips: page.width_twips.clamp(1_440, 31_680),
+        height_twips: page.height_twips.clamp(1_440, 31_680),
+        margins_twips: page.margins_twips.map(|margin| margin.min(15_840)),
+        ..PageLayout::default()
+    }
 }
 
 /// Write a docx from the JSON of a document tree, `{ blocks, page?, notes?, headersFooters? }`,
@@ -325,12 +376,21 @@ pub fn docx_from_json(tree_json: &str, media: Vec<Media>) -> Result<Vec<u8>, Fai
         code: "INVALID_TREE",
         message: format!("invalid document tree: {error}"),
     })?;
-    let mut layout = PageLayout::default();
-    if let Some(page) = input.page {
-        layout.width_twips = page.width_twips.clamp(1_440, 31_680);
-        layout.height_twips = page.height_twips.clamp(1_440, 31_680);
-        layout.margins_twips = page.margins_twips.map(|margin| margin.min(15_840));
-    }
+    let layout = input
+        .page
+        .as_ref()
+        .map_or_else(PageLayout::default, layout_of);
+    let blocks = input.blocks.len();
+    let sections = input
+        .sections
+        .into_iter()
+        .map(|section| Section {
+            end_block: section.end_block.min(blocks),
+            layout: layout_of(&section.page),
+            headers_footers: section.headers_footers,
+            continuous: section.continuous,
+        })
+        .collect();
     let tree = DocumentTree {
         blocks: input.blocks,
         media,
@@ -338,6 +398,7 @@ pub fn docx_from_json(tree_json: &str, media: Vec<Media>) -> Result<Vec<u8>, Fai
         layout,
         notes: input.notes,
         headers_footers: input.headers_footers,
+        sections,
     };
     Ok(write_docx(&tree)?)
 }

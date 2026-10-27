@@ -138,14 +138,14 @@ function render(bytes, fileName, options) {
 }
 
 function writeDocx(tree) {
-  const { blocks, page, media, notes, headersFooters } = tree ?? {};
+  const { blocks, page, media, notes, headersFooters, sections } = tree ?? {};
   const writer = new wasm.DocxWriter();
   try {
     for (const bytes of media ?? []) {
       writer.addMedia(toBytes(bytes));
     }
     return call(() =>
-      writer.write(JSON.stringify({ blocks: blocks ?? [], page, notes, headersFooters })),
+      writer.write(JSON.stringify({ blocks: blocks ?? [], page, notes, headersFooters, sections })),
     );
   } finally {
     writer.free();

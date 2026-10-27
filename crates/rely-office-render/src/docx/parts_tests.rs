@@ -77,7 +77,7 @@ fn draws_headers_and_footers_with_their_variants_and_page_numbers() {
         ..DocumentTree::default()
     };
     let source = source(&tree);
-    assert!(source.contains("columns: 2, header: context { let page-number = here().page(); if page-number == 1 { align(top, pad(top: 20pt, block(width: 100%)["), "{source}");
+    assert!(source.contains("left: 70.85pt), header: context { let page-number = here().page(); if page-number == locate(<rely-section-0>).page() { align(top, pad(top: 20pt, block(width: 100%)["), "{source}");
     assert!(source.contains("\"Copertina\""));
     assert!(source.contains("} else { align(top, pad(top: 20pt, block(width: 100%)[#text("));
     assert!(source.contains(", header-ascent: 0pt, footer: context { let page-number = here().page(); if calc.even(page-number) {"));
@@ -87,7 +87,9 @@ fn draws_headers_and_footers_with_their_variants_and_page_numbers() {
     );
     assert!(source.contains("[#context counter(page).display()]"));
     assert!(source.contains("[#context str(counter(page).final().first())]"));
-    assert!(source.contains("footer-descent: 0pt)\n#set columns(gutter: 20pt)\n"));
+    assert!(source.contains(
+        "footer-descent: 0pt)\n#metadata(none) <rely-section-0>\n#columns(2, gutter: 20pt)["
+    ));
     assert!(
         !source.contains("\"1\""),
         "a page field shows the page, not its last result"
@@ -95,7 +97,7 @@ fn draws_headers_and_footers_with_their_variants_and_page_numbers() {
 
     let bare = document_source(&DocumentTree::default(), true, &LINES).0;
     assert!(!bare.contains("header:"));
-    assert!(!bare.contains("#set columns("));
+    assert!(!bare.contains("#columns("));
 }
 
 #[test]
@@ -438,5 +440,103 @@ fn writes_the_fill_alignment_and_edges_of_table_cells() {
         !super::document_source(&plain_tree, true, &LINES)
             .0
             .contains("stroke: (top")
+    );
+}
+
+#[test]
+fn sets_the_page_of_each_section() {
+    let landscape = PageLayout {
+        width_twips: 16_838,
+        height_twips: 11_906,
+        ..PageLayout::default()
+    };
+    let wide = PageLayout {
+        columns: 2,
+        column_gap_twips: 400,
+        ..landscape.clone()
+    };
+    let header = vec![paragraph(vec![text("Orizzontale")])];
+    let tree = DocumentTree {
+        blocks: vec![
+            paragraph(vec![text("Uno")]),
+            paragraph(vec![text("Due")]),
+            paragraph(vec![text("Tre")]),
+        ],
+        layout: wide.clone(),
+        sections: vec![
+            Section {
+                end_block: 1,
+                layout: PageLayout::default(),
+                headers_footers: HeadersFooters::default(),
+                continuous: false,
+            },
+            Section {
+                end_block: 2,
+                layout: landscape.clone(),
+                headers_footers: HeadersFooters {
+                    header,
+                    first_header: Some(Vec::new()),
+                    ..HeadersFooters::default()
+                },
+                continuous: false,
+            },
+            Section {
+                end_block: 3,
+                layout: wide,
+                headers_footers: HeadersFooters::default(),
+                continuous: true,
+            },
+        ],
+        ..DocumentTree::default()
+    };
+    let written = source(&tree);
+    assert_eq!(
+        written.matches("#set page(").count(),
+        2,
+        "the continuous section goes on: {written}"
+    );
+    assert!(written.contains("#set page(width: 595.3pt, height: 841.9pt,"));
+    assert!(written.contains("#set page(width: 841.9pt, height: 595.3pt,"));
+    assert!(written.contains("if page-number == locate(<rely-section-1>).page() {"));
+    for section in 0..3 {
+        assert!(written.contains(&format!("#metadata(none) <rely-section-{section}>")));
+    }
+    assert!(
+        written.contains("#columns(2, gutter: 20pt)["),
+        "columns within the same page"
+    );
+    let first = written.find("\"Uno\"").unwrap();
+    let landscape_page = written.find("height: 595.3pt").unwrap();
+    assert!(first < landscape_page && landscape_page < written.find("\"Due\"").unwrap());
+
+    let restarting = DocumentTree {
+        sections: vec![
+            Section {
+                end_block: 1,
+                layout: landscape.clone(),
+                headers_footers: HeadersFooters {
+                    header: vec![paragraph(vec![text("Testa")])],
+                    ..HeadersFooters::default()
+                },
+                continuous: false,
+            },
+            Section {
+                end_block: 3,
+                layout: PageLayout::default(),
+                headers_footers: HeadersFooters::default(),
+                continuous: true,
+            },
+        ],
+        ..tree
+    };
+    let written = source(&restarting);
+    assert_eq!(
+        written.matches("#set page(").count(),
+        2,
+        "a continuous section on another page starts one"
+    );
+    assert!(
+        written.contains(", header: none, footer: none)"),
+        "no header carried on"
     );
 }

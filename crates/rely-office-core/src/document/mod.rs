@@ -56,6 +56,20 @@ pub struct DocumentTree {
     pub notes: Vec<Note>,
     /// The headers and footers of the last section.
     pub headers_footers: HeadersFooters,
+    /// Every section of a document of more than one, in order, the last one included; empty
+    /// for a document of one section, whose page is `layout`.
+    pub sections: Vec<Section>,
+}
+
+/// A run of blocks laid out on one page setup: a landscape table among portrait pages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    /// The index after the section's last block in [`DocumentTree::blocks`].
+    pub end_block: usize,
+    pub layout: PageLayout,
+    pub headers_footers: HeadersFooters,
+    /// The section goes on where the one before ends instead of on a new page.
+    pub continuous: bool,
 }
 
 /// A footnote or an endnote.
@@ -474,13 +488,28 @@ pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree,
         footnotes: side_part(&mut package, "footnotes"),
         endnotes: side_part(&mut package, "endnotes"),
     };
-    let section = body.child(Namespace::Word, "sectPr");
-    let section_parts = section
-        .map(|section| notes::section_parts(section, &relationships, &mut package, limits))
-        .unwrap_or_default();
-    let title_page = section
-        .and_then(|section| section.child(Namespace::Word, "titlePg"))
-        .is_some_and(styles::on_off);
+    // Each paragraph whose properties hold a `w:sectPr` ends a section; the body's own is the last.
+    let mut groups: Vec<(Vec<&Element>, Option<&Element>)> = Vec::new();
+    let mut current = Vec::new();
+    for element in body.elements() {
+        current.push(element);
+        if let Some(section) = element
+            .child(Namespace::Word, "pPr")
+            .and_then(|properties| properties.child(Namespace::Word, "sectPr"))
+            .filter(|_| element.is(Namespace::Word, "p"))
+        {
+            groups.push((std::mem::take(&mut current), Some(section)));
+        }
+    }
+    groups.push((current, body.child(Namespace::Word, "sectPr")));
+    let mut section_parts = Vec::new();
+    for (_, section) in &groups {
+        section_parts.push(
+            section
+                .map(|section| notes::section_parts(section, &relationships, &mut package, limits))
+                .unwrap_or_default(),
+        );
+    }
 
     let mut report = ImportReport {
         headers_and_footers: relationships
@@ -498,28 +527,89 @@ pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree,
         limits,
         &mut report,
     );
-    let blocks = converter.convert_blocks(body);
-    let headers_footers = headers_footers(
-        &mut converter,
-        &section_parts,
-        title_page,
-        settings.even_and_odd_headers,
-    );
-    let (media, notes) = converter.finish();
     let font = styles.body_font();
-    let mut layout = page_layout(body);
-    layout.font_family = font.family;
-    layout.font_size_half_points = font.size_half_points;
-    layout.default_tab_twips = settings.default_tab_twips;
+    let mut blocks = Vec::new();
+    let mut sections: Vec<Section> = Vec::new();
+    for ((elements, section), parts) in groups.iter().zip(&section_parts) {
+        blocks.extend(converter.convert_elements(elements));
+        let title_page = section
+            .and_then(|section| section.child(Namespace::Word, "titlePg"))
+            .is_some_and(styles::on_off);
+        let mut own = headers_footers(
+            &mut converter,
+            parts,
+            title_page,
+            settings.even_and_odd_headers,
+        );
+        // A section that names no header or footer of a kind keeps the one before it.
+        if let Some(previous) = sections.last() {
+            inherit(&mut own, &previous.headers_footers, parts);
+        }
+        let mut layout = page_layout(*section);
+        layout.font_family.clone_from(&font.family);
+        layout.font_size_half_points = font.size_half_points;
+        layout.default_tab_twips = settings.default_tab_twips;
+        sections.push(Section {
+            end_block: blocks.len(),
+            layout,
+            headers_footers: own,
+            continuous: section
+                .and_then(|section| section.child(Namespace::Word, "type"))
+                .and_then(|kind| kind.attribute(Namespace::Word, "val"))
+                == Some("continuous"),
+        });
+    }
+    let (media, notes) = converter.finish();
+    let last = sections.last().cloned().unwrap_or_else(|| Section {
+        end_block: blocks.len(),
+        layout: PageLayout::default(),
+        headers_footers: HeadersFooters::default(),
+        continuous: false,
+    });
+    if sections.len() < 2 {
+        sections.clear();
+    }
 
     Ok(DocumentTree {
         blocks,
         media,
         report,
-        layout,
+        layout: last.layout,
         notes,
-        headers_footers,
+        headers_footers: last.headers_footers,
+        sections,
     })
+}
+
+/// Take from the section before the headers and footers a section does not name itself.
+fn inherit(
+    own: &mut HeadersFooters,
+    previous: &HeadersFooters,
+    parts: &[(notes::Slot, notes::Part)],
+) {
+    let names = |slot: notes::Slot| parts.iter().any(|(named, _)| *named == slot);
+    if !names(notes::Slot::Header) {
+        own.header.clone_from(&previous.header);
+    }
+    if !names(notes::Slot::Footer) {
+        own.footer.clone_from(&previous.footer);
+    }
+    if own.first_header.is_some() && !names(notes::Slot::FirstHeader) {
+        own.first_header.clone_from(&previous.first_header);
+        own.first_header.get_or_insert_with(Vec::new);
+    }
+    if own.first_footer.is_some() && !names(notes::Slot::FirstFooter) {
+        own.first_footer.clone_from(&previous.first_footer);
+        own.first_footer.get_or_insert_with(Vec::new);
+    }
+    if own.even_header.is_some() && !names(notes::Slot::EvenHeader) {
+        own.even_header.clone_from(&previous.even_header);
+        own.even_header.get_or_insert_with(Vec::new);
+    }
+    if own.even_footer.is_some() && !names(notes::Slot::EvenFooter) {
+        own.even_footer.clone_from(&previous.even_footer);
+        own.even_footer.get_or_insert_with(Vec::new);
+    }
 }
 
 /// The headers and footers of the section: a first-page pair when the section has a different
@@ -556,10 +646,10 @@ fn headers_footers<'a>(
     parts
 }
 
-/// The page size and margins of the body's own section, the last one; A4 when it says nothing.
-fn page_layout(body: &Element) -> PageLayout {
+/// The page size and margins of a section's `w:sectPr`; A4 when it says nothing.
+fn page_layout(section: Option<&Element>) -> PageLayout {
     let mut layout = PageLayout::default();
-    let Some(section) = body.child(Namespace::Word, "sectPr") else {
+    let Some(section) = section else {
         return layout;
     };
     let twips = |element: &Element, name: &str| {

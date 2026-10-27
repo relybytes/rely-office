@@ -211,14 +211,28 @@ export interface PageSize {
   marginsTwips: [number, number, number, number];
 }
 
+/**
+ * One section of a document of several: the blocks before `endBlock` that follow the section
+ * before, on a page and with headers of their own; `continuous` goes on without a new page.
+ */
+export interface Section {
+  endBlock: number;
+  page: PageSize;
+  headersFooters: HeadersFooters;
+  continuous: boolean;
+}
+
 export interface DocumentTree {
   blocks: Block[];
   media: MediaItem[];
   report: ImportReport;
   /** The footnotes and endnotes, in the order the text refers to them. */
   notes: Note[];
+  /** The headers, footers and page of the last section. */
   headersFooters: HeadersFooters;
   page: PageSize;
+  /** Every section, the last included, when there are more than one. */
+  sections?: Section[];
 }
 
 /** The format of a document; the name only tells CSV from TSV and never overrides the bytes. */
@@ -287,6 +301,8 @@ export interface DocxInput {
   page?: PageSize;
   notes?: Note[];
   headersFooters?: HeadersFooters;
+  /** The sections of a document of several, as `readDocumentTree` gives them. */
+  sections?: Section[];
 }
 
 /** A docx Word opens and `readDocumentTree` reads back to the same tree. */

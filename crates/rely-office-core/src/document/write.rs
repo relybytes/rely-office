@@ -22,7 +22,10 @@ use zip::write::SimpleFileOptions;
 
 use super::edges::{Border, BorderStyle, Borders, CellLook, TabKind, TabLeader, VerticalAlignment};
 use super::look::{LineSpacing, PageField, ParagraphLook, RunLook, TableLook};
-use super::{Alignment, Block, DocumentTree, Inline, Mark, Media, Note, NoteKind, TableRow};
+use super::{
+    Alignment, Block, DocumentTree, Inline, Mark, Media, Note, NoteKind, PageLayout, Section,
+    TableRow,
+};
 use crate::OfficeError;
 
 const EMUS_PER_PIXEL: u64 = 9_525;
@@ -52,6 +55,10 @@ const NAMESPACES: &str = concat!(
 ///
 /// [`OfficeError::DamagedContainer`] when the zip cannot be written, which only a failing
 /// allocator causes.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the parts of a docx are written in the order their relationships number them"
+)]
 pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
     let mut writer = DocxWriter {
         media: &tree.media,
@@ -61,7 +68,7 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
         image_parts: BTreeMap::new(),
         lists: HashMap::new(),
         next_drawing_id: 1,
-        text_width_twips: text_width(tree),
+        text_width_twips: text_width(&tree.layout),
         written_notes: HashMap::new(),
         footnotes: String::new(),
         endnotes: String::new(),
@@ -69,16 +76,59 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
         endnote_relationships: Vec::new(),
         note_counts: [0, 0],
     };
-    let mut body = String::new();
-    writer.blocks(&tree.blocks, None, &mut body);
+    let single = [Section {
+        end_block: tree.blocks.len(),
+        layout: tree.layout.clone(),
+        headers_footers: tree.headers_footers.clone(),
+        continuous: false,
+    }];
+    let sections: &[Section] = if tree.sections.is_empty() {
+        &single
+    } else {
+        &tree.sections
+    };
+    let mut bodies = Vec::new();
+    let mut start = 0;
+    for (index, section) in sections.iter().enumerate() {
+        let end = if index + 1 == sections.len() {
+            tree.blocks.len()
+        } else {
+            section.end_block.clamp(start, tree.blocks.len())
+        };
+        writer.text_width_twips = text_width(&section.layout);
+        let mut xml = String::new();
+        writer.blocks(&tree.blocks[start..end], None, &mut xml);
+        bodies.push(xml);
+        start = end;
+    }
     let main_relationships = std::mem::take(&mut writer.relationships);
-    let header_parts = writer.header_parts(&tree.headers_footers);
-
-    let (section_references, extra_relationships) = section_references(
-        &header_parts,
-        MAIN_FIXED_RELATIONSHIPS + main_relationships.len(),
-    );
-    let _ = write!(body, "{}", section(tree, &section_references));
+    let mut header_parts = Vec::new();
+    let mut extra_relationships = Vec::new();
+    let mut body = String::new();
+    for (index, (section, xml)) in sections.iter().zip(&bodies).enumerate() {
+        // Word carries a header on into a section that names none, so an empty one is written
+        // where the section before had one.
+        let keep_empty = index.checked_sub(1).map_or([false; 2], |previous| {
+            let before = &sections[previous].headers_footers;
+            [!before.header.is_empty(), !before.footer.is_empty()]
+        });
+        let parts = writer.header_parts(&section.headers_footers, keep_empty);
+        let (references, relationships) = section_references(
+            &parts,
+            MAIN_FIXED_RELATIONSHIPS + main_relationships.len() + extra_relationships.len(),
+            header_parts.len(),
+        );
+        header_parts.extend(parts);
+        extra_relationships.extend(relationships);
+        body.push_str(xml);
+        let properties = section_properties(section, &references);
+        if index + 1 == sections.len() {
+            body.push_str(&properties);
+        } else {
+            // A section before the last ends with a paragraph that carries its properties.
+            let _ = write!(body, "<w:p><w:pPr>{properties}</w:pPr></w:p>");
+        }
+    }
 
     let document = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {NAMESPACES}><w:body>{body}</w:body></w:document>"#
@@ -104,7 +154,7 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
     add("word/document.xml", document.as_bytes());
     add("word/styles.xml", STYLES.as_bytes());
     add("word/numbering.xml", numbering(&lists).as_bytes());
-    add("word/settings.xml", settings(tree).as_bytes());
+    add("word/settings.xml", settings(tree, sections).as_bytes());
     add(
         "word/footnotes.xml",
         notes_part("footnotes", "footnote", &writer.footnotes).as_bytes(),
@@ -154,8 +204,13 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
 }
 
 /// The references of a section to its header and footer parts, and the relationships of the
-/// main part that name them, numbered from after `previous` relationships.
-fn section_references(header_parts: &[HeaderPart], previous: usize) -> (String, Vec<Relationship>) {
+/// main part that name them, numbered from after `previous` relationships; the parts are
+/// numbered from after the `written` parts of the sections before.
+fn section_references(
+    header_parts: &[HeaderPart],
+    previous: usize,
+    written: usize,
+) -> (String, Vec<Relationship>) {
     let mut references = String::new();
     let mut relationships = Vec::new();
     for (index, (kind, header, _, _)) in header_parts.iter().enumerate() {
@@ -169,7 +224,7 @@ fn section_references(header_parts: &[HeaderPart], previous: usize) -> (String, 
         relationships.push(Relationship {
             id,
             kind: part_kind,
-            target: format!("{part_kind}{}.xml", index + 1),
+            target: format!("{part_kind}{}.xml", written + index + 1),
             external: false,
         });
     }
@@ -229,7 +284,11 @@ type HeaderPart = (&'static str, bool, String, Vec<Relationship>);
 impl DocxWriter<'_> {
     /// The header and footer parts of the tree, each with relationships of its own; a default one
     /// with no content is left out, a first-page or even-page one is kept to stay empty.
-    fn header_parts(&mut self, parts: &super::HeadersFooters) -> Vec<HeaderPart> {
+    fn header_parts(
+        &mut self,
+        parts: &super::HeadersFooters,
+        keep_empty: [bool; 2],
+    ) -> Vec<HeaderPart> {
         let mut written = Vec::new();
         for (kind, header, blocks) in [
             ("default", true, Some(&parts.header)),
@@ -240,7 +299,8 @@ impl DocxWriter<'_> {
             ("even", false, parts.even_footer.as_ref()),
         ] {
             let Some(blocks) = blocks else { continue };
-            if blocks.is_empty() && kind == "default" {
+            let kept = if header { keep_empty[0] } else { keep_empty[1] };
+            if blocks.is_empty() && kind == "default" && !kept {
                 continue;
             }
             self.relationship_base = 0;
@@ -1064,17 +1124,17 @@ fn image_extension(content_type: &str) -> Option<&'static str> {
     }
 }
 
-fn text_width(tree: &DocumentTree) -> u32 {
-    let [_, right, _, left] = tree.layout.margins_twips;
-    tree.layout
+fn text_width(layout: &PageLayout) -> u32 {
+    let [_, right, _, left] = layout.margins_twips;
+    layout
         .width_twips
         .saturating_sub(left)
         .saturating_sub(right)
         .max(1_440)
 }
 
-fn section(tree: &DocumentTree, references: &str) -> String {
-    let layout = &tree.layout;
+fn section_properties(section: &Section, references: &str) -> String {
+    let layout = &section.layout;
     let [top, right, bottom, left] = layout.margins_twips;
     let orientation = if layout.width_twips > layout.height_twips {
         r#" w:orient="landscape""#
@@ -1089,20 +1149,26 @@ fn section(tree: &DocumentTree, references: &str) -> String {
     } else {
         String::new()
     };
-    let title_page = if tree.headers_footers.first_header.is_some()
-        || tree.headers_footers.first_footer.is_some()
+    let title_page = if section.headers_footers.first_header.is_some()
+        || section.headers_footers.first_footer.is_some()
     {
         "<w:titlePg/>"
     } else {
         ""
     };
+    let kind = if section.continuous {
+        r#"<w:type w:val="continuous"/>"#
+    } else {
+        ""
+    };
     format!(
         concat!(
-            r#"<w:sectPr>{}<w:pgSz w:w="{}" w:h="{}"{}/>"#,
+            r#"<w:sectPr>{}{}<w:pgSz w:w="{}" w:h="{}"{}/>"#,
             r#"<w:pgMar w:top="{}" w:right="{}" w:bottom="{}" w:left="{}" w:header="{}" w:footer="{}" w:gutter="0"/>"#,
             "{}{}</w:sectPr>"
         ),
         references,
+        kind,
         layout.width_twips,
         layout.height_twips,
         orientation,
@@ -1117,10 +1183,11 @@ fn section(tree: &DocumentTree, references: &str) -> String {
     )
 }
 
-fn settings(tree: &DocumentTree) -> String {
-    let even = if tree.headers_footers.even_header.is_some()
-        || tree.headers_footers.even_footer.is_some()
-    {
+fn settings(tree: &DocumentTree, sections: &[Section]) -> String {
+    let even = if sections.iter().any(|section| {
+        section.headers_footers.even_header.is_some()
+            || section.headers_footers.even_footer.is_some()
+    }) {
         "<w:evenAndOddHeaders/>"
     } else {
         ""

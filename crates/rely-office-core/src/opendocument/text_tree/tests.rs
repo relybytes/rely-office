@@ -44,12 +44,15 @@ const STYLES: &str = concat!(
     r#"fo:margin-bottom="1.5cm" fo:margin-left="2cm" fo:margin-right="2cm"><style:columns fo:column-count="2" fo:column-gap="1cm"/></style:page-layout-properties>"#,
     r#"<style:header-style><style:header-footer-properties fo:min-height="0.5cm" fo:margin-bottom="0.25cm"/></style:header-style><style:footer-style/></style:page-layout>"#,
     r#"<style:style style:name="MP1" style:family="paragraph" style:parent-style-name="Standard"><style:paragraph-properties fo:text-align="end"/></style:style>"#,
+    r#"<style:page-layout style:name="pm2"><style:page-layout-properties fo:page-width="21cm" fo:page-height="29.7cm"/></style:page-layout>"#,
     "</office:automatic-styles>",
     r#"<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1">"#,
     r#"<style:header><text:p text:style-name="MP1">Pagina <text:page-number>3</text:page-number> di <text:page-count>9</text:page-count></text:p></style:header>"#,
     r#"<style:header-first><text:p>Prima</text:p></style:header-first><style:footer style:display="false"><text:p>Nascosto</text:p></style:footer>"#,
     r#"<style:footer-left><text:p>Pari</text:p></style:footer-left>"#,
-    "</style:master-page></office:master-styles>"
+    "</style:master-page>",
+    r#"<style:master-page style:name="Orizzontale" style:page-layout-name="pm2"><style:header><text:p>Larga</text:p></style:header></style:master-page>"#,
+    "</office:master-styles>"
 );
 
 const AUTOMATIC: &str = concat!(
@@ -62,6 +65,9 @@ const AUTOMATIC: &str = concat!(
     r##"fo:color="#1f3864" fo:font-size="14pt" fo:background-color="#00ff00" style:text-position="super 58%"/></style:style>"##,
     r#"<style:style style:name="T2" style:family="text" style:parent-style-name="Strong"><style:text-properties style:text-line-through-style="solid" style:text-position="-33% 58%"/></style:style>"#,
     r#"<style:style style:name="L" style:family="paragraph" style:list-style-name="Elenco"/>"#,
+    r#"<style:style style:name="Larga" style:family="paragraph" style:master-page-name="Orizzontale"/>"#,
+    r#"<style:style style:name="Torna" style:family="paragraph" style:master-page-name="Standard"/>"#,
+    r#"<style:style style:name="Vuota" style:family="paragraph" style:master-page-name=""/>"#,
     r#"<text:list-style style:name="Numeri"><text:list-level-style-number text:level="1" style:num-format="a" style:num-suffix=")" text:start-value="3"/>"#,
     r#"<text:list-level-style-number text:level="2" style:num-format="I" text:display-levels="2" style:num-prefix="("/></text:list-style>"#,
     r#"<style:style style:name="Tab.A" style:family="table-column"><style:table-column-properties style:column-width="3cm"/></style:style>"#,
@@ -566,5 +572,42 @@ fn draws_a_chart_object_as_an_image() {
         (read.report.charts, read.report.embedded_objects),
         (1, 2),
         "an object that is no chart, and one without a size"
+    );
+}
+
+#[test]
+fn starts_a_section_where_a_paragraph_names_another_master_page() {
+    let read = tree(concat!(
+        "<text:p>Uno</text:p>",
+        r#"<text:p text:style-name="Larga">Due</text:p><text:p text:style-name="Vuota">ancora</text:p>"#,
+        r#"<text:p text:style-name="Torna">Tre</text:p>"#
+    ));
+    let sections = &read.sections;
+    assert_eq!(
+        sections
+            .iter()
+            .map(|section| section.end_block)
+            .collect::<Vec<_>>(),
+        [1, 3, 4]
+    );
+    assert_eq!(
+        (
+            sections[0].layout.width_twips,
+            sections[1].layout.width_twips
+        ),
+        (16_838, 11_906)
+    );
+    assert_eq!(
+        texts(paragraph(&sections[1].headers_footers.header[0]).0),
+        "Larga"
+    );
+    assert_eq!(
+        sections[2].layout, sections[0].layout,
+        "back to the first master"
+    );
+    assert_eq!(read.layout, sections[2].layout);
+    assert_eq!(
+        read.report.headers_and_footers, 4,
+        "each master page read once"
     );
 }

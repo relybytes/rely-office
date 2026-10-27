@@ -19,9 +19,10 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use rely_office_core::{
-    Alignment, Block, Border, BorderStyle, Borders, CellLook, DocumentTree, Inline, LabelSuffix,
-    LineSpacing, ListLabel, Mark, Media, Note, NoteKind, PageField, ParagraphLook, RunLook,
-    TabKind, TabLeader, TabStop, TableLook, TableRow, VerticalAlignment,
+    Alignment, Block, Border, BorderStyle, Borders, CellLook, DocumentTree, HeadersFooters, Inline,
+    LabelSuffix, LineSpacing, ListLabel, Mark, Media, Note, NoteKind, PageField, PageLayout,
+    ParagraphLook, RunLook, Section, TabKind, TabLeader, TabStop, TableLook, TableRow,
+    VerticalAlignment,
 };
 
 use crate::fonts::{MONO, body_fonts};
@@ -82,29 +83,31 @@ const FOOTNOTE_RULES: &str = concat!(
 
 /// The source and the image files of a document. With `with_images` false every image is drawn
 /// as an empty frame of its size, for a document whose images Typst cannot decode.
+#[expect(
+    clippy::too_many_lines,
+    reason = "each section sets its page, then the shared text rules come before them all"
+)]
 pub(crate) fn document_source(
     tree: &DocumentTree,
     with_images: bool,
     lines: &FontLines,
 ) -> (String, Vec<(String, Vec<u8>)>) {
+    let single = [Section {
+        end_block: tree.blocks.len(),
+        layout: tree.layout.clone(),
+        headers_footers: tree.headers_footers.clone(),
+        continuous: false,
+    }];
+    let sections: &[Section] = if tree.sections.is_empty() {
+        &single
+    } else {
+        &tree.sections
+    };
     let layout = &tree.layout;
-    let width = f64::from(layout.width_twips) / TWIPS_PER_POINT;
-    let height = f64::from(layout.height_twips) / TWIPS_PER_POINT;
-    let [top, right, bottom, left] = layout
-        .margins_twips
-        .map(|margin| f64::from(margin) / TWIPS_PER_POINT);
     let body_size = layout
         .font_size_half_points
         .map_or(DEFAULT_FONT_POINTS, |size| f64::from(size) / 2.0);
     let body_family = layout.font_family.clone();
-    let columns = layout.columns.max(1);
-    let column_gap = f64::from(layout.column_gap_twips) / TWIPS_PER_POINT;
-    let text_width = (width - left - right).max(1.0);
-    let column_width = if columns > 1 {
-        ((text_width - column_gap * f64::from(columns - 1)) / f64::from(columns)).max(1.0)
-    } else {
-        text_width
-    };
 
     let mut writer = Writer {
         media: &tree.media,
@@ -113,36 +116,59 @@ pub(crate) fn document_source(
         lines,
         body_family,
         body_size,
-        text_width: column_width,
+        text_width: PageGeometry::of(&sections[0].layout).column_width,
         default_tab: (f64::from(layout.default_tab_twips) / TWIPS_PER_POINT).max(1.0),
         files: HashMap::new(),
         list_counters: HashMap::new(),
         endnotes: Vec::new(),
         in_note: false,
     };
-    let page_parts = writer.page_parts(tree, top, bottom);
-    let body = writer.blocks(&tree.blocks);
+    let mut body = String::new();
+    let mut start = 0;
+    let mut previous: Option<&PageLayout> = None;
+    for (index, section) in sections.iter().enumerate() {
+        let end = if index + 1 == sections.len() {
+            tree.blocks.len()
+        } else {
+            section.end_block.clamp(start, tree.blocks.len())
+        };
+        let geometry = PageGeometry::of(&section.layout);
+        writer.text_width = geometry.column_width;
+        // A continuous section on the same page goes on where the last one stopped.
+        let goes_on = section.continuous
+            && previous.is_some_and(|previous| PageGeometry::of(previous).same_page(&geometry));
+        if !goes_on {
+            let parts =
+                writer.page_parts(&section.headers_footers, &section.layout, &geometry, index);
+            let _ = writeln!(
+                body,
+                "#set page(width: {}, height: {}, margin: (top: {}, right: {}, bottom: {}, left: {}){parts})",
+                points(geometry.width),
+                points(geometry.height),
+                points(geometry.top),
+                points(geometry.right),
+                points(geometry.bottom),
+                points(geometry.left)
+            );
+        }
+        let _ = writeln!(body, "#metadata(none) <rely-section-{index}>");
+        let blocks = writer.blocks(&tree.blocks[start..end]);
+        if geometry.columns > 1 {
+            let _ = writeln!(
+                body,
+                "#columns({}, gutter: {})[\n{blocks}]",
+                geometry.columns,
+                points(geometry.column_gap)
+            );
+        } else {
+            body.push_str(&blocks);
+        }
+        previous = Some(&section.layout);
+        start = end;
+    }
     let endnotes = writer.endnote_list();
 
     let mut source = String::from(TAB_FUNCTION);
-    let _ = write!(
-        source,
-        "#set page(width: {}, height: {}, margin: (top: {}, right: {}, bottom: {}, left: {})",
-        points(width),
-        points(height),
-        points(top),
-        points(right),
-        points(bottom),
-        points(left)
-    );
-    if columns > 1 {
-        let _ = write!(source, ", columns: {columns}");
-    }
-    source.push_str(&page_parts);
-    source.push_str(")\n");
-    if columns > 1 {
-        let _ = writeln!(source, "#set columns(gutter: {})", points(column_gap));
-    }
     let _ = writeln!(
         source,
         "#set text(font: {}, size: {}, lang: \"it\", hyphenate: false, top-edge: \"ascender\", bottom-edge: \"descender\")",
@@ -172,6 +198,71 @@ pub(crate) fn document_source(
         .collect();
     files.sort();
     (source, files)
+}
+
+/// The page of a section in points: its size, margins, and the width of a column of text.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PageGeometry {
+    width: f64,
+    height: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+    left: f64,
+    columns: u32,
+    column_gap: f64,
+    column_width: f64,
+}
+
+impl PageGeometry {
+    fn of(layout: &PageLayout) -> Self {
+        let width = f64::from(layout.width_twips) / TWIPS_PER_POINT;
+        let height = f64::from(layout.height_twips) / TWIPS_PER_POINT;
+        let [top, right, bottom, left] = layout
+            .margins_twips
+            .map(|margin| f64::from(margin) / TWIPS_PER_POINT);
+        let columns = layout.columns.max(1);
+        let column_gap = f64::from(layout.column_gap_twips) / TWIPS_PER_POINT;
+        let text_width = (width - left - right).max(1.0);
+        let column_width = if columns > 1 {
+            ((text_width - column_gap * f64::from(columns - 1)) / f64::from(columns)).max(1.0)
+        } else {
+            text_width
+        };
+        Self {
+            width,
+            height,
+            top,
+            right,
+            bottom,
+            left,
+            columns,
+            column_gap,
+            column_width,
+        }
+    }
+
+    /// The same sheet of paper with the same margins, whatever the columns on it.
+    fn same_page(&self, other: &Self) -> bool {
+        [
+            self.width,
+            self.height,
+            self.top,
+            self.right,
+            self.bottom,
+            self.left,
+        ]
+        .iter()
+        .zip([
+            other.width,
+            other.height,
+            other.top,
+            other.right,
+            other.bottom,
+            other.left,
+        ])
+        .all(|(one, other)| (one - other).abs() < 0.01)
+    }
 }
 
 /// A block written out, with the space it wants around it.
@@ -236,27 +327,44 @@ struct Writer<'a> {
 impl Writer<'_> {
     /// The `header` and `footer` arguments of the page: the first page, even pages and the
     /// others each with their own when the document has them.
-    fn page_parts(&mut self, tree: &DocumentTree, top: f64, bottom: f64) -> String {
-        let parts = &tree.headers_footers;
+    /// The header and footer arguments of a section's page; a first-page variant shows on the
+    /// page the section starts on.
+    fn page_parts(
+        &mut self,
+        parts: &HeadersFooters,
+        layout: &PageLayout,
+        geometry: &PageGeometry,
+        section: usize,
+    ) -> String {
         if parts.is_empty() {
-            return String::new();
+            // A page set later keeps the header of the one before unless it says otherwise.
+            return if section == 0 {
+                String::new()
+            } else {
+                ", header: none, footer: none".to_owned()
+            };
         }
-        let header_distance = (f64::from(tree.layout.header_distance_twips) / TWIPS_PER_POINT)
-            .clamp(0.0, top.max(0.0));
-        let footer_distance = (f64::from(tree.layout.footer_distance_twips) / TWIPS_PER_POINT)
-            .clamp(0.0, bottom.max(0.0));
+        let header_distance = (f64::from(layout.header_distance_twips) / TWIPS_PER_POINT)
+            .clamp(0.0, geometry.top.max(0.0));
+        let footer_distance = (f64::from(layout.footer_distance_twips) / TWIPS_PER_POINT)
+            .clamp(0.0, geometry.bottom.max(0.0));
+        let width = self.text_width;
+        self.text_width = (geometry.width - geometry.left - geometry.right).max(1.0);
         let header = self.page_part(
             &parts.header,
             parts.first_header.as_deref(),
             parts.even_header.as_deref(),
             &format!("align(top, pad(top: {}, ", points(header_distance)),
+            section,
         );
         let footer = self.page_part(
             &parts.footer,
             parts.first_footer.as_deref(),
             parts.even_footer.as_deref(),
             &format!("align(bottom, pad(bottom: {}, ", points(footer_distance)),
+            section,
         );
+        self.text_width = width;
         format!(", header: {header}, header-ascent: 0pt, footer: {footer}, footer-descent: 0pt")
     }
 
@@ -266,6 +374,7 @@ impl Writer<'_> {
         first: Option<&[Block]>,
         even: Option<&[Block]>,
         frame: &str,
+        section: usize,
     ) -> String {
         let wrap = |blocks: &[Block], writer: &mut Self| {
             format!("{frame}block(width: 100%)[{}]))", writer.blocks(blocks))
@@ -275,7 +384,10 @@ impl Writer<'_> {
         let even = even.map(|blocks| wrap(blocks, self));
         let mut choice = String::from("context { let page-number = here().page(); ");
         if let Some(first) = &first {
-            let _ = write!(choice, "if page-number == 1 {{ {first} }} else ");
+            let _ = write!(
+                choice,
+                "if page-number == locate(<rely-section-{section}>).page() {{ {first} }} else "
+            );
         }
         if let Some(even) = &even {
             let _ = write!(choice, "if calc.even(page-number) {{ {even} }} else ");
