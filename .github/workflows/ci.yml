@@ -39,7 +39,7 @@ jobs:
         with:
           node-version: 22
       - name: Lint for WebAssembly
-        run: cargo clippy --package rely-office-wasm --package rely-office-render-wasm --target wasm32-unknown-unknown -- -D warnings
+        run: cargo clippy --package rely-office-wasm --package rely-office-render-wasm --package rely-office-sheet-wasm --target wasm32-unknown-unknown -- -D warnings
       - name: Install wasm-bindgen-cli at the version in Cargo.lock
         run: |
           version=$(node scripts/build-npm.mjs --print-bindgen-version)
@@ -49,12 +49,15 @@ jobs:
       - name: Build the npm package
         run: node scripts/build-npm.mjs
       - name: Smoke test the package folder
-        run: node packages/rely-office-node/test/smoke.cjs
+        run: |
+          node packages/rely-office-node/test/smoke.cjs
+          node packages/rely-office-node/test/smoke-web.mjs
       - name: Smoke test the packed tarball
         run: |
           mkdir -p "$RUNNER_TEMP/packed"
           tar -xzf dist/*.tgz -C "$RUNNER_TEMP/packed"
           node packages/rely-office-node/test/smoke.cjs "$RUNNER_TEMP/packed/package"
+          node packages/rely-office-node/test/smoke-web.mjs "$RUNNER_TEMP/packed/package"
       - uses: actions/upload-artifact@v4
         with:
           name: rely-office-npm
@@ -74,7 +77,8 @@ jobs:
       - name: Install LibreOffice, Poppler and the metric-compatible fonts
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc \n            poppler-utils fonts-crosextra-carlito fonts-crosextra-caladea fonts-liberation2
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc \
+            poppler-utils fonts-crosextra-carlito fonts-crosextra-caladea fonts-liberation2
       # A regression floor, not the quality gate: docs/rendering.md records the measured share.
       - name: Render the corpus and compare it with LibreOffice page by page
         run: node scripts/corpus.mjs --min-pass-rate 0.4

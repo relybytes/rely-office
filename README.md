@@ -1,111 +1,128 @@
 # rely-office
 
-Reads office documents without an office suite: format detection, text for search, sheets as
-tables, and a `.docx` as a document tree for import into a rich-text editor, in safe Rust. It runs
-natively and, compiled to WebAssembly, in process from Node. Rendering to PDF and thumbnails comes
-next (see the [roadmap](docs/roadmap.md)).
+Office documents without an office suite, in safe Rust: format detection, text for search, sheets
+as tables, a `.docx` as a document tree for a rich-text editor, rendering to PDF and PNG through
+Typst, writing `.docx` back from that tree, and an editable spreadsheet with formulas that opens
+and saves xlsx. It runs natively and, compiled to WebAssembly, in process from Node and in the
+browser.
 
 rely-office is built and maintained by [RelyBytes Consulting](https://relybytes.com) for the Drive
-of the [Rely Platform](https://relyplatform.app), where it previews and indexes the files a team
-stores, and is published under the Mozilla Public License 2.0 so that it stays open.
+of the [Rely Platform](https://relyplatform.app), where it previews, indexes, edits and exports the
+files a team stores, and is published under the Mozilla Public License 2.0 so that it stays open.
 
-## What it does today
+## What it does
 
-| Format | Detect | Text for search | Sheets as tables | Document tree |
-| --- | --- | --- | --- | --- |
-| docx | yes | body, headers, footers, notes | - | yes |
-| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - |
-| xls | yes | every sheet | yes | - |
-| ods | yes | every sheet | yes | - |
-| csv, tsv | by name, text only | yes | yes, UTF-8 or Windows-1252, `;` or `,` | - |
-| pptx | yes | every slide in order, each followed by its notes | - | - |
-| odt | yes | body, then the headers and footers of the page styles | - | - |
-| odp | yes | every page in order, with its notes | - | - |
-| doc (Word 97-2003) | yes | every story through the piece table | - | - |
-| ppt (PowerPoint 97-2003) | yes | every text atom outside the masters | - | - |
+| Format | Detect | Text for search | Sheets as tables | Document tree | Render | Write | Edit |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| docx | yes | body, headers, footers, notes | - | yes | layout | yes | through the tree |
+| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings | yes | yes |
+| xls, ods | yes | every sheet | yes | - | layout | as xlsx | yes |
+| csv, tsv | by name, text only | yes | yes, UTF-8 or Windows-1252, `;` or `,` | - | layout | as xlsx | yes |
+| pptx, odt, odp | yes | slides with notes, body with headers and footers, pages with notes | - | - | text | - | - |
+| doc, ppt (97-2003) | yes | every story, every text atom outside the masters | - | - | text | - | - |
 
-The format comes from the bytes, never from the file name alone: a zip is read for its
-`[Content_Types].xml` or `mimetype`, a compound file for the names of its streams. Every input is
-bounded by [`Limits`](crates/rely-office-core/src/limits.rs): the input size, each decompressed
-archive member or stream (the zip bomb defence), the characters of text, the rows and columns of a
-table, and the size, number and total bytes of the images of a document tree.
+The format comes from the bytes, never from the file name alone. Every input is bounded by
+[`Limits`](crates/rely-office-core/src/limits.rs): the input size, each decompressed archive
+member or stream (the zip bomb defence), the characters of text, the rows and columns of a table,
+and the images of a document tree; the spreadsheet model caps sheets and cells, formulas their
+length and nesting.
 
 ## Use it from Rust
 
 ```toml
 [dependencies]
-rely-office-core = "0.2"
+rely-office-core = "0.3"    # reading, the document tree, writing docx
+rely-office-render = "0.3"  # PDF and PNG through Typst
+rely-office-sheet = "0.3"   # the editable spreadsheet
 ```
 
 ```rust
-use rely_office_core::{Limits, extract_text, read_document_tree, read_workbook};
+use rely_office_core::{Limits, extract_text, read_document_tree, write_docx};
+use rely_office_render::{RenderRequest, Renderer};
+use rely_office_sheet::{CellRef, Locale, Workbook, write_xlsx};
 
-let bytes = std::fs::read("report.docx")?;
-let limits = Limits::default();
-let extracted = extract_text(&bytes, Some("report.docx"), &limits)?;
-println!("{} ({:?}, cut: {})", extracted.text, extracted.format, extracted.truncated);
-let tree = read_document_tree(&bytes, &limits)?;
-let workbook = read_workbook(&std::fs::read("sales.xlsx")?, Some("sales.xlsx"), &limits)?;
+let bytes = std::fs::read("contratto.docx")?;
+let extracted = extract_text(&bytes, Some("contratto.docx"), &Limits::default())?;
+let tree = read_document_tree(&bytes, &Limits::default())?;
+let copy = write_docx(&tree)?;
+
+let renderer = Renderer::new(font_files); // TrueType or OpenType files, read once
+let rendered = renderer.render(&bytes, Some("contratto.docx"), &RenderRequest::default())?;
+
+let mut workbook = Workbook::new();
+workbook.set_input(0, CellRef::new(0, 0), "=SOMMA(B1:B9)", Locale::Italian)?;
+let xlsx = write_xlsx(&workbook)?;
 ```
 
-The `serde` feature serializes the document tree and its import report.
+## Use it from Node and the browser
 
-## Use it from Node
-
-The npm package [`@relybytes/rely-office`](packages/rely-office-node) wraps the WebAssembly build:
-synchronous calls, no native addon, Node 18 or later.
+The npm package [`@relybytes/rely-office`](packages/rely-office-node) wraps the WebAssembly
+builds: synchronous calls in Node 18 or later, no native addon; the spreadsheet also has a browser
+entry, `@relybytes/rely-office/web`, for an editor.
 
 ```js
 const office = require('@relybytes/rely-office');
 
-office.detectFormat(bytes, 'contratto.docx');           // 'docx'
 office.extractText(bytes, 'contratto.docx');            // { format, text, truncated }
-office.readSheets(bytes, 'vendite.xlsx');               // { format, sheets: [...] }
-office.readDocumentTree(bytes, { maxImages: 50 });      // { blocks, media, report }
+office.readDocumentTree(bytes);                         // { blocks, media, report }
+office.render(bytes, 'contratto.docx', { thumbnailWidth: 320 }); // { pdf, thumbnail, ... }
+office.writeDocx({ blocks, media });                    // Uint8Array
+const sheet = office.openSheet(xlsx, 'conti.xlsx');     // edit, recalculate, save()
 ```
 
-Failures throw a `RelyOfficeError` with a stable `code` (`TOO_LARGE`, `ENCRYPTED`, ...). The
-package [README](packages/rely-office-node/README.md) has the whole API and the limits, and
-[docs/document-tree.md](docs/document-tree.md) the shape of the tree.
-
-Build the package locally (needs the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` at the
-version of the `wasm-bindgen` crate in `Cargo.lock`):
-
-```sh
-rustup target add wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version "$(node scripts/build-npm.mjs --print-bindgen-version)" --locked
-node scripts/build-npm.mjs                       # writes dist/relybytes-rely-office-<version>.tgz
-node packages/rely-office-node/test/smoke.cjs    # reads a docx built in memory through every export
-```
+The package [README](packages/rely-office-node/README.md) has the whole API.
 
 ## From a terminal
 
 ```sh
-cargo run -p rely-office-cli -- detect report.xlsx
 cargo run -p rely-office-cli -- text contract.docx
-cargo run -p rely-office-cli -- sheets export.csv
 cargo run -p rely-office-cli -- tree contract.docx
+cargo run -p rely-office-cli -- pdf contract.docx       # writes contract.docx.pdf
+cargo run -p rely-office-cli -- png sales.xlsx          # one PNG per page
+cargo run -p rely-office-cli -- rewrite contract.docx   # through the tree and back
+cargo run -p rely-office-cli -- rewrite sales.xlsx      # through the editable model and back
+```
+
+Renders use the fonts of the folder `RELY_OFFICE_FONTS` names, by default `./fonts`.
+
+## Build and test
+
+```sh
+cargo test --workspace
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version "$(node scripts/build-npm.mjs --print-bindgen-version)" --locked
+node scripts/build-npm.mjs                        # writes dist/relybytes-rely-office-<version>.tgz
+node packages/rely-office-node/test/smoke.cjs     # every Node export
+node packages/rely-office-node/test/smoke-web.mjs # the browser entry
+SOFFICE=soffice node scripts/corpus.mjs           # pages compared with LibreOffice
 ```
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| [`crates/rely-office-core`](crates/rely-office-core) | detection, text extraction, sheet tables, document tree |
+| [`crates/rely-office-core`](crates/rely-office-core) | detection, text, sheet tables and print settings, the document tree and its looks, the docx writer |
+| [`crates/rely-office-render`](crates/rely-office-render) | documents to Typst source, typeset to PDF and PNG |
+| [`crates/rely-office-sheet`](crates/rely-office-sheet) | the editable spreadsheet: formulas, recalculation, edits, xlsx in and out |
 | [`crates/rely-office-cli`](crates/rely-office-cli) | the `rely-office` command |
-| [`crates/rely-office-wasm`](crates/rely-office-wasm) | the WebAssembly front, through wasm-bindgen |
+| [`crates/rely-office-wasm`](crates/rely-office-wasm), [`-render-wasm`](crates/rely-office-render-wasm), [`-sheet-wasm`](crates/rely-office-sheet-wasm) | the WebAssembly fronts |
+| [`crates/rely-office-corpus`](crates/rely-office-corpus) | the page comparison with LibreOffice |
 | [`packages/rely-office-node`](packages/rely-office-node) | the npm package `@relybytes/rely-office` |
-| [`scripts/build-npm.mjs`](scripts/build-npm.mjs) | builds the WebAssembly module and packs the npm package |
+| [`corpus/`](corpus) and [`scripts/corpus.mjs`](scripts/corpus.mjs) | the Italian documents of the comparison |
+| [`fonts/`](fonts) | the metric-compatible fonts the package ships, SIL Open Font License 1.1 |
+| [`fuzz/`](fuzz) | cargo-fuzz targets |
 
-The design and its decisions are in [docs/architecture.md](docs/architecture.md); the changes of
-each release in [CHANGELOG.md](CHANGELOG.md).
+The design is in [docs/](docs/README.md): [architecture](docs/architecture.md),
+[rendering](docs/rendering.md), [editing](docs/editing.md), [the document tree](docs/document-tree.md)
+and the [roadmap](docs/roadmap.md); the changes of each release in [CHANGELOG.md](CHANGELOG.md).
 
 ## Licence
 
 Mozilla Public License 2.0, see [LICENSE](LICENSE). In short: you may use rely-office in any
 software, open or closed; changes to the files of rely-office itself must be published under the
 same licence, and the copyright notices of RelyBytes Consulting must be kept. See [NOTICE](NOTICE)
-for the attribution and for the licences of the dependencies.
+for the attribution and for the licences of the dependencies; the fonts in `fonts/` carry their own
+OFL licence texts.
 
 ## Contributing
 

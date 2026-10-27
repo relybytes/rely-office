@@ -15,13 +15,22 @@ package; the Rust names are the same in snake case.
 
 | `type` | Fields | From |
 | --- | --- | --- |
-| `heading` | `level` 1 to 6, `content` | a `heading N` or `Title` style, else the outline level of the style or the paragraph; levels past 6 become 6 |
-| `paragraph` | `content` | any other paragraph, an empty one included |
+| `heading` | `level` 1 to 6, `content`, `align` | a `heading N` or `Title` style, else the outline level of the style or the paragraph; levels past 6 become 6 |
+| `paragraph` | `content`, `align` | any other paragraph, an empty one included |
 | `listItem` | `ordered`, `level` (0 outermost), `listId`, `content` | a paragraph with numbering, from the paragraph or its style; `numFmt` `bullet` is unordered, any other format ordered, `none` is no list |
 | `table` | `rows`: `{ header, cells: { colSpan, rowSpan, blocks }[] }[]` | `w:tbl`; `tblHeader` marks a header row, `gridSpan` the columns, a `vMerge` continuation folds into the cell above |
 | `blockquote` | `blocks` | quote styles; consecutive quote paragraphs share one blockquote |
 | `codeBlock` | `text` | code styles; consecutive code paragraphs are the lines of one block |
 | `horizontalRule` | | an empty paragraph with a VML rule, a bottom border, or a horizontal line style |
+
+`align` is `left`, `center`, `right` or `justify`, from the paragraph or its style, and absent
+when neither sets one.
+
+In Rust, paragraphs, headings, list items, tables and text runs also carry a `look`: spacing,
+line spacing, indents, page breaks, fonts, sizes and colours, column widths, cell margins and
+borders, and the tree has a `layout` with the page size, margins and body font. The renderer lays
+the document out from them; they are not serialized, since an editor has its own styles. The tree
+also deserializes from the same JSON, which is how `writeDocx` reads it.
 
 Lists are flat: an editor that nests lists builds the nesting from `level`, grouping consecutive
 items with the same `listId`. A heading wins over list numbering, a list over a quote style.

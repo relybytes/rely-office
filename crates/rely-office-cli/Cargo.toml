@@ -20,5 +20,6 @@ name = "rely-office"
 path = "src/main.rs"
 
 [dependencies]
-rely-office-core = { path = "../rely-office-core", version = "0.2.0" }
-rely-office-render = { path = "../rely-office-render", version = "0.2.0" }
+rely-office-core = { path = "../rely-office-core", version = "0.3.0" }
+rely-office-render = { path = "../rely-office-render", version = "0.3.0" }
+rely-office-sheet = { path = "../rely-office-sheet", version = "0.3.0" }

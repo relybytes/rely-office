@@ -55,6 +55,15 @@ export type ErrorCode =
   | 'INVALID_OPTIONS'
   | 'TYPESET_FAILED'
   | 'EXPORT_FAILED'
+  | 'INVALID_TREE'
+  | 'INVALID_LOCALE'
+  | 'INVALID_INPUT'
+  | 'INVALID_FORMULA'
+  | 'NO_SUCH_SHEET'
+  | 'DUPLICATE_SHEET_NAME'
+  | 'INVALID_SHEET_NAME'
+  | 'LAST_SHEET'
+  | 'OUT_OF_BOUNDS'
   | 'INTERNAL';
 
 /** Thrown by every function but `detectFormat` when a document cannot be read. */
@@ -229,6 +238,101 @@ export interface Rendered {
  * with the fonts of the package, to PDF and PNG. The typesetter loads on the first call.
  */
 export function render(bytes: DocumentBytes, fileName?: string, options?: RenderOptions): Rendered;
+
+/** A document tree to write as a docx: its blocks, the images they name by index, its page. */
+export interface DocxInput {
+  blocks: Block[];
+  /** The bytes of each image; `Inline.media` indexes this list. The type is read from the bytes. */
+  media?: DocumentBytes[];
+  /** In twentieths of a point; A4 with 2.5 cm margins when left out. Margins: top, right, bottom, left. */
+  page?: { widthTwips: number; heightTwips: number; marginsTwips: [number, number, number, number] };
+}
+
+/** A docx Word opens and `readDocumentTree` reads back to the same tree. */
+export function writeDocx(tree: DocxInput): Uint8Array;
+
+/** How a cell's number is shown. */
+export type CellFormat =
+  | { type: 'general' }
+  | { type: 'date' }
+  | { type: 'dateTime' }
+  | { type: 'percent' }
+  | { type: 'decimals'; decimals: number };
+
+/** A zero-based, inclusive rectangle of cells. */
+export interface CellWindow {
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+}
+
+export interface SheetSummary {
+  name: string;
+  /** The used area from A1: one past the last row and column with content. */
+  rows: number;
+  columns: number;
+  /** `[column, width in characters]` for the columns not of the default width. */
+  columnWidths: [number, number][];
+}
+
+export interface SheetCell {
+  row: number;
+  column: number;
+  /** What was typed, as a formula bar shows it: `=SUM(A1:A3)`. */
+  input: string;
+  /** What the cell shows, in the document's locale. */
+  display: string;
+  kind: 'number' | 'text' | 'bool' | 'error' | 'empty';
+  format: CellFormat;
+}
+
+export interface SheetOptions {
+  /** How numbers are typed and shown: `it` (1.234,5, default) or `en` (1,234.5). */
+  locale?: 'it' | 'en';
+}
+
+/**
+ * An editable workbook. Every edit recalculates the formulas; sheets, rows and columns are
+ * zero-based. Call `free` when done: the workbook lives in WebAssembly memory.
+ */
+export interface SheetDocument {
+  sheets(): SheetSummary[];
+  /** The cells with content in a window, at most 250,000 cells. */
+  cells(sheet: number, window: CellWindow): SheetCell[];
+  input(sheet: number, row: number, column: number): string;
+  /** Type into a cell: `=` starts a formula; an empty text clears the cell. */
+  setInput(sheet: number, row: number, column: number, text: string): void;
+  /** Several cells in one recalculation, all or none: `[[row, column, text], ...]`. */
+  setInputs(sheet: number, inputs: [number, number, string][]): void;
+  setFormat(sheet: number, row: number, column: number, format: CellFormat): void;
+  /** A width in characters; null restores the default. */
+  setColumnWidth(sheet: number, column: number, width: number | null): void;
+  clearRange(sheet: number, window: CellWindow): void;
+  /** Copy a window so its top-left lands on (row, column); relative references move with it. */
+  copyRange(sheet: number, window: CellWindow, targetSheet: number, row: number, column: number): void;
+  insertRows(sheet: number, at: number, count?: number): void;
+  deleteRows(sheet: number, at: number, count?: number): void;
+  insertColumns(sheet: number, at: number, count?: number): void;
+  deleteColumns(sheet: number, at: number, count?: number): void;
+  /** Add a sheet at the end and return its index. */
+  addSheet(name: string): number;
+  renameSheet(sheet: number, name: string): void;
+  removeSheet(sheet: number): void;
+  /** Today's date for TODAY() and NOW(), which WebAssembly cannot read; null unsets it. */
+  setToday(today: Date | number | null): void;
+  /** How a typed text would be read, without typing it. */
+  previewInput(text: string): 'number' | 'text' | 'bool' | 'formula' | 'empty' | 'invalid';
+  /** The workbook as xlsx, each formula with its computed value. */
+  save(): Uint8Array;
+  free(): void;
+}
+
+/** A new workbook with one empty sheet, Foglio1. */
+export function createSheet(options?: SheetOptions): SheetDocument;
+
+/** A workbook opened from xlsx, xls, ods, csv or tsv; a CSV is read in the locale. */
+export function openSheet(bytes: DocumentBytes, fileName?: string, options?: SheetOptions): SheetDocument;
 
 /** The version of the library inside the package. */
 export const version: string;

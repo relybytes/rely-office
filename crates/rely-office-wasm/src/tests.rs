@@ -224,3 +224,41 @@ fn applies_only_the_limits_it_is_given() {
 fn names_its_version() {
     assert_eq!(version(), env!("CARGO_PKG_VERSION"));
 }
+
+#[test]
+fn writes_a_docx_from_the_json_of_a_tree() {
+    let tree = json!({
+        "blocks": [
+            { "type": "heading", "level": 2, "content": [{ "type": "text", "text": "Titolo" }] },
+            {
+                "type": "paragraph",
+                "align": "center",
+                "content": [
+                    { "type": "text", "text": "Ciao", "marks": [{ "type": "bold" }] },
+                    { "type": "image", "media": 0, "alt": "logo", "width": 10, "height": 10 }
+                ]
+            }
+        ],
+        "page": { "widthTwips": 16838, "heightTwips": 11906, "marginsTwips": [720, 720, 720, 720] }
+    });
+    let mut writer = DocxWriter::new();
+    assert_eq!(writer.add_media(PNG.to_vec()), 0);
+    let bytes = docx_from_json(&tree.to_string(), std::mem::take(&mut writer.media)).unwrap();
+    let read = parse(&document_tree(&bytes, None).unwrap().json());
+    assert_eq!(read["blocks"][0]["type"], "heading");
+    assert_eq!(read["blocks"][1]["align"], "center");
+    assert_eq!(
+        read["blocks"][1]["content"][0]["marks"],
+        json!([{ "type": "bold" }])
+    );
+    assert_eq!(read["media"][0]["contentType"], "image/png");
+
+    let failure = docx_from_json(r#"{"blocks":[{"type":"nope"}]}"#, Vec::new()).unwrap_err();
+    assert_eq!(failure.code, "INVALID_TREE");
+    assert_eq!(
+        docx_from_json(r#"{"blocks":[],"extra":1}"#, Vec::new())
+            .unwrap_err()
+            .code,
+        "INVALID_TREE"
+    );
+}

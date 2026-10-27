@@ -40,10 +40,11 @@ mod test_support;
 pub use document::{
     Alignment, Block, DocumentTree, ImportReport, Inline, LineSpacing, Mark, Media, PageLayout,
     ParagraphLook, RunLook, TableCell, TableLook, TableRow, read_document_tree, sniff_image_type,
+    write_docx,
 };
 pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};
 pub use limits::Limits;
 pub use sheet::{Sheet, Workbook, read_workbook};
-pub use sheet_layout::SheetLayout;
+pub use sheet_layout::{SheetLayout, read_xlsx_layouts};
 pub use text::{ExtractedText, extract_text};

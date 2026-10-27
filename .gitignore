@@ -5,4 +5,5 @@
 /packages/rely-office-node/LICENSE
 /packages/rely-office-node/NOTICE
 /packages/rely-office-node/fonts/
+/packages/rely-office-node/web/rely_office_sheet_wasm*
 node_modules/

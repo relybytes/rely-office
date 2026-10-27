@@ -1,8 +1,8 @@
 # Architecture
 
 rely-office turns office documents into what a file manager needs from them: what they are, the
-text to index, a table to show, a document tree to import into an editor, and later a PDF and a
-thumbnail. It never edits a document.
+text to index, a table to show, a document tree to import into an editor, a PDF and a thumbnail;
+it writes a docx back from that tree, and it is the model behind a spreadsheet editor.
 
 ## Why a library of our own
 
@@ -12,20 +12,27 @@ Rust, called in process from the Drive service, reads untrusted uploads with a m
 and gives one implementation of text extraction, sheet tables, the import tree, and later previews
 and thumbnails. It is published under MPL-2.0 so improvements to it stay public.
 
-What it deliberately does not do: editing (spreadsheets are edited with IronCalc, documents with an
-existing editor), collaboration, and pixel-perfect Word layout. The evaluation behind this scope
-compared four options (adopt existing libraries, OnlyOffice, this partial build, a complete suite)
-and chose the partial build.
+The user's decision of 2026-10-25 is that the Drive depends on rely-office alone for office
+files: no LibreOffice container for previews, no JavaScript docx library for export, no third-party
+spreadsheet engine. Rendering goes through Typst, a typesetter in Rust linked into the library;
+editing a Word document goes through the document tree and the platform's own rich-text editor;
+editing a spreadsheet goes through `rely-office-sheet` and the platform's own grid.
+
+What it deliberately does not do: collaboration, pixel-perfect Word layout (Typst lays pages out
+its own way; [rendering.md](rendering.md) measures how close), a rich-text editor of its own, and
+spreadsheet features past values, formulas, number formats and column widths.
 
 ## Crates and packages
 
 | Crate or package | Role | Depends on |
 | --- | --- | --- |
-| `rely-office-core` | detection, text extraction, sheet tables, document tree | `zip`, `quick-xml`, `calamine`, `cfb`, `encoding_rs`, `thiserror`; `serde` behind the `serde` feature |
-| `rely-office-cli` | the `rely-office` command for trying files by hand | `rely-office-core` |
-| `rely-office-wasm` | the WebAssembly front for JavaScript, not published as a crate | `rely-office-core` (with `serde`), `wasm-bindgen`, `serde`, `serde_json` |
-| `@relybytes/rely-office` (npm, `packages/rely-office-node`) | the Node package: a hand-written wrapper and types over the generated bindings | the module `rely-office-wasm` builds |
-| `rely-office-render` (planned) | PDF and PNG thumbnails through Typst | `typst`, `typst-pdf`, `typst-render` |
+| `rely-office-core` | detection, text extraction, sheet tables and print settings, the document tree with its looks, the docx writer | `zip`, `quick-xml`, `calamine`, `cfb`, `encoding_rs`, `thiserror`; `serde` behind the `serde` feature |
+| `rely-office-render` | documents written as Typst source and typeset to PDF and PNG, see [rendering.md](rendering.md) | `rely-office-core`, `typst`, `typst-layout`, `typst-pdf`, `typst-render`, `comemo` |
+| `rely-office-sheet` | the editable spreadsheet: formulas, recalculation, edits, xlsx in and out, see [editing.md](editing.md) | `rely-office-core`, `calamine`, `quick-xml`, `zip`, `thiserror` |
+| `rely-office-cli` | the `rely-office` command for trying files by hand | the three crates above |
+| `rely-office-wasm`, `rely-office-render-wasm`, `rely-office-sheet-wasm` | the WebAssembly fronts for JavaScript, not published as crates | `wasm-bindgen`, `serde`, `serde_json` |
+| `rely-office-corpus` | the page comparison with LibreOffice, not published | `rely-office-render`, `tiny-skia` |
+| `@relybytes/rely-office` (npm, `packages/rely-office-node`) | the Node package and its browser entry: hand-written wrappers and types over the generated bindings, and the fonts | the three modules |
 
 ## Inside the core
 
@@ -39,7 +46,8 @@ and chose the partial build.
 | `word`, `presentation`, `opendocument` | the text of docx, pptx, odt and odp |
 | `doc`, `ppt` | the text of the binary formats |
 | `sheet` | spreadsheets as tables, through calamine, and delimited text |
-| `document` | the docx document tree: styles, numbering, conversion, media sniffing |
+| `sheet_layout` | the print settings of xlsx sheets, read as a stream that skips the cells |
+| `document` | the docx document tree: styles, numbering, conversion, looks, media sniffing, and the writer |
 
 ## Decisions
 
@@ -76,6 +84,14 @@ and chose the partial build.
   Italian export.
 - **The document tree is neutral.** It names blocks and marks, not HTML or one editor's schema, so
   the caller maps it onto its own; its shape is in [document-tree.md](document-tree.md).
+- **Looks stay out of the editor's JSON.** Spacing, fonts and table geometry are read for the
+  renderer into `look` fields that `serde` skips, so the tree an editor receives keeps its shape
+  and its size.
+- **The renderer writes Typst source, never Typst code from input.** Document text enters the
+  source only as string literals, so a crafted document cannot become markup.
+- **Formulas are trees.** A formula is parsed once into an expression tree and printed back for
+  storage; that is what lets row and column edits, sheet renames and pastes move references the
+  way a spreadsheet does, and what makes the Italian syntax a reader concern only.
 - **No `unsafe`.** The workspace forbids it; parsing goes through crates that do the same or are
   widely fuzzed.
 - **Tests carry no binaries.** Documents are built in memory in `test_support.rs` (zip writer,
@@ -83,9 +99,13 @@ and chose the partial build.
 
 ## The WebAssembly boundary
 
-`rely-office-wasm` compiles for `wasm32-unknown-unknown` and `wasm-bindgen-cli` generates the Node
-bindings (`--target nodejs`, loaded synchronously). The boundary is JSON text, so the package needs
-no JavaScript glue crate:
+Three modules compile for `wasm32-unknown-unknown`, apart so a process loads only what it uses:
+`rely_office_wasm` (reading and docx writing, 1.2 MB), `rely_office_render_wasm` (Typst, 27 MB,
+loaded on the first render) and `rely_office_sheet_wasm` (the spreadsheet, 1.2 MB, loaded on the
+first sheet). `wasm-bindgen-cli` generates the Node bindings (`--target nodejs`, loaded
+synchronously) for all three, and browser bindings (`--target web`) for the spreadsheet, the one
+module an editor runs in the page. The boundary is JSON text, so the package needs no JavaScript
+glue crate:
 
 - each export takes the document as a `Uint8Array` (copied into the module's memory) and the
   limits as a JSON string, an object over the defaults whose unknown fields are refused
@@ -93,12 +113,15 @@ no JavaScript glue crate:
 - each answers JSON that the wrapper (`packages/rely-office-node/index.js`) parses;
 - a failure throws an `Error` whose message is `CODE: message`, and the wrapper rethrows it as a
   `RelyOfficeError` with that `code`;
-- the images of a document tree never travel inside the JSON: `readDocumentTreeHandle` returns a
+- bytes never travel inside the JSON: a render answers a handle the wrapper moves the PDF and the
+  PNGs out of, a docx writer takes its images one by one (`addMedia`), and `readDocumentTreeHandle` returns a
   handle holding the JSON and the image bytes, the wrapper moves each image out as its own
-  `Uint8Array` (`takeMediaBytes`) and frees the handle.
+  `Uint8Array` (`takeMediaBytes`) and frees the handle;
+- a spreadsheet is a handle that lives in the module's memory until `free`, asked for windows of
+  cells and sent edits as calls.
 
-The module is built with the `wasm-release` profile (`opt-level = "s"`, fat LTO, one codegen
-unit), a profile of its own so native builds and tests keep the defaults. `wasm-bindgen-cli` must
+The modules are built with the `wasm-release` profile (`opt-level = "s"`, fat LTO, one codegen
+unit, symbols stripped), a profile of its own so native builds and tests keep the defaults. `wasm-bindgen-cli` must
 match the `wasm-bindgen` crate exactly, which is why the crate is pinned with `=` and
 `scripts/build-npm.mjs` checks the installed CLI against `Cargo.lock` before building. A panic in
 the module would abort the instance, so the same rule as everywhere holds: malformed input is an

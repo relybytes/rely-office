@@ -86,8 +86,11 @@ if (installedBindgen !== `wasm-bindgen ${expectedBindgen}`) {
   );
 }
 
-// Two modules, so a process that only reads documents never loads the typesetter.
-const modules = ['rely_office_wasm', 'rely_office_render_wasm'];
+// Separate modules, so a process that only reads documents never loads the typesetter.
+const modules = ['rely_office_wasm', 'rely_office_render_wasm', 'rely_office_sheet_wasm'];
+// The spreadsheet also runs in the browser, for the sheet editor.
+const webModules = ['rely_office_sheet_wasm'];
+const webDirectory = join(packageDirectory, 'web');
 
 run(cargo, [
   'build',
@@ -95,6 +98,8 @@ run(cargo, [
   'rely-office-wasm',
   '--package',
   'rely-office-render-wasm',
+  '--package',
+  'rely-office-sheet-wasm',
   '--target',
   'wasm32-unknown-unknown',
   '--profile',
@@ -109,6 +114,21 @@ for (const module of modules) {
     'nodejs',
     '--out-dir',
     bindingsDirectory,
+    '--out-name',
+    module,
+    join(root, 'target', 'wasm32-unknown-unknown', 'wasm-release', `${module}.wasm`),
+  ]);
+}
+
+for (const module of webModules) {
+  for (const generated of readdirSync(webDirectory).filter((file) => file.startsWith(module))) {
+    rmSync(join(webDirectory, generated));
+  }
+  run(wasmBindgen, [
+    '--target',
+    'web',
+    '--out-dir',
+    webDirectory,
     '--out-name',
     module,
     join(root, 'target', 'wasm32-unknown-unknown', 'wasm-release', `${module}.wasm`),

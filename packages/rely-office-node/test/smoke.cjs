@@ -219,6 +219,57 @@ test('renders a document to PDF and PNG', () => {
   );
 });
 
+test('writes a docx it reads back', () => {
+  const tree = office.readDocumentTree(docx);
+  const written = office.writeDocx({
+    blocks: tree.blocks,
+    media: tree.media.map((item) => item.bytes),
+  });
+  const read = office.readDocumentTree(written);
+  assert.deepEqual(read.blocks, tree.blocks);
+  assert.equal(read.media.length, 1);
+  assert.throws(
+    () => office.writeDocx({ blocks: [{ type: 'nope' }] }),
+    (error) => error.code === 'INVALID_TREE',
+  );
+});
+
+test('edits a spreadsheet and saves it as xlsx', () => {
+  const sheet = office.createSheet({ locale: 'it' });
+  try {
+    sheet.setInputs(0, [
+      [0, 0, '1,5'],
+      [1, 0, '2'],
+      [2, 0, '=SOMMA(A1:A2)'],
+    ]);
+    sheet.setFormat(0, 2, 0, { type: 'decimals', decimals: 2 });
+    assert.equal(sheet.cells(0, { top: 2, left: 0, bottom: 2, right: 0 })[0].display, '3,50');
+    sheet.insertRows(0, 0);
+    assert.equal(sheet.input(0, 3, 0), '=SUM(A2:A3)');
+    assert.equal(sheet.addSheet('Riepilogo'), 1);
+    sheet.setInput(1, 0, 0, '=Foglio1!A4*2');
+    sheet.setToday(new Date(2026, 9, 27));
+    sheet.setInput(1, 1, 0, '=OGGI()');
+    assert.deepEqual(
+      sheet.cells(1, { top: 0, left: 0, bottom: 1, right: 0 }).map((cell) => cell.display),
+      ['7', '46322'],
+    );
+    assert.throws(() => sheet.setInput(0, 0, 0, '=SOMMA('), (error) => error.code === 'INVALID_FORMULA');
+    assert.equal(sheet.previewInput('1.234,5'), 'number');
+    const saved = sheet.save();
+    const opened = office.openSheet(saved, 'conti.xlsx', { locale: 'en' });
+    try {
+      assert.deepEqual(opened.sheets().map((summary) => summary.name), ['Foglio1', 'Riepilogo']);
+      assert.equal(opened.cells(1, { top: 0, left: 0, bottom: 0, right: 0 })[0].display, '7');
+    } finally {
+      opened.free();
+    }
+    assert.equal(office.readSheets(saved, 'conti.xlsx').sheets[1].rows[0][0], '7');
+  } finally {
+    sheet.free();
+  }
+});
+
 test('survives many calls without leaking handles', () => {
   for (let round = 0; round < 200; round += 1) {
     office.readDocumentTree(docx);

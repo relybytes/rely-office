@@ -45,7 +45,8 @@ pub struct SheetLayout {
 
 /// The layout of every sheet of an xlsx, by sheet name; a package it cannot read gives none, as
 /// the sheets themselves were read by then and print with the defaults.
-pub(crate) fn read_xlsx_layouts(bytes: &[u8], limits: &Limits) -> HashMap<String, SheetLayout> {
+#[must_use]
+pub fn read_xlsx_layouts(bytes: &[u8], limits: &Limits) -> HashMap<String, SheetLayout> {
     read_layouts(bytes, limits).unwrap_or_default()
 }
 

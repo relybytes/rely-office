@@ -1,0 +1,31 @@
+[package]
+name = "rely-office-sheet"
+description = "An editable spreadsheet model for rely-office: cells, formulas with recalculation, row and column edits, xlsx import and export."
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+calamine = "0.37"
+quick-xml = "0.42"
+rely-office-core = { path = "../rely-office-core", version = "0.3.0" }
+serde = { version = "1.0.228", features = ["derive"], optional = true }
+thiserror = "2.0.21"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[features]
+# Serialize the model's cells and values, for a JSON boundary such as the WebAssembly package.
+serde = ["dep:serde"]
+
+[dev-dependencies]
+rust_xlsxwriter = "0.101"

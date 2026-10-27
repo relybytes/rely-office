@@ -10,15 +10,20 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::process::ExitCode;
 
-use rely_office_core::{Limits, detect_format, extract_text, read_document_tree, read_workbook};
+use rely_office_core::{
+    Limits, detect_format, extract_text, read_document_tree, read_workbook, write_docx,
+};
 use rely_office_render::{PageImages, RenderRequest, Renderer, render_limits};
+use rely_office_sheet::{Locale, read_spreadsheet, write_xlsx};
 
-const USAGE: &str = "usage: rely-office <detect|text|sheets|tree|typst|pdf|png> <file>
+const USAGE: &str = "usage: rely-office <detect|text|sheets|tree|rewrite|typst|pdf|png> <file>
 
   detect   print the format read from the bytes
   text     print the text a search index would store
   sheets   print every sheet as tab-separated rows
   tree     print the document tree of a docx, its images and its import report
+  rewrite  write a docx back from its document tree as <file>.rewritten.docx, a spreadsheet
+           back from its editable model as <file>.rewritten.xlsx
   typst    print the Typst source a render typesets
   pdf      write <file>.pdf next to the file
   png      write <file>-<page>.png next to the file, at 144 dpi
@@ -86,6 +91,34 @@ fn run(command: &str, path: &Path) -> Result<String, String> {
             Ok(output)
         }
         "typst" | "pdf" | "png" => render(command, path, &bytes, file_name),
+        "rewrite"
+            if matches!(
+                detect_format(&bytes, file_name).as_str(),
+                "xlsx" | "xls" | "ods" | "csv" | "tsv"
+            ) =>
+        {
+            let workbook = read_spreadsheet(&bytes, file_name, &limits, Locale::Italian)
+                .map_err(|error| error.to_string())?;
+            let written = write_xlsx(&workbook).map_err(|error| error.to_string())?;
+            let target = path.with_file_name(format!(
+                "{}.rewritten.xlsx",
+                file_name.unwrap_or("workbook")
+            ));
+            std::fs::write(&target, written)
+                .map_err(|error| format!("{}: {error}", target.display()))?;
+            Ok(format!("{}\n", target.display()))
+        }
+        "rewrite" => {
+            let tree = read_document_tree(&bytes, &limits).map_err(|error| error.to_string())?;
+            let written = write_docx(&tree).map_err(|error| error.to_string())?;
+            let target = path.with_file_name(format!(
+                "{}.rewritten.docx",
+                file_name.unwrap_or("document")
+            ));
+            std::fs::write(&target, written)
+                .map_err(|error| format!("{}: {error}", target.display()))?;
+            Ok(format!("{}\n", target.display()))
+        }
         other => Err(format!("unknown command {other}\n{USAGE}")),
     }
 }

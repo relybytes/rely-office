@@ -12,5 +12,13 @@ requires.
 
 Third-party components used as dependencies keep their own licences, all of
 them compatible with the Mozilla Public License 2.0: MIT, Apache-2.0, BSD-3-Clause,
-Zlib, Unicode-3.0, Unlicense and MPL-2.0. The list a release ships with is
-checked by `cargo deny check licenses` (see deny.toml).
+Zlib, Unicode-3.0, Unlicense, MPL-2.0, 0BSD and Apache-2.0 WITH LLVM-exception.
+The list a release ships with is checked by `cargo deny check licenses` (see
+deny.toml). Rendering is done by Typst (https://typst.app, Apache-2.0).
+
+The fonts in fonts/, shipped with the npm package, are licensed under the SIL
+Open Font License 1.1; their licence texts sit next to them:
+- Carlito: Copyright 2013 The Carlito Project Authors (OFL-Carlito.txt)
+- Caladea: Copyright 2012 The Caladea Project Authors (OFL-Caladea.txt)
+- Liberation Sans, Serif and Mono: Copyright (c) 2010 Google Corporation,
+  Copyright (c) 2012 Red Hat, Inc. (OFL-Liberation.txt)

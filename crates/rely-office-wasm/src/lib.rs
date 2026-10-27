@@ -13,8 +13,8 @@
 //! cross as their own byte arrays, never inside the JSON.
 
 use rely_office_core::{
-    Block, DocumentTree, ImportReport, Limits, Media, OfficeError, Sheet, detect_format,
-    extract_text, read_document_tree, read_workbook,
+    Block, DocumentTree, ImportReport, Limits, Media, OfficeError, PageLayout, Sheet,
+    detect_format, extract_text, read_document_tree, read_workbook, sniff_image_type, write_docx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -258,6 +258,92 @@ pub fn document_tree(
         report: &report,
     })?;
     Ok(DocumentTreeHandle { json, media })
+}
+
+/// The page of a document to write, in twentieths of a point; A4 with 2.5 cm margins when left
+/// out.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "the fields mirror the JSON keys, which name their unit"
+)]
+struct PageInput {
+    width_twips: u32,
+    height_twips: u32,
+    /// Top, right, bottom, left.
+    margins_twips: [u32; 4],
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DocxInput {
+    blocks: Vec<Block>,
+    #[serde(default)]
+    page: Option<PageInput>,
+}
+
+/// Write a docx from the JSON of a document tree, `{ blocks, page? }`, with the images the tree
+/// names by index.
+///
+/// # Errors
+///
+/// `INVALID_TREE` for JSON that is not a document tree, or the error of the writer.
+pub fn docx_from_json(tree_json: &str, media: Vec<Media>) -> Result<Vec<u8>, Failure> {
+    let input: DocxInput = serde_json::from_str(tree_json).map_err(|error| Failure {
+        code: "INVALID_TREE",
+        message: format!("invalid document tree: {error}"),
+    })?;
+    let mut layout = PageLayout::default();
+    if let Some(page) = input.page {
+        layout.width_twips = page.width_twips.clamp(1_440, 31_680);
+        layout.height_twips = page.height_twips.clamp(1_440, 31_680);
+        layout.margins_twips = page.margins_twips.map(|margin| margin.min(15_840));
+    }
+    let tree = DocumentTree {
+        blocks: input.blocks,
+        media,
+        report: ImportReport::default(),
+        layout,
+    };
+    Ok(write_docx(&tree)?)
+}
+
+/// Writes a docx for JavaScript: images are added one by one, then the tree is written.
+#[wasm_bindgen]
+#[derive(Debug, Default)]
+pub struct DocxWriter {
+    media: Vec<Media>,
+}
+
+#[wasm_bindgen]
+impl DocxWriter {
+    #[wasm_bindgen(constructor)]
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add an image and return the index the tree names it by; its type is read from the bytes.
+    #[wasm_bindgen(js_name = addMedia)]
+    pub fn add_media(&mut self, bytes: Vec<u8>) -> usize {
+        self.media.push(Media {
+            content_type: sniff_image_type(&bytes),
+            bytes,
+        });
+        self.media.len() - 1
+    }
+
+    /// Write the docx.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen]
+    pub fn write(&mut self, tree_json: &str) -> Result<Vec<u8>, JsError> {
+        docx_from_json(tree_json, std::mem::take(&mut self.media))
+            .map_err(|failure| throw(&failure))
+    }
 }
 
 fn throw(failure: &Failure) -> JsError {

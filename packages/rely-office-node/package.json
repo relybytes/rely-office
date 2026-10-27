@@ -1,7 +1,7 @@
 {
   "name": "@relybytes/rely-office",
-  "version": "0.2.0",
-  "description": "Reads office documents in Node through WebAssembly: format detection, text for search, sheet tables, a docx document tree for rich-text import, and PDF and PNG rendering through Typst.",
+  "version": "0.3.0",
+  "description": "Office documents in Node and the browser through WebAssembly: format detection, text for search, sheet tables, the docx document tree, PDF and PNG rendering through Typst, docx writing and an editable spreadsheet with formulas.",
   "license": "MPL-2.0",
   "author": "RelyBytes Consulting (https://relybytes.com)",
   "homepage": "https://github.com/relybytes/rely-office#readme",
@@ -21,7 +21,11 @@
     "text-extraction",
     "webassembly",
     "pdf",
-    "typst"
+    "typst",
+    "spreadsheet",
+    "formulas",
+    "xlsx-writer",
+    "docx-writer"
   ],
   "type": "commonjs",
   "main": "index.js",
@@ -31,17 +35,24 @@
       "types": "./index.d.ts",
       "default": "./index.js"
     },
+    "./web": {
+      "types": "./web/index.d.ts",
+      "default": "./web/index.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
     "index.d.ts",
-    "wasm/rely_office_wasm.js",
-    "wasm/rely_office_wasm.d.ts",
-    "wasm/rely_office_wasm_bg.wasm",
-    "wasm/rely_office_render_wasm.js",
-    "wasm/rely_office_render_wasm.d.ts",
-    "wasm/rely_office_render_wasm_bg.wasm",
+    "wasm/*.js",
+    "wasm/*.d.ts",
+    "wasm/*.wasm",
+    "web/index.js",
+    "web/index.d.ts",
+    "web/package.json",
+    "web/rely_office_sheet_wasm.js",
+    "web/rely_office_sheet_wasm.d.ts",
+    "web/rely_office_sheet_wasm_bg.wasm",
     "fonts/*.ttf",
     "fonts/OFL-*.txt",
     "README.md",

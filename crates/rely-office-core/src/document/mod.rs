@@ -12,6 +12,7 @@ mod look;
 mod media;
 mod numbering;
 mod styles;
+mod write;
 
 use crate::archive::{open_package, read_text_member};
 use crate::relationships::{main_part_path, read_relationships};
@@ -20,6 +21,7 @@ use crate::{DocumentFormat, Limits, OfficeError, detect_format};
 
 pub use look::{LineSpacing, ParagraphLook, RunLook, TableLook};
 pub use media::sniff_image_type;
+pub use write::write_docx;
 
 const MAIN_PART: &str = "word/document.xml";
 /// A page side shorter than an inch is damaged; one longer than 22 inches is Word's own maximum.
@@ -68,7 +70,7 @@ impl Default for PageLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serde",
-    derive(serde::Serialize),
+    derive(serde::Serialize, serde::Deserialize),
     serde(rename_all = "camelCase")
 )]
 pub enum Alignment {
@@ -82,7 +84,7 @@ pub enum Alignment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serde",
-    derive(serde::Serialize),
+    derive(serde::Serialize, serde::Deserialize),
     serde(
         tag = "type",
         rename_all = "camelCase",
@@ -137,7 +139,7 @@ pub enum Block {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serde",
-    derive(serde::Serialize),
+    derive(serde::Serialize, serde::Deserialize),
     serde(rename_all = "camelCase")
 )]
 pub struct TableRow {
@@ -150,7 +152,7 @@ pub struct TableRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serde",
-    derive(serde::Serialize),
+    derive(serde::Serialize, serde::Deserialize),
     serde(rename_all = "camelCase")
 )]
 pub struct TableCell {
@@ -163,7 +165,7 @@ pub struct TableCell {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serde",
-    derive(serde::Serialize),
+    derive(serde::Serialize, serde::Deserialize),
     serde(
         tag = "type",
         rename_all = "camelCase",
@@ -173,7 +175,10 @@ pub struct TableCell {
 pub enum Inline {
     Text {
         text: String,
-        #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty"))]
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Vec::is_empty")
+        )]
         marks: Vec<Mark>,
         #[cfg_attr(feature = "serde", serde(skip))]
         look: RunLook,
@@ -197,7 +202,7 @@ pub enum Inline {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serde",
-    derive(serde::Serialize),
+    derive(serde::Serialize, serde::Deserialize),
     serde(tag = "type", rename_all = "camelCase")
 )]
 pub enum Mark {
@@ -228,7 +233,7 @@ pub struct Media {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serde",
-    derive(serde::Serialize),
+    derive(serde::Serialize, serde::Deserialize),
     serde(rename_all = "camelCase")
 )]
 pub struct ImportReport {

@@ -1,0 +1,825 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+
+//! Formulas: parsed into an expression tree and printed back, in the syntax xlsx files store
+//! (English function names, `,` between arguments, `.` in numbers).
+//!
+//! What a person types is accepted too: the Italian names of the common functions (`SOMMA`,
+//! `SE`, `CERCA.VERT`) become their English ones, and a formula that separates arguments with
+//! `;` reads `,` as the decimal separator, as Italian spreadsheets do.
+
+use std::fmt::Write as _;
+
+use crate::address::{CellRef, MAX_ROWS, column_index, column_name, parse_cell};
+use crate::value::ErrorKind;
+
+/// The deepest nesting a formula may have; a deeper one is refused rather than overflowing.
+const MAX_DEPTH: usize = 128;
+/// The longest formula, as Excel limits it.
+pub const MAX_FORMULA_CHARS: usize = 8_192;
+
+/// A cell named by a formula, with its sheet when it names one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CellAddress {
+    pub sheet: Option<String>,
+    pub cell: CellRef,
+    pub absolute_row: bool,
+    pub absolute_column: bool,
+}
+
+/// A rectangle named by a formula; `whole_columns` for `A:C`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RangeAddress {
+    pub sheet: Option<String>,
+    pub start: CellAddress,
+    pub end: CellAddress,
+    pub whole_columns: bool,
+}
+
+impl RangeAddress {
+    /// The top-left and bottom-right corners, whichever way the range was written.
+    #[must_use]
+    pub fn bounds(&self) -> (CellRef, CellRef) {
+        let (start, end) = (self.start.cell, self.end.cell);
+        (
+            CellRef::new(start.row.min(end.row), start.column.min(end.column)),
+            CellRef::new(start.row.max(end.row), start.column.max(end.column)),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOperator {
+    Plus,
+    Minus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Power,
+    Concatenate,
+    Equal,
+    NotEqual,
+    Less,
+    LessOrEqual,
+    Greater,
+    GreaterOrEqual,
+}
+
+impl BinaryOperator {
+    fn precedence(self) -> u8 {
+        match self {
+            Self::Equal
+            | Self::NotEqual
+            | Self::Less
+            | Self::LessOrEqual
+            | Self::Greater
+            | Self::GreaterOrEqual => 1,
+            Self::Concatenate => 2,
+            Self::Add | Self::Subtract => 3,
+            Self::Multiply | Self::Divide => 4,
+            Self::Power => 5,
+        }
+    }
+
+    fn symbol(self) -> &'static str {
+        match self {
+            Self::Add => "+",
+            Self::Subtract => "-",
+            Self::Multiply => "*",
+            Self::Divide => "/",
+            Self::Power => "^",
+            Self::Concatenate => "&",
+            Self::Equal => "=",
+            Self::NotEqual => "<>",
+            Self::Less => "<",
+            Self::LessOrEqual => "<=",
+            Self::Greater => ">",
+            Self::GreaterOrEqual => ">=",
+        }
+    }
+}
+
+/// A parsed formula.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    Number(f64),
+    Text(String),
+    Bool(bool),
+    Error(ErrorKind),
+    Cell(CellAddress),
+    Range(RangeAddress),
+    Unary(UnaryOperator, Box<Expr>),
+    Binary(BinaryOperator, Box<Expr>, Box<Expr>),
+    Percent(Box<Expr>),
+    /// Parentheses as written, kept so a formula prints back as it was typed.
+    Group(Box<Expr>),
+    /// A function by its English name in capitals.
+    Call(String, Vec<Expr>),
+}
+
+/// Why a formula could not be parsed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid formula at character {position}: {reason}")]
+pub struct FormulaError {
+    pub position: usize,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Token {
+    Number(f64),
+    Text(String),
+    Error(ErrorKind),
+    /// Letters, digits, `.`, `_` and `$`: a function, a boolean, a cell or a column.
+    Word(String),
+    /// A sheet name before `!`, quoted or not.
+    Sheet(String),
+    Operator(&'static str),
+    Open,
+    Close,
+    Separator,
+    Colon,
+}
+
+/// Parse a formula, with or without its leading `=`.
+///
+/// # Errors
+///
+/// [`FormulaError`] for text that is not a formula, a formula longer than
+/// [`MAX_FORMULA_CHARS`] or nested deeper than 128 levels.
+pub fn parse_formula(formula: &str) -> Result<Expr, FormulaError> {
+    let formula = formula.strip_prefix('=').unwrap_or(formula);
+    if formula.chars().count() > MAX_FORMULA_CHARS {
+        return Err(FormulaError {
+            position: MAX_FORMULA_CHARS,
+            reason: "the formula is too long".to_owned(),
+        });
+    }
+    let tokens = tokenize(formula)?;
+    let mut parser = Parser {
+        tokens,
+        position: 0,
+        depth: 0,
+    };
+    let expression = parser.comparison()?;
+    if parser.position < parser.tokens.len() {
+        return Err(parser.error("unexpected text after the formula"));
+    }
+    Ok(expression)
+}
+
+fn tokenize(formula: &str) -> Result<Vec<(Token, usize)>, FormulaError> {
+    let italian = has_semicolon_outside_text(formula);
+    let characters: Vec<char> = formula.chars().collect();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    let error = |position: usize, reason: &str| FormulaError {
+        position,
+        reason: reason.to_owned(),
+    };
+    while index < characters.len() {
+        let character = characters[index];
+        let start = index;
+        match character {
+            ' ' | '\t' | '\n' | '\r' => index += 1,
+            '"' => {
+                let text = quoted(&characters, &mut index, '"')
+                    .ok_or_else(|| error(start, "a text is not closed"))?;
+                tokens.push((Token::Text(text), start));
+            }
+            '\'' => {
+                let name = quoted(&characters, &mut index, '\'')
+                    .ok_or_else(|| error(start, "a sheet name is not closed"))?;
+                if characters.get(index) != Some(&'!') {
+                    return Err(error(index, "a quoted sheet name must be followed by !"));
+                }
+                index += 1;
+                tokens.push((Token::Sheet(name), start));
+            }
+            '#' => {
+                let rest: String = characters[index..].iter().collect();
+                let Some((kind, length)) = ErrorKind::ALL
+                    .iter()
+                    .find(|kind| rest.to_ascii_uppercase().starts_with(kind.code()))
+                    .map(|kind| (*kind, kind.code().chars().count()))
+                else {
+                    return Err(error(start, "unknown error value"));
+                };
+                index += length;
+                tokens.push((Token::Error(kind), start));
+            }
+            letter if letter.is_alphabetic() || letter == '$' || letter == '_' => {
+                let mut word = String::new();
+                while let Some(&next) = characters.get(index) {
+                    if next.is_alphanumeric() || matches!(next, '.' | '_' | '$') {
+                        word.push(next);
+                        index += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if characters.get(index) == Some(&'!') {
+                    index += 1;
+                    tokens.push((Token::Sheet(word), start));
+                } else {
+                    tokens.push((Token::Word(word), start));
+                }
+            }
+            digit
+                if digit.is_ascii_digit()
+                    || (digit == '.' && !italian)
+                    || (digit == ',' && italian) =>
+            {
+                let number = read_number(&characters, &mut index, if italian { ',' } else { '.' });
+                // A number glued to letters is a cell such as `1A`, which is not one.
+                if characters
+                    .get(index)
+                    .is_some_and(|next| next.is_ascii_alphabetic() || *next == '$')
+                {
+                    return Err(error(start, "a number cannot be followed by letters"));
+                }
+                let value = number
+                    .parse::<f64>()
+                    .map_err(|_| error(start, "invalid number"))?;
+                tokens.push((Token::Number(value), start));
+            }
+            symbol => {
+                let next = characters.get(index + 1).copied();
+                let Some((token, length)) = symbol_token(symbol, next, italian) else {
+                    return Err(error(start, "unexpected character"));
+                };
+                index += length;
+                tokens.push((token, start));
+            }
+        }
+    }
+    Ok(tokens)
+}
+
+/// The token of a symbol and how many characters it takes; `None` for no symbol of formulas.
+fn symbol_token(symbol: char, next: Option<char>, italian: bool) -> Option<(Token, usize)> {
+    let operator = |text: &'static str| Some((Token::Operator(text), text.len()));
+    match (symbol, next) {
+        ('(', _) => Some((Token::Open, 1)),
+        (')', _) => Some((Token::Close, 1)),
+        (':', _) => Some((Token::Colon, 1)),
+        (';', _) => Some((Token::Separator, 1)),
+        (',', _) if !italian => Some((Token::Separator, 1)),
+        ('<', Some('=')) => operator("<="),
+        ('<', Some('>')) => operator("<>"),
+        ('>', Some('=')) => operator(">="),
+        ('<', _) => operator("<"),
+        ('>', _) => operator(">"),
+        ('+', _) => operator("+"),
+        ('-', _) => operator("-"),
+        ('*', _) => operator("*"),
+        ('/', _) => operator("/"),
+        ('^', _) => operator("^"),
+        ('&', _) => operator("&"),
+        ('=', _) => operator("="),
+        ('%', _) => operator("%"),
+        _ => None,
+    }
+}
+
+/// The digits of a number at `index`, with `decimal` as the decimal separator and an optional
+/// exponent, written with a `.` for Rust to parse; `index` ends past the number.
+fn read_number(characters: &[char], index: &mut usize, decimal: char) -> String {
+    let mut number = String::new();
+    while let Some(&next) = characters.get(*index) {
+        if next.is_ascii_digit() {
+            number.push(next);
+        } else if next == decimal {
+            number.push('.');
+        } else if matches!(next, 'e' | 'E')
+            && characters
+                .get(*index + 1)
+                .is_some_and(|after| after.is_ascii_digit() || matches!(after, '+' | '-'))
+        {
+            number.push('e');
+            if let Some(&sign) = characters
+                .get(*index + 1)
+                .filter(|sign| matches!(sign, '+' | '-'))
+            {
+                number.push(sign);
+                *index += 1;
+            }
+        } else {
+            break;
+        }
+        *index += 1;
+    }
+    number
+}
+
+/// The text between a quote at `index` and its closing quote, a doubled quote standing for
+/// one; `index` ends past the closing quote. `None` when the text is not closed.
+fn quoted(characters: &[char], index: &mut usize, quote: char) -> Option<String> {
+    let mut text = String::new();
+    *index += 1;
+    loop {
+        match characters.get(*index) {
+            None => return None,
+            Some(&character) if character == quote => {
+                if characters.get(*index + 1) == Some(&quote) {
+                    text.push(quote);
+                    *index += 2;
+                } else {
+                    *index += 1;
+                    return Some(text);
+                }
+            }
+            Some(&other) => {
+                text.push(other);
+                *index += 1;
+            }
+        }
+    }
+}
+
+fn has_semicolon_outside_text(formula: &str) -> bool {
+    let mut in_text = false;
+    let mut in_sheet = false;
+    for character in formula.chars() {
+        match character {
+            '"' if !in_sheet => in_text = !in_text,
+            '\'' if !in_text => in_sheet = !in_sheet,
+            ';' if !in_text && !in_sheet => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+struct Parser {
+    tokens: Vec<(Token, usize)>,
+    position: usize,
+    depth: usize,
+}
+
+impl Parser {
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.position).map(|(token, _)| token)
+    }
+
+    fn error(&self, reason: &str) -> FormulaError {
+        FormulaError {
+            position: self.tokens.get(self.position).map_or_else(
+                || self.tokens.last().map_or(0, |(_, position)| position + 1),
+                |(_, position)| *position,
+            ),
+            reason: reason.to_owned(),
+        }
+    }
+
+    fn operator(&self) -> Option<&'static str> {
+        match self.peek() {
+            Some(Token::Operator(operator)) => Some(operator),
+            _ => None,
+        }
+    }
+
+    fn enter(&mut self) -> Result<(), FormulaError> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err(self.error("the formula is nested too deeply"));
+        }
+        Ok(())
+    }
+
+    fn comparison(&mut self) -> Result<Expr, FormulaError> {
+        self.enter()?;
+        let mut left = self.concatenation()?;
+        while let Some(operator) = self.operator() {
+            let operator = match operator {
+                "=" => BinaryOperator::Equal,
+                "<>" => BinaryOperator::NotEqual,
+                "<" => BinaryOperator::Less,
+                "<=" => BinaryOperator::LessOrEqual,
+                ">" => BinaryOperator::Greater,
+                ">=" => BinaryOperator::GreaterOrEqual,
+                _ => break,
+            };
+            self.position += 1;
+            let right = self.concatenation()?;
+            left = Expr::Binary(operator, Box::new(left), Box::new(right));
+        }
+        self.depth -= 1;
+        Ok(left)
+    }
+
+    fn concatenation(&mut self) -> Result<Expr, FormulaError> {
+        let mut left = self.additive()?;
+        while self.operator() == Some("&") {
+            self.position += 1;
+            let right = self.additive()?;
+            left = Expr::Binary(BinaryOperator::Concatenate, Box::new(left), Box::new(right));
+        }
+        Ok(left)
+    }
+
+    fn additive(&mut self) -> Result<Expr, FormulaError> {
+        let mut left = self.multiplicative()?;
+        while let Some(operator @ ("+" | "-")) = self.operator() {
+            self.position += 1;
+            let right = self.multiplicative()?;
+            let operator = if operator == "+" {
+                BinaryOperator::Add
+            } else {
+                BinaryOperator::Subtract
+            };
+            left = Expr::Binary(operator, Box::new(left), Box::new(right));
+        }
+        Ok(left)
+    }
+
+    fn multiplicative(&mut self) -> Result<Expr, FormulaError> {
+        let mut left = self.power()?;
+        while let Some(operator @ ("*" | "/")) = self.operator() {
+            self.position += 1;
+            let right = self.power()?;
+            let operator = if operator == "*" {
+                BinaryOperator::Multiply
+            } else {
+                BinaryOperator::Divide
+            };
+            left = Expr::Binary(operator, Box::new(left), Box::new(right));
+        }
+        Ok(left)
+    }
+
+    fn power(&mut self) -> Result<Expr, FormulaError> {
+        let mut left = self.unary()?;
+        while self.operator() == Some("^") {
+            self.position += 1;
+            let right = self.unary()?;
+            left = Expr::Binary(BinaryOperator::Power, Box::new(left), Box::new(right));
+        }
+        Ok(left)
+    }
+
+    /// Unary signs bind tighter than `^`, as in Excel: `-2^2` is 4.
+    fn unary(&mut self) -> Result<Expr, FormulaError> {
+        match self.operator() {
+            Some("-") => {
+                self.position += 1;
+                self.enter()?;
+                let operand = self.unary()?;
+                self.depth -= 1;
+                Ok(Expr::Unary(UnaryOperator::Minus, Box::new(operand)))
+            }
+            Some("+") => {
+                self.position += 1;
+                self.enter()?;
+                let operand = self.unary()?;
+                self.depth -= 1;
+                Ok(Expr::Unary(UnaryOperator::Plus, Box::new(operand)))
+            }
+            _ => self.percent(),
+        }
+    }
+
+    fn percent(&mut self) -> Result<Expr, FormulaError> {
+        let mut operand = self.primary()?;
+        while self.operator() == Some("%") {
+            self.position += 1;
+            operand = Expr::Percent(Box::new(operand));
+        }
+        Ok(operand)
+    }
+
+    fn primary(&mut self) -> Result<Expr, FormulaError> {
+        let Some((token, _)) = self.tokens.get(self.position).cloned() else {
+            return Err(self.error("the formula ends too early"));
+        };
+        self.position += 1;
+        match token {
+            Token::Number(value) => Ok(Expr::Number(value)),
+            Token::Text(text) => Ok(Expr::Text(text)),
+            Token::Error(kind) => Ok(Expr::Error(kind)),
+            Token::Open => {
+                let inner = self.comparison()?;
+                if self.peek() != Some(&Token::Close) {
+                    return Err(self.error("a parenthesis is not closed"));
+                }
+                self.position += 1;
+                Ok(Expr::Group(Box::new(inner)))
+            }
+            Token::Sheet(sheet) => {
+                let Some((Token::Word(word), _)) = self.tokens.get(self.position).cloned() else {
+                    return Err(self.error("a sheet name must be followed by a cell"));
+                };
+                self.position += 1;
+                self.reference(Some(sheet), &word)
+            }
+            Token::Word(word) => {
+                if self.peek() == Some(&Token::Open) {
+                    self.position += 1;
+                    return self.call(&word);
+                }
+                match word.to_ascii_uppercase().as_str() {
+                    "TRUE" | "VERO" => return Ok(Expr::Bool(true)),
+                    "FALSE" | "FALSO" => return Ok(Expr::Bool(false)),
+                    _ => {}
+                }
+                self.reference(None, &word)
+            }
+            _ => {
+                self.position -= 1;
+                Err(self.error("expected a value"))
+            }
+        }
+    }
+
+    fn call(&mut self, name: &str) -> Result<Expr, FormulaError> {
+        self.enter()?;
+        let name = canonical_function_name(name);
+        let mut arguments = Vec::new();
+        if self.peek() == Some(&Token::Close) {
+            self.position += 1;
+            self.depth -= 1;
+            return Ok(Expr::Call(name, arguments));
+        }
+        loop {
+            // An empty argument, as in `IF(A1,,2)`, is an empty value.
+            if matches!(self.peek(), Some(Token::Separator | Token::Close)) {
+                arguments.push(Expr::Text(String::new()));
+            } else {
+                arguments.push(self.comparison()?);
+            }
+            match self.peek() {
+                Some(Token::Separator) => self.position += 1,
+                Some(Token::Close) => {
+                    self.position += 1;
+                    break;
+                }
+                _ => return Err(self.error("expected , or ) in the arguments")),
+            }
+        }
+        self.depth -= 1;
+        Ok(Expr::Call(name, arguments))
+    }
+
+    /// A cell, a range of cells or a range of columns, after its optional sheet.
+    fn reference(&mut self, sheet: Option<String>, word: &str) -> Result<Expr, FormulaError> {
+        let start = parse_address(sheet.as_ref(), word);
+        if self.peek() == Some(&Token::Colon) {
+            self.position += 1;
+            let Some((Token::Word(end_word), _)) = self.tokens.get(self.position).cloned() else {
+                return Err(self.error("a range must end with a cell"));
+            };
+            self.position += 1;
+            if let (Some(start), Some(end)) =
+                (start.clone(), parse_address(sheet.as_ref(), &end_word))
+            {
+                return Ok(Expr::Range(RangeAddress {
+                    sheet,
+                    start,
+                    end,
+                    whole_columns: false,
+                }));
+            }
+            if let (Some(start), Some(end)) = (parse_column(word), parse_column(&end_word)) {
+                let corner = |(column, absolute_column): (u32, bool), row: u32| CellAddress {
+                    sheet: sheet.clone(),
+                    cell: CellRef::new(row, column),
+                    absolute_row: false,
+                    absolute_column,
+                };
+                return Ok(Expr::Range(RangeAddress {
+                    start: corner(start, 0),
+                    end: corner(end, MAX_ROWS - 1),
+                    sheet,
+                    whole_columns: true,
+                }));
+            }
+            return Err(self.error("not a range of cells"));
+        }
+        match start {
+            Some(address) => Ok(Expr::Cell(address)),
+            // A name the grid does not know, such as an unknown function written without
+            // parentheses, is Excel's #NAME? rather than a refusal.
+            None if word
+                .chars()
+                .all(|character| character.is_alphanumeric() || matches!(character, '.' | '_')) =>
+            {
+                Ok(Expr::Error(ErrorKind::Name))
+            }
+            None => Err(self.error("not a cell")),
+        }
+    }
+}
+
+fn parse_address(sheet: Option<&String>, word: &str) -> Option<CellAddress> {
+    let (cell, absolute_column, absolute_row, rest) = parse_cell(word.as_bytes())?;
+    rest.is_empty().then(|| CellAddress {
+        sheet: sheet.cloned(),
+        cell,
+        absolute_row,
+        absolute_column,
+    })
+}
+
+fn parse_column(word: &str) -> Option<(u32, bool)> {
+    let (absolute, letters) = match word.strip_prefix('$') {
+        Some(letters) => (true, letters),
+        None => (false, word),
+    };
+    column_index(letters).map(|column| (column, absolute))
+}
+
+/// The English name of a function typed in Italian or English, in capitals.
+fn canonical_function_name(name: &str) -> String {
+    let upper = name.to_uppercase();
+    let english = match upper.as_str() {
+        "SOMMA" => "SUM",
+        "MEDIA" => "AVERAGE",
+        "CONTA.NUMERI" => "COUNT",
+        "CONTA.VALORI" => "COUNTA",
+        "CONTA.VUOTE" => "COUNTBLANK",
+        "SE" => "IF",
+        "SE.ERRORE" => "IFERROR",
+        "E" => "AND",
+        "O" => "OR",
+        "NON" => "NOT",
+        "ARROTONDA" => "ROUND",
+        "ARROTONDA.PER.ECC" => "ROUNDUP",
+        "ARROTONDA.PER.DIF" => "ROUNDDOWN",
+        "ASS" => "ABS",
+        "INT" => "INT",
+        "RESTO" => "MOD",
+        "POTENZA" => "POWER",
+        "RADQ" => "SQRT",
+        "CONCATENA" => "CONCATENATE",
+        "LUNGHEZZA" => "LEN",
+        "SINISTRA" => "LEFT",
+        "DESTRA" => "RIGHT",
+        "STRINGA.ESTRAI" => "MID",
+        "MAIUSC" => "UPPER",
+        "MINUSC" => "LOWER",
+        "ANNULLA.SPAZI" => "TRIM",
+        "SOMMA.SE" => "SUMIF",
+        "CONTA.SE" => "COUNTIF",
+        "MEDIA.SE" => "AVERAGEIF",
+        "CERCA.VERT" => "VLOOKUP",
+        "CERCA.ORIZZ" => "HLOOKUP",
+        "INDICE" => "INDEX",
+        "CONFRONTA" => "MATCH",
+        "PRODOTTO" => "PRODUCT",
+        "VAL.VUOTO" => "ISBLANK",
+        "VAL.NUMERO" => "ISNUMBER",
+        "VAL.TESTO" => "ISTEXT",
+        "VAL.ERRORE" => "ISERROR",
+        "OGGI" => "TODAY",
+        "ADESSO" => "NOW",
+        "DATA" => "DATE",
+        "ANNO" => "YEAR",
+        "MESE" => "MONTH",
+        "GIORNO" => "DAY",
+        "VERO" => "TRUE",
+        "FALSO" => "FALSE",
+        "SOMMA.PIÙ.SE" => "SUMIFS",
+        "CONTA.PIÙ.SE" => "COUNTIFS",
+        other => other,
+    };
+    english.to_owned()
+}
+
+/// A formula printed back in file syntax, without the leading `=`.
+#[must_use]
+pub fn print_formula(expression: &Expr) -> String {
+    let mut text = String::new();
+    print(expression, &mut text, 0);
+    text
+}
+
+fn print(expression: &Expr, text: &mut String, parent_precedence: u8) {
+    match expression {
+        Expr::Number(value) => text.push_str(&number_text(*value)),
+        Expr::Text(value) => {
+            let _ = write!(text, "\"{}\"", value.replace('"', "\"\""));
+        }
+        Expr::Bool(value) => text.push_str(if *value { "TRUE" } else { "FALSE" }),
+        Expr::Error(kind) => text.push_str(kind.code()),
+        Expr::Cell(address) => {
+            print_sheet(address.sheet.as_deref(), text);
+            print_cell(address, text);
+        }
+        Expr::Range(range) => {
+            print_sheet(range.sheet.as_deref(), text);
+            if range.whole_columns {
+                let column = |address: &CellAddress, text: &mut String| {
+                    if address.absolute_column {
+                        text.push('$');
+                    }
+                    text.push_str(&column_name(address.cell.column));
+                };
+                column(&range.start, text);
+                text.push(':');
+                column(&range.end, text);
+            } else {
+                print_cell(&range.start, text);
+                text.push(':');
+                print_cell(&range.end, text);
+            }
+        }
+        Expr::Unary(operator, operand) => {
+            text.push(match operator {
+                UnaryOperator::Plus => '+',
+                UnaryOperator::Minus => '-',
+            });
+            print(operand, text, 6);
+        }
+        Expr::Percent(operand) => {
+            print(operand, text, 7);
+            text.push('%');
+        }
+        Expr::Group(inner) => {
+            text.push('(');
+            print(inner, text, 0);
+            text.push(')');
+        }
+        Expr::Binary(operator, left, right) => {
+            let precedence = operator.precedence();
+            let parenthesize = precedence < parent_precedence;
+            if parenthesize {
+                text.push('(');
+            }
+            print(left, text, precedence);
+            text.push_str(operator.symbol());
+            // Operators are left-associative: a right operand of the same level needs brackets.
+            print(right, text, precedence + 1);
+            if parenthesize {
+                text.push(')');
+            }
+        }
+        Expr::Call(name, arguments) => {
+            text.push_str(name);
+            text.push('(');
+            for (index, argument) in arguments.iter().enumerate() {
+                if index > 0 {
+                    text.push(',');
+                }
+                if !matches!(argument, Expr::Text(value) if value.is_empty()) {
+                    print(argument, text, 0);
+                }
+            }
+            text.push(')');
+        }
+    }
+}
+
+fn print_sheet(sheet: Option<&str>, text: &mut String) {
+    let Some(sheet) = sheet else {
+        return;
+    };
+    let plain = sheet
+        .chars()
+        .all(|character| character.is_alphanumeric() || character == '_')
+        && sheet.chars().next().is_some_and(char::is_alphabetic)
+        && parse_cell(sheet.as_bytes()).is_none();
+    if plain {
+        text.push_str(sheet);
+    } else {
+        let _ = write!(text, "'{}'", sheet.replace('\'', "''"));
+    }
+    text.push('!');
+}
+
+fn print_cell(address: &CellAddress, text: &mut String) {
+    if address.absolute_column {
+        text.push('$');
+    }
+    text.push_str(&column_name(address.cell.column));
+    if address.absolute_row {
+        text.push('$');
+    }
+    let _ = write!(text, "{}", address.cell.row + 1);
+}
+
+/// A number as a formula writes it: the shortest text that reads back to the same value.
+#[must_use]
+pub fn number_text(value: f64) -> String {
+    if value.is_finite() && value.fract() == 0.0 && value.abs() < 1e15 {
+        #[allow(clippy::cast_possible_truncation)]
+        let integer = value as i64;
+        return integer.to_string();
+    }
+    let text = format!("{value}");
+    if text.contains('e') || text.len() < 22 {
+        text
+    } else {
+        format!("{value:e}")
+    }
+}
+
+#[cfg(test)]
+mod tests;

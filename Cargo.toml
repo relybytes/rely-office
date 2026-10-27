@@ -3,15 +3,17 @@ resolver = "3"
 members = [
   "crates/rely-office-core",
   "crates/rely-office-render",
+  "crates/rely-office-sheet",
   "crates/rely-office-cli",
   "crates/rely-office-wasm",
   "crates/rely-office-render-wasm",
+  "crates/rely-office-sheet-wasm",
   "crates/rely-office-corpus",
 ]
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.92"
 license = "MPL-2.0"

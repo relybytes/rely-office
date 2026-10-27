@@ -89,9 +89,11 @@ the Linux LibreOffice and Poppler differ; the job uploads the report and both se
 
 ## Fuzzing
 
-`fuzz/` is a cargo-fuzz workspace of its own with four targets: `extract_text`, `read_workbook`,
-`read_document_tree` and `render`. The last one fails when the source written from any readable
-document does not typeset, which would be a bug of the writer. `.github/workflows/fuzz.yml` runs
+`fuzz/` is a cargo-fuzz workspace of its own with six targets: `extract_text`, `read_workbook`,
+`read_document_tree`, `render`, `formula` and `spreadsheet`. `render` fails when the source written
+from any readable document does not typeset, which would be a bug of the writer; `formula` when a
+printed formula does not parse back to itself; `spreadsheet` when a workbook it read does not
+survive a write and a read. `.github/workflows/fuzz.yml` runs
 each target for five minutes every Monday and by hand, on nightly, and uploads a crashing input.
 
 ```sh

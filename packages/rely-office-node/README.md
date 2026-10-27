@@ -1,12 +1,13 @@
 # @relybytes/rely-office
 
-Reads office documents in Node without an office suite, through
+Office documents in Node and in the browser without an office suite, through
 [rely-office](https://github.com/relybytes/rely-office) compiled to WebAssembly: the format of a
-file, its text for a search index, the sheets of a spreadsheet as tables, and a `.docx` as a
-neutral document tree for import into a rich-text editor.
+file, its text for a search index, the sheets of a spreadsheet as tables, a `.docx` as a neutral
+document tree for a rich-text editor and back, PDF and PNG pages through Typst, and an editable
+spreadsheet with formulas that opens and saves xlsx.
 
-Everything runs in process and synchronously; there is no native addon to build and no external
-program to call. Every read is bounded by limits, so an uploaded file cannot exhaust memory.
+Everything runs in process; there is no native addon to build and no external program to call.
+Every read is bounded by limits, so an uploaded file cannot exhaust memory.
 
 ## Install
 
@@ -54,6 +55,9 @@ A document is a `Uint8Array` (a Node `Buffer` is one), an `ArrayBuffer` or any t
 | `extractText(bytes, fileName?, limits?)` | every format above | `{ format, text, truncated }` |
 | `readSheets(bytes, fileName?, limits?)` | xlsx, xls, ods, csv, tsv | `{ format, sheets: [{ name, rows, totalRows, totalColumns }] }` |
 | `readDocumentTree(bytes, limits?)` | docx | `{ blocks, media, report }` |
+| `render(bytes, fileName?, options?)` | docx, xlsx, xls, ods, csv, tsv (layout); pptx, odt, odp, doc, ppt (text) | `{ format, fidelity, pageCount, truncated, pdf, thumbnail, pageImages }` |
+| `writeDocx({ blocks, media?, page? })` | a document tree | the docx bytes |
+| `createSheet(options?)`, `openSheet(bytes, fileName?, options?)` | xlsx, xls, ods, csv, tsv | a `SheetDocument` |
 | `version` | | the library version |
 
 The bytes decide the format; the file name only tells CSV from TSV, which carry no signature.
@@ -89,11 +93,78 @@ try {
 }
 ```
 
+## Rendering
+
+```js
+const rendered = office.render(bytes, 'contratto.docx', {
+  pdf: true,                                     // default
+  thumbnailWidth: 320,                           // a PNG of the first page, at most 2,000 pixels
+  pageImages: { pixelsPerPoint: 1.5, maxPages: 3 },
+  limits: { maxTextChars: 200000 },              // the default of a render
+});
+// { format: 'docx', fidelity: 'layout', pageCount: 2, truncated: false,
+//   pdf: Uint8Array, thumbnail: Uint8Array, pageImages: [Uint8Array, ...] }
+```
+
+The typesetter, 27 MB of WebAssembly, loads on the first call with the fonts the package ships
+(Carlito, Caladea and the Liberation fonts, matching Calibri, Cambria, Arial, Times New Roman and
+Courier New). `fidelity` is `text` for the formats set as their text on A4. Errors add
+`INVALID_OPTIONS`, `TYPESET_FAILED` and `EXPORT_FAILED` to the codes above.
+
+## Writing a docx
+
+```js
+const tree = office.readDocumentTree(bytes);
+const docx = office.writeDocx({
+  blocks: tree.blocks,
+  media: tree.media.map((item) => item.bytes),   // image.media indexes this list
+  page: { widthTwips: 11906, heightTwips: 16838, marginsTwips: [1417, 1417, 1417, 1417] },
+});
+```
+
+`readDocumentTree` reads the written file back to the same blocks. A tree that is not one throws
+`INVALID_TREE`.
+
+## Spreadsheets
+
+```js
+const sheet = office.openSheet(readFileSync('conti.xlsx'), 'conti.xlsx', { locale: 'it' });
+try {
+  sheet.setInput(0, 9, 1, '=SOMMA(B1:B9)');          // stored as =SUM(B1:B9)
+  sheet.setFormat(0, 9, 1, { type: 'decimals', decimals: 2 });
+  sheet.insertRows(0, 0, 1);                         // formulas follow the cells
+  sheet.cells(0, { top: 0, left: 0, bottom: 40, right: 10 });
+  // [{ row, column, input: '=SUM(B2:B10)', display: '1.234,50', kind: 'number', format }, ...]
+  writeFileSync('conti.xlsx', sheet.save());
+} finally {
+  sheet.free();
+}
+```
+
+Rows, columns and sheets are zero-based. The locale (`it`, the default, or `en`) decides how
+numbers are typed and shown. `TODAY()` and `NOW()` read the date set with `setToday`. Failures
+throw `INVALID_FORMULA`, `NO_SUCH_SHEET`, `DUPLICATE_SHEET_NAME`, `INVALID_SHEET_NAME`,
+`LAST_SHEET`, `OUT_OF_BOUNDS`, `INVALID_INPUT` or `INVALID_LOCALE`. The formulas, functions and
+edits are described in [docs/editing.md](https://github.com/relybytes/rely-office/blob/main/docs/editing.md).
+
+### In the browser
+
+```js
+import { initSheets, openSheet } from '@relybytes/rely-office/web';
+
+await initSheets();                 // fetches the .wasm next to the module; or pass a URL or bytes
+const sheet = await openSheet(bytes, 'conti.xlsx', { locale: 'it' });
+```
+
+The browser entry is an ES module with the same `SheetDocument`, built with `wasm-bindgen
+--target web`; bundlers such as webpack resolve its `.wasm` as an asset.
+
 ## The document tree
 
 `readDocumentTree` returns blocks, not HTML, so the caller maps them onto its editor's schema.
 
-- **Blocks**: `heading` (`level` 1 to 6), `paragraph`, `listItem` (`ordered`, `level` from 0,
+- **Blocks**: `heading` (`level` 1 to 6, `align`), `paragraph` (`align`: `left`, `center`, `right`,
+  `justify`, absent when unset), `listItem` (`ordered`, `level` from 0,
   `listId`: consecutive items with the same id form one list), `table` (rows with `header`, cells
   with `colSpan`, `rowSpan` and their own blocks), `blockquote` (consecutive quote paragraphs),
   `codeBlock` (consecutive code paragraphs as lines of `text`), `horizontalRule`.

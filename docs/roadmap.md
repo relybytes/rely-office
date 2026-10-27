@@ -1,37 +1,66 @@
 # Roadmap
 
-Phase 1 is a server-side reader and viewer for the Drive of the Rely Platform. Estimates are in
-person-months (PM) and are the team's own, with no external source.
+Phase 1 is a server-side reader and viewer for the Drive of the Rely Platform; phase 2 the editing
+the Drive needs from the same library. Estimates are in person-months (PM) and are the team's own,
+with no external source.
+
+## Phase 1: reading and rendering
 
 | Step | Content | PM | Status |
 | --- | --- | --- | --- |
 | 1.1 | Detection, text extraction for docx and spreadsheets, sheet tables, CLI | 0.5 | done (0.1.0) |
 | 1.2 | Text of pptx, odt, odp; text of doc and ppt through the compound file streams | 1-1.5 | done (0.2.0) |
 | 1.2b | The docx document tree for import into a rich-text editor, with media and an import report | 0.5 | done (0.2.0) |
-| 1.3 | Rendering spike: docx and xlsx to PDF through Typst, office2pdf (Apache-2.0) evaluated as a base | 1 | planned |
-| 1.4 | `rely-office-render`: PDF and PNG thumbnails, metric-compatible fonts (Carlito, Caladea, OFL) | 2-3 | planned |
+| 1.3 | Rendering through Typst: docx and spreadsheets written as Typst source, typeset in process | 1 | done (0.3.0) |
+| 1.4 | `rely-office-render`: PDF and PNG, the looks of a docx and the print settings of an xlsx, metric-compatible fonts (Carlito, Caladea, Liberation, OFL) | 2-3 | done (0.3.0) |
 | 1.5 | `@relybytes/rely-office`: the WebAssembly package for Node, used in process by the Drive service | 1 | done (0.2.0) |
-| 1.6 | Corpus of Italian documents and a pixel comparison against LibreOffice in CI; `cargo-fuzz` targets | 1-2 | planned |
+| 1.6 | Corpus of Italian documents and a page comparison against LibreOffice in CI; `cargo-fuzz` targets | 1-2 | done (0.3.0) |
 
-Step 1.5 was planned as a napi addon built for linux-x64 musl. WebAssembly replaced it: one
-artifact for every platform the Drive runs on, no native build in its image, and the same memory
-safety as the Rust core. Rendering (1.3, 1.4) will reach Node through the same package.
+Step 1.3 was planned on office2pdf as a base. It was not used: the document tree already held the
+structure, so the renderer writes Typst source from it and from the new looks, with no second
+reader to maintain. Step 1.5 was planned as a napi addon and became WebAssembly: one artifact for
+every platform, no native build in the Drive's image.
 
-**Gate after 1.6:** the Drive drops Gotenberg for previews only when at least 95% of the corpus
-pages pass the pixel threshold. Below it, Gotenberg stays for previews and rely-office keeps text
-extraction, the import tree and thumbnails.
+**The 95% gate.** The gate was written to decide when the Drive could drop Gotenberg for previews.
+Gotenberg was dropped by decision on 2026-10-25, so the gate now measures quality rather than
+deciding anything. On 2026-10-27, 6 of 11 corpus pages pass the threshold (54.5%): every sheet
+page, and every docx with the page count LibreOffice prints; the docx pages that fail drift by a
+few pixels per heading, where LibreOffice and Word space paragraphs differently and the renderer
+follows Word. [rendering.md](rendering.md) has the method and the figures.
 
-Out of phase 1: editing (IronCalc for spreadsheets, an existing editor for Word documents),
-collaboration, a browser build of the package (the WebAssembly module runs there, the bindings are
-generated for Node only), and a document tree for odt.
+## Phase 2: editing
+
+| Step | Content | Status |
+| --- | --- | --- |
+| 2.1 | `write_docx`: the document tree back to a docx Word and LibreOffice open, read back to the same tree | done (0.3.0) |
+| 2.2 | `rely-office-sheet`: cells, formulas (53 functions, Italian names accepted), recalculation with cycle detection, number formats | done (0.3.0) |
+| 2.3 | Row, column and sheet edits that move references; paste with relative references | done (0.3.0) |
+| 2.4 | xlsx, xls, ods, csv and tsv in, xlsx out with cached values | done (0.3.0) |
+| 2.5 | The spreadsheet for JavaScript, in Node and in the browser | done (0.3.0) |
+
+The editors themselves are the platform's: the Documento's rich-text editor maps the document
+tree, and the Foglio's grid drives a `SheetDocument`.
+
+## Next
+
+- Headers, footers, footnotes and floating images in the renderer; cell shading and per-cell
+  borders in tables.
+- pptx laid out as slides instead of text.
+- Cell styles in the spreadsheet (fonts, fills, borders, alignment), merged cells, more functions.
+- A larger corpus with documents made by Word, and the corpus figure as a CI gate once it is
+  stable.
+- Publishing to the public npm registry (issue #1).
 
 ## Known risks
 
 - Typst lays out pages its own way: a Word document may break pages differently.
 - Calibri and Cambria cannot be redistributed; metric-compatible fonts keep line breaks close.
-- office2pdf has a single maintainer: contribute upstream before forking.
+- The renderer module is 27 MB of WebAssembly, most of it Typst; it loads only on the first
+  render, and a process that only reads never loads it.
+- Typst pulls in crates that RustSEC lists as unmaintained (ttf-parser, rustybuzz, yaml and
+  bincode crates); `deny.toml` records each with its reason, to revisit on every Typst upgrade.
 - The binary formats (doc, xls, ppt) are the long tail: xls is read through calamine; doc and ppt
-  give text for search only, ppt in stream order, and Word 6 and 95 files are refused.
+  give text only, ppt in stream order, and Word 6 and 95 files are refused.
 - calamine holds a sheet as a dense range from its first to its last used cell, so a workbook with
   two cells far apart costs memory in proportion to the rectangle between them, inside the input
   and member caps.

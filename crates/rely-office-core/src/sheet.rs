@@ -151,7 +151,7 @@ fn place_cells<T: calamine::CellType>(
 fn display_cell(cell: &Data) -> String {
     match cell {
         Data::Empty => String::new(),
-        Data::Error(error) => format!("#{error:?}").to_uppercase(),
+        Data::Error(error) => error.to_string(),
         other => other.to_string(),
     }
 }
