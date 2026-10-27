@@ -23,8 +23,8 @@ use zip::write::SimpleFileOptions;
 use super::edges::{Border, BorderStyle, Borders, CellLook, TabKind, TabLeader, VerticalAlignment};
 use super::look::{LineSpacing, PageField, ParagraphLook, RunLook, TableLook};
 use super::{
-    Alignment, Block, DocumentTree, Inline, Mark, Media, Note, NoteKind, PageLayout, Section,
-    TableRow,
+    Alignment, Anchor, Block, DocumentTree, Inline, Mark, Media, Note, NoteKind, PageLayout,
+    Section, TableRow, TextFrame,
 };
 use crate::OfficeError;
 
@@ -45,7 +45,8 @@ const NAMESPACES: &str = concat!(
     r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" "#,
     r#"xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" "#,
     r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,
-    r#"xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture""#,
+    r#"xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" "#,
+    r#"xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape""#,
 );
 
 /// Write a document tree as a docx. An image whose type is not one Word shows (PNG, JPEG, GIF,
@@ -232,7 +233,7 @@ fn section_references(
 }
 
 /// A zip of these members, deflated.
-fn zip_members(members: &[(String, Vec<u8>)]) -> Result<Vec<u8>, OfficeError> {
+pub(crate) fn zip_members(members: &[(String, Vec<u8>)]) -> Result<Vec<u8>, OfficeError> {
     let damaged = |error: &dyn std::fmt::Display| OfficeError::DamagedContainer(error.to_string());
     let mut package = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for (name, bytes) in members {
@@ -317,7 +318,16 @@ impl DocxWriter<'_> {
     /// Blocks as body XML; `paragraph_style` names the style of plain paragraphs, a quote's or a
     /// note's.
     fn blocks(&mut self, blocks: &[Block], paragraph_style: Option<&str>, xml: &mut String) {
-        for block in blocks {
+        let mut index = 0;
+        while let Some(block) = blocks.get(index) {
+            if block_frame(block).is_some() {
+                // A text box with no paragraph before it to hold it gets one of its own.
+                xml.push_str("<w:p>");
+                index = self.text_boxes(blocks, index, xml);
+                xml.push_str("</w:p>");
+                continue;
+            }
+            index += 1;
             match block {
                 Block::Heading {
                     level,
@@ -372,7 +382,33 @@ impl DocxWriter<'_> {
                     "</w:pBdr></w:pPr></w:p>"
                 )),
             }
+            // The text boxes the tree sets after a paragraph are anchored in it, as they were read.
+            if blocks.get(index).and_then(block_frame).is_some() && xml.ends_with("</w:p>") {
+                xml.truncate(xml.len() - "</w:p>".len());
+                index = self.text_boxes(blocks, index, xml);
+                xml.push_str("</w:p>");
+            }
         }
+    }
+
+    /// The text boxes from `start` on, one run each, the consecutive blocks of a frame together;
+    /// the index of the first block past them.
+    fn text_boxes(&mut self, blocks: &[Block], start: usize, xml: &mut String) -> usize {
+        let mut index = start;
+        while let Some(frame) = blocks.get(index).and_then(block_frame).cloned() {
+            let end = blocks[index..]
+                .iter()
+                .position(|block| block_frame(block).is_none_or(|other| other.id != frame.id))
+                .map_or(blocks.len(), |offset| index + offset);
+            let content: Vec<Block> = blocks[index..end].iter().map(without_frame).collect();
+            let mut inner = String::new();
+            self.blocks(&content, None, &mut inner);
+            let id = self.next_drawing_id;
+            self.next_drawing_id += 1;
+            xml.push_str(&floating::text_box_run(&frame, &inner, id));
+            index = end;
+        }
+        index
     }
 
     fn paragraph(
@@ -430,8 +466,14 @@ impl DocxWriter<'_> {
                     alt,
                     width,
                     height,
-                    ..
-                } => self.image(*media, alt.as_deref(), *width, *height, xml),
+                    anchor,
+                } => self.image(
+                    *media,
+                    alt.as_deref(),
+                    (*width, *height),
+                    anchor.as_deref(),
+                    xml,
+                ),
                 Inline::NoteReference { note } => self.note_reference(*note, xml),
             }
         }
@@ -530,8 +572,8 @@ impl DocxWriter<'_> {
         &mut self,
         media: usize,
         alt: Option<&str>,
-        width: Option<u32>,
-        height: Option<u32>,
+        (width, height): (Option<u32>, Option<u32>),
+        anchor: Option<&Anchor>,
         xml: &mut String,
     ) {
         let Some(item) = self.media.get(media) else {
@@ -559,22 +601,46 @@ impl DocxWriter<'_> {
         } else {
             (width, height)
         };
-        let (cx, cy) = (width * EMUS_PER_PIXEL, height * EMUS_PER_PIXEL);
+        let (cx, cy) = match anchor {
+            Some(anchor) if anchor.width_emu > 0 && anchor.height_emu > 0 => {
+                (anchor.width_emu, anchor.height_emu)
+            }
+            _ => (
+                i64::try_from(width * EMUS_PER_PIXEL).unwrap_or(i64::MAX),
+                i64::try_from(height * EMUS_PER_PIXEL).unwrap_or(i64::MAX),
+            ),
+        };
         let drawing_id = self.next_drawing_id;
         self.next_drawing_id += 1;
         let description = escape(alt.unwrap_or_default());
+        let doc_properties = format!(
+            r#"<wp:docPr id="{drawing_id}" name="Picture {drawing_id}" descr="{description}"/>"#
+        );
+        let (opening, closing) = match anchor {
+            Some(anchor) => (
+                floating::anchor_start(anchor, cx, cy, &doc_properties, drawing_id),
+                "</wp:anchor>",
+            ),
+            None => (
+                format!(
+                    r#"<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{cx}" cy="{cy}"/>{doc_properties}"#
+                ),
+                "</wp:inline>",
+            ),
+        };
         let _ = write!(
             xml,
             concat!(
-                r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">"#,
-                r#"<wp:extent cx="{cx}" cy="{cy}"/><wp:docPr id="{id}" name="Picture {id}" descr="{descr}"/>"#,
+                r#"<w:r><w:drawing>{opening}"#,
                 r#"<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
                 r#"<pic:pic><pic:nvPicPr><pic:cNvPr id="{id}" name="Picture {id}" descr="{descr}"/><pic:cNvPicPr/></pic:nvPicPr>"#,
                 r#"<pic:blipFill><a:blip r:embed="{rel}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>"#,
                 r#"<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>"#,
                 r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"#,
-                r#"</a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
+                r#"</a:graphicData></a:graphic>{closing}</w:drawing></w:r>"#
             ),
+            opening = opening,
+            closing = closing,
             cx = cx,
             cy = cy,
             id = drawing_id,
@@ -1094,7 +1160,7 @@ fn push_text_runs(xml: &mut String, text: &str, run_properties: &str) {
 }
 
 /// Text escaped for XML, with the characters XML 1.0 cannot hold dropped.
-fn escape(text: &str) -> String {
+pub(crate) fn escape(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for character in text.chars() {
         match character {
@@ -1112,7 +1178,7 @@ fn escape(text: &str) -> String {
     escaped
 }
 
-fn image_extension(content_type: &str) -> Option<&'static str> {
+pub(crate) fn image_extension(content_type: &str) -> Option<&'static str> {
     match content_type {
         "image/png" => Some("png"),
         "image/jpeg" => Some("jpeg"),
@@ -1442,6 +1508,32 @@ const STYLES: &str = concat!(
     r#"<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style>"#,
     "</w:styles>"
 );
+
+/// The frame of a block set in a text box.
+fn block_frame(block: &Block) -> Option<&TextFrame> {
+    match block {
+        Block::Paragraph { look, .. }
+        | Block::Heading { look, .. }
+        | Block::ListItem { look, .. } => look.frame.as_ref(),
+        Block::Table { look, .. } => look.frame.as_ref(),
+        Block::Blockquote { .. } | Block::CodeBlock { .. } | Block::HorizontalRule => None,
+    }
+}
+
+/// A block of a text box as the box's content, without the frame that put it there.
+fn without_frame(block: &Block) -> Block {
+    let mut block = block.clone();
+    match &mut block {
+        Block::Paragraph { look, .. }
+        | Block::Heading { look, .. }
+        | Block::ListItem { look, .. } => look.frame = None,
+        Block::Table { look, .. } => look.frame = None,
+        Block::Blockquote { .. } | Block::CodeBlock { .. } | Block::HorizontalRule => {}
+    }
+    block
+}
+
+mod floating;
 
 #[cfg(test)]
 mod tests;

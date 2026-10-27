@@ -6,7 +6,8 @@
 
 use super::*;
 use crate::document::{
-    CellLook, ImportReport, PageLayout, ParagraphLook, RunLook, TableCell, TableLook,
+    AnchorAlign, AnchorBase, AnchorPosition, CellLook, ImportReport, PageLayout, ParagraphLook,
+    RunLook, TableCell, TableLook, Wrap,
 };
 use crate::{Limits, read_document_tree};
 
@@ -394,4 +395,163 @@ fn escapes_text_and_drops_what_xml_cannot_hold() {
         escape("a<b>&\"c'\u{1}\u{fffe}\td"),
         "a&lt;b&gt;&amp;&quot;c&apos;\td"
     );
+}
+
+fn floating_anchor(wrap: Wrap, horizontal: AnchorPosition, vertical: AnchorPosition) -> Anchor {
+    Anchor {
+        horizontal,
+        vertical,
+        width_emu: 1_828_800,
+        height_emu: 914_400,
+        wrap,
+        distance_emu: [0, 0, 114_300, 114_300],
+    }
+}
+
+fn at(base: AnchorBase, offset_emu: i64, align: Option<AnchorAlign>) -> AnchorPosition {
+    AnchorPosition {
+        base,
+        offset_emu,
+        align,
+    }
+}
+
+fn framed(value: &str, frame: &TextFrame) -> Block {
+    Block::Paragraph {
+        content: vec![text(value, Vec::new())],
+        align: None,
+        look: ParagraphLook {
+            frame: Some(frame.clone()),
+            ..ParagraphLook::default()
+        },
+    }
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one document with every kind of floating object"
+)]
+fn writes_floating_pictures_and_text_boxes_where_they_float() {
+    let picture_anchor = floating_anchor(
+        Wrap::Around,
+        at(AnchorBase::Margin, 0, Some(AnchorAlign::End)),
+        at(AnchorBase::Paragraph, 127_000, None),
+    );
+    let boxed = TextFrame {
+        id: 1,
+        anchor: floating_anchor(
+            Wrap::InFront,
+            at(AnchorBase::Page, 914_400, None),
+            at(AnchorBase::Page, 0, Some(AnchorAlign::Center)),
+        ),
+        fill: Some("FFF2CC".to_owned()),
+        line: Some(("C00000".to_owned(), 12)),
+    };
+    let behind = TextFrame {
+        id: 2,
+        anchor: floating_anchor(
+            Wrap::Behind,
+            at(AnchorBase::Line, 0, Some(AnchorAlign::Start)),
+            at(AnchorBase::Line, 0, Some(AnchorAlign::End)),
+        ),
+        fill: None,
+        line: None,
+    };
+    let above_and_below = TextFrame {
+        id: 3,
+        anchor: floating_anchor(
+            Wrap::TopAndBottom,
+            at(AnchorBase::Column, 0, Some(AnchorAlign::Center)),
+            at(AnchorBase::Margin, 0, Some(AnchorAlign::Start)),
+        ),
+        fill: None,
+        line: None,
+    };
+    let blocks = vec![
+        framed("prima del testo", &above_and_below),
+        paragraph(
+            vec![
+                text("Ancora", Vec::new()),
+                Inline::Image {
+                    media: 0,
+                    alt: Some("logo".to_owned()),
+                    width: Some(192),
+                    height: Some(96),
+                    anchor: Some(Box::new(picture_anchor)),
+                },
+            ],
+            None,
+        ),
+        framed("riga uno", &boxed),
+        framed("riga due", &boxed),
+        framed("dietro", &behind),
+        Block::Table {
+            rows: vec![TableRow {
+                header: false,
+                cells: vec![cell("cella", 1, 1)],
+            }],
+            look: TableLook::default(),
+        },
+        framed("dopo la tabella", &above_and_below),
+    ];
+    let media = vec![Media {
+        content_type: "image/png",
+        bytes: PNG.to_vec(),
+    }];
+    let bytes = write_docx(&tree(blocks, media)).unwrap();
+    let read = read_document_tree(&bytes, &Limits::default()).unwrap();
+    assert_eq!(read.report.text_boxes, 4);
+    let frame_of = |block: &Block| match block {
+        Block::Paragraph { look, .. } => look.frame.clone(),
+        _ => None,
+    };
+    let texts: Vec<String> = read
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Paragraph { content, .. } => Some(
+                content
+                    .iter()
+                    .filter_map(|inline| match inline {
+                        Inline::Text { text, .. } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "",
+            "prima del testo",
+            "Ancora",
+            "riga uno",
+            "riga due",
+            "dietro",
+            "",
+            "dopo la tabella"
+        ],
+        "a box after a table, or first, gets a paragraph of its own"
+    );
+    let Block::Paragraph { content, .. } = &read.blocks[2] else {
+        panic!("the anchoring paragraph");
+    };
+    let Inline::Image { anchor, .. } = &content[1] else {
+        panic!("the picture");
+    };
+    assert_eq!(anchor.as_deref(), Some(&picture_anchor));
+    let first = frame_of(&read.blocks[3]).unwrap();
+    let second = frame_of(&read.blocks[4]).unwrap();
+    assert_eq!(first.id, second.id, "two paragraphs of one box");
+    assert_eq!(first.anchor, boxed.anchor);
+    assert_eq!(first.fill.as_deref(), Some("FFF2CC"));
+    assert_eq!(first.line, Some(("C00000".to_owned(), 12)));
+    let dietro = frame_of(&read.blocks[5]).unwrap();
+    assert_eq!(dietro.anchor, behind.anchor);
+    assert_eq!((dietro.fill, dietro.line), (None, None));
+    let column = frame_of(&read.blocks[1]).unwrap();
+    assert_eq!(column.anchor, above_and_below.anchor);
 }
