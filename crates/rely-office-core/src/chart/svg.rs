@@ -133,7 +133,13 @@ pub(crate) fn chart_svg(chart: &Chart, width: f64, height: f64) -> String {
     } else if chart
         .plots
         .iter()
-        .all(|plot| plot.kind == PlotKind::Scatter)
+        .all(|plot| matches!(plot.kind, PlotKind::Radar { .. }))
+    {
+        radar(&mut svg, chart, area);
+    } else if chart
+        .plots
+        .iter()
+        .all(|plot| matches!(plot.kind, PlotKind::Scatter | PlotKind::Bubble))
     {
         scatter(&mut svg, chart, area);
     } else {
@@ -579,7 +585,11 @@ fn categories(svg: &mut String, chart: &Chart, area: Area) {
         .filter(|plot| {
             !matches!(
                 plot.kind,
-                PlotKind::Pie | PlotKind::Doughnut { .. } | PlotKind::Scatter
+                PlotKind::Pie
+                    | PlotKind::Doughnut { .. }
+                    | PlotKind::Scatter
+                    | PlotKind::Bubble
+                    | PlotKind::Radar { .. }
             )
         })
         .collect();
@@ -1049,7 +1059,11 @@ fn categories(svg: &mut String, chart: &Chart, area: Area) {
                     }
                 }
             }
-            PlotKind::Pie | PlotKind::Doughnut { .. } | PlotKind::Scatter => {}
+            PlotKind::Pie
+            | PlotKind::Doughnut { .. }
+            | PlotKind::Scatter
+            | PlotKind::Bubble
+            | PlotKind::Radar { .. } => {}
         }
     }
 
@@ -1110,6 +1124,16 @@ fn scatter(svg: &mut String, chart: &Chart, area: Area) {
     let (Some((x_low, x_high)), Some((y_low, y_high))) = (x_extent, y_extent) else {
         return;
     };
+    // Bubbles reach past their centres, so the axes leave room around the outermost.
+    let room = |low: f64, high: f64| {
+        if series.iter().any(|series| !series.sizes.is_empty()) {
+            let room = (high - low) * 0.1;
+            (low - room, high + room)
+        } else {
+            (low, high)
+        }
+    };
+    let ((x_low, x_high), (y_low, y_high)) = (room(x_low, x_high), room(y_low, y_high));
     let x_scale = scale_of(x_low, x_high, &chart.x_axis, false);
     let y_scale = scale_of(y_low, y_high, &chart.primary, false);
     let first_code = series
@@ -1195,7 +1219,39 @@ fn scatter(svg: &mut String, chart: &Chart, area: Area) {
         AXIS_COLOUR,
         0.75,
     );
+    // The largest bubble spans a quarter of the plot's shorter side, the others by their area.
+    let largest = series
+        .iter()
+        .flat_map(|series| series.sizes.iter().flatten())
+        .map(|size| size.abs())
+        .fold(0.0, f64::max);
+    let widest_bubble = plot_area.width.min(plot_area.height) / 8.0;
     for series in series {
+        if !series.sizes.is_empty() {
+            for (index, value) in series.values.iter().enumerate() {
+                let (Some(y), Some(x), Some(size)) = (
+                    *value,
+                    x_of(series, index),
+                    series.sizes.get(index).copied().flatten(),
+                ) else {
+                    continue;
+                };
+                if size <= 0.0 || largest <= 0.0 {
+                    continue;
+                }
+                let x = x.clamp(x_scale.minimum, x_scale.maximum);
+                let y = y.clamp(y_scale.minimum, y_scale.maximum);
+                let _ = write!(
+                    svg,
+                    "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"#{}\" stroke=\"#FFFFFF\" stroke-width=\"0.75\"/>",
+                    number(x_position(x)),
+                    number(y_position(y)),
+                    number((size / largest).sqrt() * widest_bubble),
+                    point_colour(series, index)
+                );
+            }
+            continue;
+        }
         let points: Vec<Option<(f64, f64)>> = series
             .values
             .iter()
@@ -1235,6 +1291,192 @@ fn scatter(svg: &mut String, chart: &Chart, area: Area) {
                 marker(svg, *x, *y, &series.colour);
             }
         }
+    }
+}
+
+/// Where a radar stands: its centre, its radius and how many spokes it has.
+#[derive(Debug, Clone, Copy)]
+struct RadarFrame {
+    centre: (f64, f64),
+    radius: f64,
+    spokes: usize,
+}
+
+impl RadarFrame {
+    /// The point `distance` out along spoke `index`, the first pointing up and the rest
+    /// following clockwise.
+    fn point(self, index: usize, distance: f64) -> (f64, f64) {
+        let angle = (count(index) / count(self.spokes) * 360.0 - 90.0).to_radians();
+        (
+            self.centre.0 + distance * angle.cos(),
+            self.centre.1 + distance * angle.sin(),
+        )
+    }
+
+    /// The path through each spoke at its distance, closed when no spoke is missing.
+    fn outline(self, distance: &dyn Fn(usize) -> Option<f64>) -> String {
+        let mut path = String::new();
+        let mut whole = true;
+        for index in 0..self.spokes {
+            let Some(distance) = distance(index) else {
+                whole = false;
+                continue;
+            };
+            let (x, y) = self.point(index, distance);
+            let _ = write!(
+                path,
+                "{}{} {}",
+                if path.is_empty() { "M" } else { "L" },
+                number(x),
+                number(y)
+            );
+        }
+        if whole && !path.is_empty() {
+            path.push('Z');
+        }
+        path
+    }
+}
+
+/// A radar: a spoke per category from the centre, a ring at each value tick, and each series
+/// a closed outline, filled when its plot is.
+fn radar(svg: &mut String, chart: &Chart, area: Area) {
+    let categories = chart
+        .plots
+        .iter()
+        .map(|plot| &plot.categories)
+        .max_by_key(|categories| categories.len())
+        .map_or(&[][..], Vec::as_slice);
+    let all_series = || chart.plots.iter().flat_map(|plot| plot.series.iter());
+    let spokes = all_series()
+        .map(|series| series.values.len())
+        .max()
+        .unwrap_or(0)
+        .max(categories.len());
+    let extent = all_series()
+        .flat_map(|series| series.values.iter().flatten().copied())
+        .fold(None, |extent: Option<(f64, f64)>, value| {
+            Some(extent.map_or((value, value), |(low, high)| {
+                (low.min(value), high.max(value))
+            }))
+        });
+    let Some((low, high)) = extent.filter(|_| spokes > 0) else {
+        return;
+    };
+    let scale = scale_of(low, high, &chart.primary, false);
+    let size = chart.label_size;
+    let widest = categories
+        .iter()
+        .map(|label| text_width(label, size))
+        .fold(0.0, f64::max)
+        .min(area.width * 0.25);
+    let frame = RadarFrame {
+        centre: (area.x + area.width / 2.0, area.y + area.height / 2.0),
+        radius: ((area.width - 2.0 * (widest + PAD)).min(area.height - size * 3.0) / 2.0).max(4.0),
+        spokes,
+    };
+    radar_axes(svg, chart, frame, scale, categories, widest);
+    for plot in &chart.plots {
+        let filled = matches!(plot.kind, PlotKind::Radar { filled: true });
+        for series in &plot.series {
+            let distance = |index: usize| {
+                let value = series.values.get(index).copied().flatten()?;
+                Some(scale.fraction(value.clamp(scale.minimum, scale.maximum)) * frame.radius)
+            };
+            let path = frame.outline(&distance);
+            if path.is_empty() {
+                continue;
+            }
+            if filled {
+                let _ = write!(
+                    svg,
+                    "<path d=\"{path}\" fill=\"#{}\" stroke=\"none\"/>",
+                    series.colour
+                );
+            } else if series.line {
+                let _ = write!(
+                    svg,
+                    "<path d=\"{path}\" fill=\"none\" stroke=\"#{}\" stroke-width=\"{LINE_WIDTH}\" stroke-linejoin=\"round\"/>",
+                    series.colour
+                );
+            }
+            if series.markers {
+                for index in 0..spokes {
+                    if let Some(distance) = distance(index) {
+                        let (x, y) = frame.point(index, distance);
+                        marker(svg, x, y, &series.colour);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The rings and value labels of a radar, its spokes and the category at the end of each.
+fn radar_axes(
+    svg: &mut String,
+    chart: &Chart,
+    frame: RadarFrame,
+    scale: Scale,
+    categories: &[String],
+    widest: f64,
+) {
+    let size = chart.label_size;
+    let (centre, radius) = (frame.centre, frame.radius);
+    let first_code = chart
+        .plots
+        .iter()
+        .flat_map(|plot| plot.series.iter())
+        .find_map(|series| series.format_code.as_deref());
+    let code = chart
+        .primary
+        .format_code
+        .as_deref()
+        .or(first_code)
+        .unwrap_or("General");
+    for tick in scale.ticks() {
+        let distance = scale.fraction(tick) * radius;
+        if chart.primary.gridlines && distance > 0.0 {
+            let _ = write!(
+                svg,
+                "<path d=\"{}\" fill=\"none\" stroke=\"{GRID_COLOUR}\" stroke-width=\"0.75\"/>",
+                frame.outline(&|_| Some(distance))
+            );
+        }
+        if !chart.primary.hidden {
+            text(
+                svg,
+                centre.0 - PAD / 2.0,
+                centre.1 - distance + size * 0.35,
+                size * 0.9,
+                "end",
+                &format_number(tick, code, chart.locale).text,
+            );
+        }
+    }
+    for index in 0..frame.spokes {
+        let (x, y) = frame.point(index, radius);
+        line(svg, centre.0, centre.1, x, y, AXIS_COLOUR, 0.75);
+        let Some(label) = categories.get(index) else {
+            continue;
+        };
+        let (x, y) = frame.point(index, radius + size * 0.6);
+        let across = x - centre.0;
+        let anchor = if across > radius * 0.1 {
+            "start"
+        } else if across < -radius * 0.1 {
+            "end"
+        } else {
+            "middle"
+        };
+        let below = if y > centre.1 + radius * 0.5 {
+            size * 0.8
+        } else if y < centre.1 - radius * 0.5 {
+            0.0
+        } else {
+            size * 0.35
+        };
+        text(svg, x, y + below, size, anchor, &fit(label, widest, size));
     }
 }
 

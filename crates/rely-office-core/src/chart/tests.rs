@@ -334,3 +334,55 @@ fn darkens_and_lightens_the_accents_past_the_sixth() {
     assert_eq!(accent(&theme, 6), "294476", "darker");
     assert_eq!(accent(&theme, 12), "5FA0FF", "lighter");
 }
+
+#[test]
+fn reads_radar_and_bubble_charts() {
+    let filled = chart_space(
+        &format!(
+            r#"<c:plotArea><c:radarChart><c:radarStyle val="filled"/>{}</c:radarChart></c:plotArea>"#,
+            series(0, "Q1", &["1", "2", "3"], "")
+        ),
+        "",
+    );
+    assert_eq!(
+        read(&filled).plots[0].kind,
+        PlotKind::Radar { filled: true }
+    );
+    let marked = chart_space(
+        &format!(
+            r#"<c:plotArea><c:radarChart><c:radarStyle val="marker"/>{}{}</c:radarChart></c:plotArea>"#,
+            series(0, "A", &["1", "2", "3"], ""),
+            series(
+                1,
+                "B",
+                &["1", "2", "3"],
+                r#"<c:marker><c:symbol val="none"/></c:marker>"#
+            )
+        ),
+        "",
+    );
+    let chart = read(&marked);
+    assert_eq!(chart.plots[0].kind, PlotKind::Radar { filled: false });
+    assert!(chart.plots[0].series[0].markers, "the marker style");
+    assert!(
+        !chart.plots[0].series[1].markers,
+        "a series that hides them"
+    );
+    let bubble = chart_space(
+        concat!(
+            r#"<c:plotArea><c:bubbleChart><c:ser><c:idx val="0"/>"#,
+            r#"<c:xVal><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numLit></c:xVal>"#,
+            r#"<c:yVal><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>5</c:v></c:pt><c:pt idx="1"><c:v>6</c:v></c:pt></c:numLit></c:yVal>"#,
+            r#"<c:bubbleSize><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1"><c:v>12</c:v></c:pt></c:numLit></c:bubbleSize>"#,
+            r#"</c:ser></c:bubbleChart></c:plotArea>"#
+        ),
+        "",
+    );
+    let chart = read(&bubble);
+    assert_eq!(chart.plots[0].kind, PlotKind::Bubble);
+    let series = &chart.plots[0].series[0];
+    assert_eq!(series.x_values, [Some(1.0), Some(2.0)]);
+    assert_eq!(series.values, [Some(5.0), Some(6.0)]);
+    assert_eq!(series.sizes, [Some(3.0), Some(12.0)]);
+    assert!(!series.line && !series.markers);
+}

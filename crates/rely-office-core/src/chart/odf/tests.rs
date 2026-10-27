@@ -179,3 +179,49 @@ fn reads_chart_addresses_and_colours() {
     assert_eq!(hex("#abcdef").as_deref(), Some("ABCDEF"));
     assert_eq!(hex("abcdef"), None);
 }
+
+#[test]
+fn reads_radars_and_bubbles_from_the_copy_of_the_sheet() {
+    let radar = read_odf_chart(
+        &chart("chart:filled-radar", STYLES, SERIES, ""),
+        NumberLocale::Italian,
+    )
+    .unwrap();
+    assert_eq!(radar.plots[0].kind, PlotKind::Radar { filled: true });
+    let table = concat!(
+        r#"<table:table table:name="local-table"><table:table-rows><table:table-row>"#,
+        r#"<table:table-cell office:value-type="float" office:value="1"><draw:g><svg:desc>Dati.A11:Dati.A12</svg:desc></draw:g></table:table-cell>"#,
+        r#"<table:table-cell office:value-type="float" office:value="10"><draw:g><svg:desc>Dati.$B$11:Dati.$B$12</svg:desc></draw:g></table:table-cell>"#,
+        r#"<table:table-cell office:value-type="float" office:value="5"><draw:g><svg:desc>Dati.C11:Dati.C12</svg:desc></draw:g></table:table-cell></table:table-row>"#,
+        r#"<table:table-row><table:table-cell office:value-type="float" office:value="2"/><table:table-cell office:value-type="float" office:value="30"/>"#,
+        r#"<table:table-cell office:value-type="float" office:value="20"/></table:table-row></table:table-rows></table:table>"#
+    );
+    let series = concat!(
+        r#"<chart:series chart:class="chart:bubble" chart:values-cell-range-address="Dati.C11:Dati.C12" loext:label-string="&quot;Progetti&quot;">"#,
+        r#"<chart:domain table:cell-range-address="Dati.B11:Dati.B12"/><chart:domain table:cell-range-address="Dati.A11:Dati.A12"/></chart:series>"#
+    );
+    let xml = format!(
+        concat!(
+            r#"<office:document-content {} xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0"><office:body><office:chart>"#,
+            r#"<chart:chart chart:class="chart:bubble"><chart:plot-area>{}</chart:plot-area>{}</chart:chart>"#,
+            "</office:chart></office:body></office:document-content>"
+        ),
+        NAMESPACES, series, table
+    );
+    let bubble = read_odf_chart(&xml, NumberLocale::Italian).unwrap();
+    assert_eq!(bubble.plots[0].kind, PlotKind::Bubble);
+    let series = &bubble.plots[0].series[0];
+    assert_eq!(series.name, "Progetti", "a name typed in");
+    assert_eq!(
+        series.values,
+        [Some(10.0), Some(30.0)],
+        "y, the first domain"
+    );
+    assert_eq!(series.x_values, [Some(1.0), Some(2.0)], "x, the second");
+    assert_eq!(
+        series.sizes,
+        [Some(5.0), Some(20.0)],
+        "the sizes, its values"
+    );
+    assert!(!series.line);
+}

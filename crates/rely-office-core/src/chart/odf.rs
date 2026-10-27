@@ -66,7 +66,7 @@ pub(crate) fn read_odf_chart(xml: &str, locale: NumberLocale) -> Option<Chart> {
                 .attribute(namespace, key)
                 .map(str::to_owned)
         };
-    let table = chart
+    let (table, copies) = chart
         .elements()
         .find(|element| element.is(TABLE, "table"))
         .map(local_table)
@@ -75,6 +75,28 @@ pub(crate) fn read_odf_chart(xml: &str, locale: NumberLocale) -> Option<Chart> {
         let Some(range) = range_of(address) else {
             return Vec::new();
         };
+        if let Some(&(row, column)) = copies.get(&address.replace('$', "")) {
+            let down = range.first_column == range.last_column;
+            let length = if down {
+                range.last_row - range.first_row
+            } else {
+                range.last_column - range.first_column
+            } as usize
+                + 1;
+            return (0..length.min(MAX_POINTS))
+                .map(|offset| {
+                    let (row, column) = if down {
+                        (row + offset, column)
+                    } else {
+                        (row, column + offset)
+                    };
+                    table
+                        .get(row)
+                        .and_then(|cells| cells.get(column))
+                        .and_then(Option::as_ref)
+                })
+                .collect();
+        }
         let mut found = Vec::new();
         for row in range.first_row..=range.last_row.min(range.first_row + 4_096) {
             for column in range.first_column..=range.last_column.min(range.first_column + 64) {
@@ -119,6 +141,9 @@ pub(crate) fn read_odf_chart(xml: &str, locale: NumberLocale) -> Option<Chart> {
         "circle" => Some(PlotKind::Pie),
         "ring" => Some(PlotKind::Doughnut { hole_percent: 50 }),
         "scatter" => Some(PlotKind::Scatter),
+        "bubble" => Some(PlotKind::Bubble),
+        "radar" => Some(PlotKind::Radar { filled: false }),
+        "filled-radar" => Some(PlotKind::Radar { filled: true }),
         _ => None,
     };
     let default_kind = kind_of(class)?;
@@ -150,36 +175,51 @@ pub(crate) fn read_odf_chart(xml: &str, locale: NumberLocale) -> Option<Chart> {
             .and_then(kind_of)
             .unwrap_or(default_kind);
         let style = element.attribute(CHART, "style-name");
-        let values: Vec<Option<f64>> = element
-            .attribute(CHART, "values-cell-range-address")
-            .map(|address| {
-                cells(address)
-                    .into_iter()
-                    .map(|cell| match cell {
-                        Some(Cell::Number(number)) => Some(*number),
-                        _ => None,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let x_values: Vec<Option<f64>> = element
-            .child(CHART, "domain")
-            .and_then(|domain| domain.attribute(TABLE, "cell-range-address"))
-            .map(|address| {
-                cells(address)
-                    .into_iter()
-                    .map(|cell| match cell {
-                        Some(Cell::Number(number)) => Some(*number),
-                        _ => None,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let numbers_at = |address: Option<&str>| -> Vec<Option<f64>> {
+            address
+                .map(|address| {
+                    cells(address)
+                        .into_iter()
+                        .map(|cell| match cell {
+                            Some(Cell::Number(number)) => Some(*number),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let domains: Vec<Option<&str>> = element
+            .elements()
+            .filter(|domain| domain.is(CHART, "domain"))
+            .map(|domain| domain.attribute(TABLE, "cell-range-address"))
+            .collect();
+        let own_values = numbers_at(element.attribute(CHART, "values-cell-range-address"));
+        // A bubble series names its sizes as its values, its y as the first domain and its x
+        // as the second.
+        let (values, x_values, sizes) = if kind == PlotKind::Bubble {
+            (
+                numbers_at(domains.first().copied().flatten()),
+                numbers_at(domains.get(1).copied().flatten()),
+                own_values,
+            )
+        } else {
+            (
+                own_values,
+                numbers_at(domains.first().copied().flatten()),
+                Vec::new(),
+            )
+        };
         let name = element
             .attribute(CHART, "label-cell-address")
             .map(|address| cells(address).into_iter().next().flatten())
             .map(text_of)
             .filter(|name| !name.is_empty())
+            .or_else(|| {
+                // A name typed in rather than taken from a cell, written as a quoted string.
+                let typed = element.attribute(Namespace::LoExt, "label-string")?;
+                let typed = typed.trim().trim_matches('"').replace("\"\"", "\"");
+                (!typed.is_empty()).then_some(typed)
+            })
             .unwrap_or_else(|| format!("Serie {}", index + 1));
         let colour = property(style, "graphic-properties", DRAW, "fill-color")
             .or_else(|| {
@@ -231,10 +271,13 @@ pub(crate) fn read_odf_chart(xml: &str, locale: NumberLocale) -> Option<Chart> {
             name,
             values,
             x_values,
+            sizes,
             colour,
             point_colours,
-            line: property(style, "graphic-properties", DRAW, "stroke").as_deref() != Some("none")
-                || kind != PlotKind::Scatter,
+            line: kind != PlotKind::Bubble
+                && (property(style, "graphic-properties", DRAW, "stroke").as_deref()
+                    != Some("none")
+                    || kind != PlotKind::Scatter),
             markers: kind == PlotKind::Scatter
                 || symbol.as_deref().is_some_and(|symbol| symbol != "none"),
             labels: DataLabels {
@@ -312,7 +355,9 @@ pub(crate) fn read_odf_chart(xml: &str, locale: NumberLocale) -> Option<Chart> {
             }
         })
     };
-    let scatter = plots.iter().all(|plot| plot.kind == PlotKind::Scatter);
+    let scatter = plots
+        .iter()
+        .all(|plot| matches!(plot.kind, PlotKind::Scatter | PlotKind::Bubble));
     let x_axis = axis_of("x");
     let size = |name: Option<&str>| {
         property(name, "text-properties", FO, "font-size")
@@ -384,16 +429,27 @@ pub(crate) fn read_odf_chart(xml: &str, locale: NumberLocale) -> Option<Chart> {
 }
 
 /// The cells of the chart's table, header rows included, row by row from A1.
-fn local_table(table: &Element) -> Vec<Vec<Option<Cell>>> {
+/// The rows of a chart's own table, and where it keeps its copy of each range of the sheet a
+/// series names: `LibreOffice` notes the range on the first cell of the copy.
+fn local_table(table: &Element) -> LocalTable {
     let mut rows = Vec::new();
-    collect_rows(table, &mut rows);
-    rows
+    let mut copies = HashMap::new();
+    collect_rows(table, &mut rows, &mut copies);
+    (rows, copies)
 }
 
-fn collect_rows(part: &Element, rows: &mut Vec<Vec<Option<Cell>>>) {
+type LocalTable = (Vec<Vec<Option<Cell>>>, HashMap<String, (usize, usize)>);
+
+fn collect_rows(
+    part: &Element,
+    rows: &mut Vec<Vec<Option<Cell>>>,
+    copies: &mut HashMap<String, (usize, usize)>,
+) {
     for element in part.elements().filter(|element| element.namespace == TABLE) {
         match element.name.as_str() {
-            "table-header-rows" | "table-rows" | "table-row-group" => collect_rows(element, rows),
+            "table-header-rows" | "table-rows" | "table-row-group" => {
+                collect_rows(element, rows, copies);
+            }
             "table-row" if rows.len() < MAX_ROWS => {
                 let mut cells = Vec::new();
                 for cell in element
@@ -409,6 +465,17 @@ fn collect_rows(part: &Element, rows: &mut Vec<Vec<Option<Cell>>>) {
                         Some(_) => Some(Cell::Text(paragraph_text(cell))),
                         None => None,
                     };
+                    for range in cell
+                        .elements()
+                        .filter(|group| group.is(DRAW, "g"))
+                        .filter_map(|group| group.child(Namespace::OdfSvg, "desc"))
+                    {
+                        for address in range.text().split_whitespace() {
+                            copies
+                                .entry(address.replace('$', ""))
+                                .or_insert((rows.len(), cells.len()));
+                        }
+                    }
                     let repeated = cell
                         .attribute(TABLE, "number-columns-repeated")
                         .and_then(|count| count.parse::<usize>().ok())

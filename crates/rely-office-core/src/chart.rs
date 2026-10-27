@@ -38,6 +38,12 @@ pub(crate) enum PlotKind {
         hole_percent: u32,
     },
     Scatter,
+    /// Points sized by a third value over two value axes.
+    Bubble,
+    /// A spoke per category around a centre, each series a closed outline.
+    Radar {
+        filled: bool,
+    },
 }
 
 /// How the series of a plot share a category.
@@ -64,8 +70,10 @@ pub(crate) struct Series {
     pub name: String,
     /// The values by point; a blank cell is `None`.
     pub values: Vec<Option<f64>>,
-    /// The x of each point of a scatter series.
+    /// The x of each point of a scatter or bubble series.
     pub x_values: Vec<Option<f64>>,
+    /// The size of each point of a bubble series.
+    pub sizes: Vec<Option<f64>>,
     pub colour: String,
     /// The colour of each point that has one of its own, by point index.
     pub point_colours: Vec<(usize, String)>,
@@ -258,6 +266,10 @@ pub(crate) fn read_chart(
                     .clamp(10, 90),
             },
             "scatterChart" => PlotKind::Scatter,
+            "bubbleChart" => PlotKind::Bubble,
+            "radarChart" => PlotKind::Radar {
+                filled: value(plot, "radarStyle") == Some("filled"),
+            },
             _ => continue,
         };
         let grouping = match value(plot, "grouping") {
@@ -311,6 +323,10 @@ pub(crate) fn read_chart(
             let markers = match kind {
                 PlotKind::Line => symbol.map_or(line_markers, |symbol| symbol != "none"),
                 PlotKind::Scatter => symbol != Some("none"),
+                PlotKind::Radar { filled: false } => symbol
+                    .map_or(value(plot, "radarStyle") == Some("marker"), |symbol| {
+                        symbol != "none"
+                    }),
                 _ => false,
             };
             let point_colours = element
@@ -330,7 +346,7 @@ pub(crate) fn read_chart(
                 element
                     .child(
                         C,
-                        if kind == PlotKind::Scatter {
+                        if matches!(kind, PlotKind::Scatter | PlotKind::Bubble) {
                             "yVal"
                         } else {
                             "val"
@@ -340,6 +356,7 @@ pub(crate) fn read_chart(
                 cells,
             );
             let (x_values, _) = numbers(element.child(C, "xVal"), cells);
+            let (sizes, _) = numbers(element.child(C, "bubbleSize"), cells);
             if categories.is_empty() {
                 categories = element
                     .child(C, "cat")
@@ -353,9 +370,12 @@ pub(crate) fn read_chart(
                 name: series_name(element, cells).unwrap_or_else(|| format!("Serie {}", index + 1)),
                 values,
                 x_values,
+                sizes,
                 colour,
                 point_colours,
-                line: line && (kind != PlotKind::Scatter || scatter_lines),
+                line: line
+                    && kind != PlotKind::Bubble
+                    && (kind != PlotKind::Scatter || scatter_lines),
                 markers,
                 labels,
                 format_code,
@@ -427,7 +447,9 @@ pub(crate) fn read_chart(
         return None;
     }
 
-    let scatter = plots.iter().any(|plot| plot.kind == PlotKind::Scatter);
+    let scatter = plots
+        .iter()
+        .any(|plot| matches!(plot.kind, PlotKind::Scatter | PlotKind::Bubble));
     let nth_value_axis = |position: usize| {
         value_axes
             .iter()

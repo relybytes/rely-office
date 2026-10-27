@@ -13,6 +13,7 @@ fn series(name: &str, values: &[Option<f64>], colour: &str) -> Series {
         name: name.to_owned(),
         values: values.to_vec(),
         x_values: Vec::new(),
+        sizes: Vec::new(),
         colour: colour.to_owned(),
         point_colours: Vec::new(),
         line: true,
@@ -441,4 +442,79 @@ fn writes_numbers_text_and_cut_labels() {
     let mut svg = String::new();
     text(&mut svg, 0.0, 0.0, 9.0, "start", "");
     assert!(svg.is_empty(), "an empty label writes nothing");
+}
+
+/// The outline of the first path drawn in `colour`.
+fn path_in(svg: &str, colour: &str) -> Option<String> {
+    svg.split("<path d=\"").skip(1).find_map(|part| {
+        let element = &part[..part.find("/>")?];
+        let outline = &element[..element.find('"')?];
+        element
+            .contains(&format!("#{colour}\""))
+            .then(|| outline.to_owned())
+    })
+}
+
+#[test]
+fn draws_radars_and_bubbles() {
+    let mut radar = chart(vec![plot(
+        PlotKind::Radar { filled: false },
+        Grouping::Standard,
+        vec![
+            series("A", &[Some(1.0), Some(2.0), Some(3.0)], "111111"),
+            series("B", &[Some(2.0), None, Some(1.0)], "222222"),
+        ],
+    )]);
+    radar.primary.gridlines = true;
+    let svg = chart_svg(&radar, 400.0, 300.0);
+    assert!(
+        svg.contains(">C1</text>") && svg.contains(">C3</text>"),
+        "{svg}"
+    );
+    assert!(
+        path_in(&svg, "111111").unwrap().ends_with('Z'),
+        "a closed outline"
+    );
+    assert!(
+        !path_in(&svg, "222222").unwrap().ends_with('Z'),
+        "a gap leaves it open"
+    );
+    assert_eq!(svg.matches("<line").count(), 3, "a spoke per category");
+    assert!(
+        svg.matches(&format!("stroke=\"{GRID_COLOUR}\"")).count() >= 3,
+        "the rings"
+    );
+    radar.plots[0].kind = PlotKind::Radar { filled: true };
+    let svg = chart_svg(&radar, 400.0, 300.0);
+    assert!(svg.contains("fill=\"#111111\" stroke=\"none\""), "{svg}");
+
+    let mut bubbles = series("P", &[Some(5.0), Some(6.0), Some(7.0)], "333333");
+    bubbles.x_values = vec![Some(1.0), Some(2.0), Some(3.0)];
+    bubbles.sizes = vec![Some(1.0), Some(4.0), Some(-2.0)];
+    bubbles.line = false;
+    let svg = chart_svg(
+        &chart(vec![plot(
+            PlotKind::Bubble,
+            Grouping::Standard,
+            vec![bubbles],
+        )]),
+        400.0,
+        300.0,
+    );
+    let radii: Vec<f64> = svg
+        .split("<circle ")
+        .skip(1)
+        .filter(|circle| circle.contains("#333333"))
+        .filter_map(|circle| {
+            let start = circle.find(" r=\"")? + 4;
+            circle[start..start + circle[start..].find('"')?]
+                .parse()
+                .ok()
+        })
+        .collect();
+    assert_eq!(radii.len(), 2, "no bubble for a size below zero");
+    assert!(
+        (radii[1] / radii[0] - 2.0).abs() < 0.01,
+        "sized by area: {radii:?}"
+    );
 }
