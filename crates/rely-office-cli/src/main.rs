@@ -15,9 +15,10 @@ use rely_office_core::{
     read_presentation, read_workbook, write_docx, write_pptx,
 };
 use rely_office_render::{PageImages, RenderRequest, Renderer, render_limits};
-use rely_office_sheet::{Locale, read_spreadsheet, write_xlsx};
+use rely_office_sheet::{Locale, read_spreadsheet, write_ods, write_xlsx};
 
-const USAGE: &str = "usage: rely-office <detect|text|sheets|tree|rewrite|svg|typst|pdf|png> <file>
+const USAGE: &str =
+    "usage: rely-office <detect|text|sheets|tree|rewrite|ods|svg|typst|pdf|png> <file>
 
   detect   print the format read from the bytes
   text     print the text a search index would store
@@ -26,6 +27,7 @@ const USAGE: &str = "usage: rely-office <detect|text|sheets|tree|rewrite|svg|typ
   rewrite  write a document back from its document tree as <file>.rewritten.docx, a
            presentation from its slides as <file>.rewritten.pptx, a spreadsheet from its
            editable model as <file>.rewritten.xlsx
+  ods      write a spreadsheet from its editable model as <file>.rewritten.ods
   svg      write an EMF or WMF picture as <file>.svg
   typst    print the Typst source a render typesets
   pdf      write <file>.pdf next to the file
@@ -100,16 +102,7 @@ fn run(command: &str, path: &Path) -> Result<String, String> {
                 "xlsx" | "xls" | "ods" | "csv" | "tsv"
             ) =>
         {
-            let workbook = read_spreadsheet(&bytes, file_name, &limits, Locale::Italian)
-                .map_err(|error| error.to_string())?;
-            let written = write_xlsx(&workbook).map_err(|error| error.to_string())?;
-            let target = path.with_file_name(format!(
-                "{}.rewritten.xlsx",
-                file_name.unwrap_or("workbook")
-            ));
-            std::fs::write(&target, written)
-                .map_err(|error| format!("{}: {error}", target.display()))?;
-            Ok(format!("{}\n", target.display()))
+            rewrite_workbook(path, &bytes, file_name, &limits, false)
         }
         "rewrite"
             if matches!(
@@ -128,6 +121,7 @@ fn run(command: &str, path: &Path) -> Result<String, String> {
                 .map_err(|error| format!("{}: {error}", target.display()))?;
             Ok(format!("{}\n", target.display()))
         }
+        "ods" => rewrite_workbook(path, &bytes, file_name, &limits, true),
         "svg" => {
             let svg = convert_metafile_to_svg(&bytes)
                 .ok_or_else(|| "not an EMF or WMF picture, or one that draws nothing".to_owned())?;
@@ -153,6 +147,30 @@ fn run(command: &str, path: &Path) -> Result<String, String> {
         }
         other => Err(format!("unknown command {other}\n{USAGE}")),
     }
+}
+
+/// Write a spreadsheet back from its editable model, as ods or as xlsx, next to the file.
+fn rewrite_workbook(
+    path: &Path,
+    bytes: &[u8],
+    file_name: Option<&str>,
+    limits: &Limits,
+    as_ods: bool,
+) -> Result<String, String> {
+    let workbook = read_spreadsheet(bytes, file_name, limits, Locale::Italian)
+        .map_err(|error| error.to_string())?;
+    let (written, extension) = if as_ods {
+        (write_ods(&workbook), "ods")
+    } else {
+        (write_xlsx(&workbook), "xlsx")
+    };
+    let written = written.map_err(|error| error.to_string())?;
+    let target = path.with_file_name(format!(
+        "{}.rewritten.{extension}",
+        file_name.unwrap_or("workbook")
+    ));
+    std::fs::write(&target, written).map_err(|error| format!("{}: {error}", target.display()))?;
+    Ok(format!("{}\n", target.display()))
 }
 
 /// The renderer with every font file of the fonts folder.

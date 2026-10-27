@@ -9,15 +9,19 @@
 //! header and footer, and the pictures and charts placed on the sheet.
 
 mod number_styles;
+mod rules;
 
 use std::collections::HashMap;
 
 use self::number_styles::number_format_codes;
+pub use self::rules::excel_formula_from_odf;
+use self::rules::{add_validation_cells, conditional_formats, content_validation};
 use super::styles::{FO, STYLE, Scope, Styles, TEXT, border, colour, points, vertical_alignment};
 use crate::archive::{ZipPackage, open_package, read_member_bytes, read_text_member};
 use crate::chart::{odf_chart_picture, odf_object_part};
 use crate::document::{Border, sniff_image_type};
 use crate::sheet_layout::{CellRange, SheetLayout};
+use crate::sheet_rules::{DataValidation, DifferentialLook};
 use crate::sheet_styles::{CellBorders, CellFont, CellStyle, HorizontalAlignment};
 use crate::xml_tree::{Element, Namespace, Node, parse_tree};
 use crate::{Limits, OfficeError, SheetDrawing};
@@ -69,6 +73,15 @@ fn read_layouts(
     else {
         return Ok(HashMap::new());
     };
+    let validations: HashMap<String, DataValidation> = spreadsheet
+        .child(TABLE, "content-validations")
+        .map(|list| {
+            list.elements()
+                .filter(|validation| validation.is(TABLE, "content-validation"))
+                .filter_map(content_validation)
+                .collect()
+        })
+        .unwrap_or_default();
     let mut reader = LayoutReader {
         styles: &style_sheet,
         formats: &formats,
@@ -76,6 +89,7 @@ fn read_layouts(
         limits,
         images: 0,
         image_bytes: 0,
+        validations: &validations,
     };
     let mut layouts = HashMap::new();
     for table in spreadsheet
@@ -98,6 +112,8 @@ struct LayoutReader<'a, 'p, 'b> {
     limits: &'a Limits,
     images: usize,
     image_bytes: u64,
+    /// The validations of the document by name, which cells name.
+    validations: &'a HashMap<String, DataValidation>,
 }
 
 /// A sheet while its rows are walked.
@@ -107,6 +123,8 @@ struct SheetBuild {
     style_indexes: HashMap<String, Option<u32>>,
     /// The row the walk is at, and the anchor rows of the drawings met.
     row: u32,
+    /// The cells that name each validation, in the order the walk meets the names.
+    validation_cells: Vec<(String, Vec<CellRange>)>,
 }
 
 impl LayoutReader<'_, '_, '_> {
@@ -115,6 +133,7 @@ impl LayoutReader<'_, '_, '_> {
             layout: SheetLayout::default(),
             style_indexes: HashMap::new(),
             row: 0,
+            validation_cells: Vec::new(),
         };
         self.page(table, &mut build.layout);
         let mut column = 0;
@@ -125,7 +144,38 @@ impl LayoutReader<'_, '_, '_> {
                 self.drawing(frame, (0, 0), &mut build.layout, true);
             }
         }
+        build.layout.conditional_formats =
+            conditional_formats(table, &|name| self.differential_look(name));
+        for (name, ranges) in std::mem::take(&mut build.validation_cells) {
+            if let Some(validation) = self.validations.get(&name) {
+                build.layout.validations.push(DataValidation {
+                    ranges,
+                    ..validation.clone()
+                });
+            }
+        }
         build.layout
+    }
+
+    /// The look a cell style a conditional format applies gives a cell; `None` for one that
+    /// changes nothing.
+    fn differential_look(&self, name: &str) -> Option<DifferentialLook> {
+        let name = self
+            .styles
+            .named_style("table-cell", name)
+            .unwrap_or_else(|| name.to_owned());
+        let style = self.read_cell_style(&name)?;
+        let on = |flag: bool| flag.then_some(true);
+        let look = DifferentialLook {
+            fill: style.fill,
+            font_colour: style.font.colour,
+            bold: on(style.font.bold),
+            italic: on(style.font.italic),
+            underline: on(style.font.underline),
+            strike: on(style.font.strike),
+            number_format: style.number_format,
+        };
+        (!look.is_empty()).then_some(look)
     }
 
     /// The page a sheet prints on: the master page its table style names, else the default.
@@ -326,6 +376,20 @@ impl LayoutReader<'_, '_, '_> {
                 continue;
             }
             let repeated = repeat(cell, "number-columns-repeated").min(MAX_COLUMNS - column);
+            if let Some(name) = cell.attribute(TABLE, "content-validation-name") {
+                let last = column + repeated - 1;
+                if let Some((_, ranges)) = build
+                    .validation_cells
+                    .iter_mut()
+                    .find(|(known, _)| known == name)
+                {
+                    add_validation_cells(ranges, index, column, last);
+                } else {
+                    let mut ranges = Vec::new();
+                    add_validation_cells(&mut ranges, index, column, last);
+                    build.validation_cells.push((name.to_owned(), ranges));
+                }
+            }
             if let Some(style) = cell
                 .attribute(TABLE, "style-name")
                 .and_then(|style| self.cell_style(build, style))

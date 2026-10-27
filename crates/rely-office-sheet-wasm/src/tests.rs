@@ -43,7 +43,7 @@ fn edits_and_shows_a_window_of_cells() {
     let sheets = parse(&document.sheets_summary().unwrap());
     assert_eq!(
         sheets,
-        json!([{ "name": "Foglio1", "rows": 3, "columns": 2, "columnWidths": [], "rowHeights": [] }])
+        json!([{ "name": "Foglio1", "rows": 3, "columns": 2, "columnWidths": [], "rowHeights": [], "pivotTables": 0 }])
     );
     assert_eq!(document.preview_input("=A1"), "formula");
     assert_eq!(document.preview_input("1.234,5"), "number");
@@ -224,4 +224,82 @@ fn styles_merges_and_sizes_cells() {
             .code,
         "INVALID_STYLE"
     );
+}
+
+#[test]
+fn sets_and_reads_conditional_formats_and_validations_as_json() {
+    let mut document = SheetDocument::create("en").unwrap();
+    document
+        .set_inputs_json(0, r#"[[0,0,"5"],[1,0,"50"],[0,1,"x"]]"#)
+        .unwrap();
+    document
+        .set_conditional_formats_json(
+            0,
+            r#"[{"ranges":[{"firstRow":0,"firstColumn":0,"lastRow":1,"lastColumn":0}],"rules":[{"condition":{"kind":"cellIs","operator":"greater","formulas":["10"]},"look":{"fill":"FF0000","bold":true},"priority":1}]},{"ranges":[{"firstRow":0,"firstColumn":0,"lastRow":1,"lastColumn":0}],"rules":[{"condition":{"kind":"dataBar","min":{"kind":"min"},"max":{"kind":"number","value":"100"},"colour":"638EC6","showValue":true},"priority":2}]}]"#,
+        )
+        .unwrap();
+    let formats = parse(&document.conditional_formats_summary(0).unwrap());
+    assert_eq!(formats[0]["rules"][0]["condition"]["operator"], "greater");
+    assert_eq!(formats[1]["rules"][0]["condition"]["max"]["value"], "100");
+    let looks = parse(&document.conditional_looks_summary(0).unwrap());
+    assert_eq!(looks[1]["row"], 1);
+    assert_eq!(looks[1]["fill"], "FF0000");
+    assert_eq!(looks[1]["bold"], true);
+    assert_eq!(looks[0]["fill"], Json::Null);
+    assert!(looks[0]["bar"]["length"].as_f64().unwrap() < 0.2);
+    document
+        .set_validations_json(
+            0,
+            r#"[{"ranges":[{"firstRow":0,"firstColumn":1,"lastRow":4,"lastColumn":1}],"kind":"list","formulas":["\"a,b\""],"dropdown":true}]"#,
+        )
+        .unwrap();
+    assert_eq!(
+        parse(&document.validation_summary(0, CellRef::new(0, 1)).unwrap()),
+        json!({
+            "validation": parse(&document.validations_summary(0).unwrap())[0],
+            "valid": false,
+            "items": ["a", "b"]
+        })
+    );
+    assert_eq!(
+        parse(&document.invalid_cells_summary(0).unwrap()),
+        json!([[0, 1]])
+    );
+    assert_eq!(
+        parse(&document.validation_summary(0, CellRef::new(9, 9)).unwrap()),
+        json!({ "validation": null, "valid": true, "items": [] })
+    );
+    let saved = document.workbook.clone();
+    let reopened =
+        SheetDocument::open_file(&write_xlsx(&saved).unwrap(), Some("a.xlsx"), "en").unwrap();
+    assert_eq!(
+        parse(&reopened.conditional_formats_summary(0).unwrap()),
+        formats
+    );
+    assert_eq!(
+        parse(&reopened.sheets_summary().unwrap())[0]["pivotTables"],
+        0
+    );
+    for (failure, code) in [
+        (
+            document.set_conditional_formats_json(0, "{"),
+            "INVALID_INPUT",
+        ),
+        (document.set_validations_json(0, "[1]"), "INVALID_INPUT"),
+        (
+            document.set_validations_json(0, r#"[{"ranges":[],"kind":"whole"}]"#),
+            "OUT_OF_BOUNDS",
+        ),
+    ] {
+        assert_eq!(failure.unwrap_err().code, code);
+    }
+    for summary in [
+        document.conditional_formats_summary(3),
+        document.validations_summary(3),
+        document.conditional_looks_summary(3),
+        document.validation_summary(3, CellRef::new(0, 0)),
+        document.invalid_cells_summary(3),
+    ] {
+        assert_eq!(summary.unwrap_err().code, "NO_SUCH_SHEET");
+    }
 }

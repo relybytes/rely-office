@@ -152,3 +152,41 @@ fn reads_damaged_styles_as_far_as_they_go() {
     );
     assert_eq!(empty_lists, vec![CellStyle::default()]);
 }
+
+#[test]
+fn reads_the_differential_formats_of_conditional_rules() {
+    let looks = differential_looks(
+        concat!(
+            r#"<styleSheet><numFmts count="1"><numFmt numFmtId="164" formatCode="0.0"/></numFmts>"#,
+            r#"<cellXfs count="1"><xf numFmtId="164"/></cellXfs><dxfs count="3">"#,
+            r#"<dxf><font><b/><i val="0"/><u val="none"/><strike/><color rgb="FF9C0006"/></font><numFmt numFmtId="300" formatCode="0%"/><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf>"#,
+            r#"<dxf><fill><patternFill patternType="solid"><fgColor theme="4"/></patternFill></fill><font><u/></font></dxf>"#,
+            r#"<dxf/></dxfs></styleSheet>"#
+        ),
+        &default_theme(),
+    );
+    assert_eq!(looks.len(), 3);
+    assert_eq!(
+        looks[0],
+        DifferentialLook {
+            fill: Some("FFC7CE".to_owned()),
+            font_colour: Some("9C0006".to_owned()),
+            bold: Some(true),
+            italic: Some(false),
+            underline: Some(false),
+            strike: Some(true),
+            number_format: Some("0%".to_owned()),
+        }
+    );
+    assert_eq!(looks[1].fill, Some(default_theme()[4].clone()));
+    assert_eq!(looks[1].underline, Some(true));
+    assert!(looks[2].is_empty());
+    let styles = cell_styles(
+        r#"<styleSheet><cellXfs count="1"><xf numFmtId="0"/></cellXfs><dxfs count="1"><dxf><numFmt numFmtId="0" formatCode="0.00"/></dxf></dxfs></styleSheet>"#,
+        &default_theme(),
+    );
+    assert_eq!(
+        styles[0].number_format, None,
+        "a differential number format is no cell format's"
+    );
+}

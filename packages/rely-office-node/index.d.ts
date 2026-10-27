@@ -641,6 +641,107 @@ export interface SheetSummary {
   columnWidths: [number, number][];
   /** `[row, height in points]` for the rows that set one; 0 is hidden. */
   rowHeights: [number, number][];
+  /** The pivot tables the sheet carries from its file; `save` writes them back unchanged. */
+  pivotTables: number;
+}
+
+export type ComparisonOperator =
+  | 'between'
+  | 'notBetween'
+  | 'equal'
+  | 'notEqual'
+  | 'greater'
+  | 'less'
+  | 'greaterOrEqual'
+  | 'lessOrEqual';
+
+/** A point of a colour scale, a data bar or an icon set, in the values of its ranges. */
+export type ScaleValue =
+  | { kind: 'min' }
+  | { kind: 'max' }
+  | { kind: 'number' | 'percent' | 'percentile' | 'formula'; value: string };
+
+/** When a rule holds; formulas are in Excel notation, without `=`, for the first cell. */
+export type Condition =
+  | { kind: 'cellIs'; operator: ComparisonOperator; formulas: string[] }
+  | { kind: 'expression'; formula: string }
+  | { kind: 'colorScale'; points: { value: ScaleValue; colour: string }[] }
+  | { kind: 'dataBar'; min: ScaleValue; max: ScaleValue; colour: string; showValue: boolean }
+  | { kind: 'iconSet'; icons: string; thresholds: ScaleValue[]; reverse: boolean; showValue: boolean }
+  | { kind: 'top'; rank: number; percent: boolean; bottom: boolean }
+  | { kind: 'average'; below: boolean; orEqual: boolean; deviations: number | null }
+  | { kind: 'text'; operator: 'contains' | 'notContains' | 'beginsWith' | 'endsWith'; text: string }
+  | { kind: 'duplicates'; unique: boolean }
+  | { kind: 'blanks'; blank: boolean }
+  | { kind: 'errors'; error: boolean }
+  /** `today`, `yesterday`, `tomorrow`, `last7Days`, `thisWeek`, `lastWeek`, `nextWeek`, `thisMonth`, `lastMonth`, `nextMonth`. */
+  | { kind: 'timePeriod'; period: string };
+
+/** What a rule changes in the look of a cell; unset keeps the cell's own. */
+export interface DifferentialLook {
+  fill?: string | null;
+  fontColour?: string | null;
+  bold?: boolean | null;
+  italic?: boolean | null;
+  underline?: boolean | null;
+  strike?: boolean | null;
+  numberFormat?: string | null;
+}
+
+export interface ConditionalRule {
+  condition: Condition;
+  look?: DifferentialLook | null;
+  /** Lower first; 0 is unset, after every rule that sets one. */
+  priority?: number;
+  stopIfTrue?: boolean;
+}
+
+export interface ConditionalFormat {
+  ranges: CellRange[];
+  rules: ConditionalRule[];
+}
+
+export interface DataValidation {
+  ranges: CellRange[];
+  kind: 'any' | 'whole' | 'decimal' | 'list' | 'date' | 'time' | 'textLength' | 'custom';
+  operator?: ComparisonOperator;
+  /** One formula, or two for `between`; a list's items as `"a,b,c"` or a range. */
+  formulas?: string[];
+  allowBlank?: boolean;
+  /** Whether a list offers its items in the cell. */
+  dropdown?: boolean;
+  errorStyle?: 'stop' | 'warning' | 'information';
+  showError?: boolean;
+  errorTitle?: string | null;
+  error?: string | null;
+  showPrompt?: boolean;
+  promptTitle?: string | null;
+  prompt?: string | null;
+}
+
+/** The look the conditional formats give one cell. */
+export interface ConditionalLook {
+  row: number;
+  column: number;
+  fill: string | null;
+  fontColour: string | null;
+  bold: boolean | null;
+  italic: boolean | null;
+  underline: boolean | null;
+  strike: boolean | null;
+  numberFormat: string | null;
+  /** `length` is the share of the cell the bar fills, 0.1 to 0.9. */
+  bar: { length: number; colour: string; showValue: boolean } | null;
+  /** `index` counts the icons of the set from the lowest. */
+  icon: { set: string; index: number; showValue: boolean } | null;
+}
+
+export interface CellValidation {
+  validation: DataValidation | null;
+  /** Whether the value passes; an empty cell always does. */
+  valid: boolean;
+  /** The items a list offers. */
+  items: string[];
 }
 
 export interface SheetCell {
@@ -703,12 +804,25 @@ export interface SheetDocument {
   addSheet(name: string): number;
   renameSheet(sheet: number, name: string): void;
   removeSheet(sheet: number): void;
+  conditionalFormats(sheet: number): ConditionalFormat[];
+  /** Replace the conditional formats of a sheet; their formulas must parse. */
+  setConditionalFormats(sheet: number, formats: ConditionalFormat[]): void;
+  validations(sheet: number): DataValidation[];
+  setValidations(sheet: number, validations: DataValidation[]): void;
+  /** The cells the conditional formats change, with their look, from the current values. */
+  conditionalLooks(sheet: number): ConditionalLook[];
+  /** The validation of a cell; an editor sets an input, asks, and takes it back on `stop`. */
+  validation(sheet: number, row: number, column: number): CellValidation;
+  /** `[row, column]` of the cells their validation refuses. */
+  invalidCells(sheet: number): [number, number][];
   /** Today's date for TODAY() and NOW(), which WebAssembly cannot read; null unsets it. */
   setToday(today: Date | number | null): void;
   /** How a typed text would be read, without typing it. */
   previewInput(text: string): 'number' | 'text' | 'bool' | 'formula' | 'empty' | 'invalid';
   /** The workbook as xlsx, each formula with its computed value. */
   save(): Uint8Array;
+  /** The workbook as ods; pictures, charts and pivot tables are kept by `save` only. */
+  saveOds(): Uint8Array;
   free(): void;
 }
 

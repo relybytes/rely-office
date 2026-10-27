@@ -13,8 +13,9 @@
 
 use rely_office_core::{Limits, OfficeError};
 use rely_office_sheet::{
-    Border, BorderPlacement, CellRef, EditError, Input, Locale, MAX_COLUMNS, MAX_ROWS,
-    NumberFormat, StylePatch, Value, Workbook, read_spreadsheet, write_xlsx,
+    Border, BorderPlacement, CellLook, CellRef, ConditionalFormat, DataValidation, EditError,
+    Input, Locale, MAX_COLUMNS, MAX_ROWS, NumberFormat, StylePatch, Value, Workbook,
+    read_spreadsheet, write_ods, write_xlsx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -91,6 +92,27 @@ struct SheetSummary<'a> {
     column_widths: Vec<(u32, f64)>,
     /// Row index to height in points, 0 for a hidden row.
     row_heights: Vec<(u32, f64)>,
+    /// How many pivot tables the sheet carries from its file, written back unchanged.
+    pivot_tables: usize,
+}
+
+/// The look the conditional formats give one cell.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LookOutput<'a> {
+    row: u32,
+    column: u32,
+    #[serde(flatten)]
+    look: &'a CellLook,
+}
+
+/// The validation of one cell, whether its value passes and the items a list offers.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ValidationOutput<'a> {
+    validation: Option<&'a DataValidation>,
+    valid: bool,
+    items: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -193,6 +215,7 @@ impl SheetDocument {
                         .iter()
                         .map(|(row, height)| (*row, *height))
                         .collect(),
+                    pivot_tables: sheet.pivot_count(),
                 }
             })
             .collect();
@@ -395,6 +418,126 @@ impl SheetDocument {
         };
         Ok(self.workbook.set_format(sheet, cell, simple)?)
     }
+
+    /// The conditional formats of a sheet.
+    ///
+    /// # Errors
+    ///
+    /// `NO_SUCH_SHEET`, `INTERNAL` when the JSON cannot be written.
+    pub fn conditional_formats_summary(&self, sheet: usize) -> Result<String, Failure> {
+        let content = self
+            .workbook
+            .sheets()
+            .get(sheet)
+            .ok_or(EditError::NoSuchSheet(sheet))?;
+        to_json(&content.conditional_formats())
+    }
+
+    /// Replace the conditional formats of a sheet with a JSON list of them.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_INPUT` for JSON that is not such a list, or the error of the edit.
+    pub fn set_conditional_formats_json(
+        &mut self,
+        sheet: usize,
+        formats_json: &str,
+    ) -> Result<(), Failure> {
+        let formats: Vec<ConditionalFormat> =
+            serde_json::from_str(formats_json).map_err(|error| {
+                Failure::new(
+                    "INVALID_INPUT",
+                    format!("invalid conditional formats: {error}"),
+                )
+            })?;
+        Ok(self.workbook.set_conditional_formats(sheet, formats)?)
+    }
+
+    /// The data validations of a sheet.
+    ///
+    /// # Errors
+    ///
+    /// `NO_SUCH_SHEET`, `INTERNAL` when the JSON cannot be written.
+    pub fn validations_summary(&self, sheet: usize) -> Result<String, Failure> {
+        let content = self
+            .workbook
+            .sheets()
+            .get(sheet)
+            .ok_or(EditError::NoSuchSheet(sheet))?;
+        to_json(&content.validations())
+    }
+
+    /// Replace the data validations of a sheet with a JSON list of them.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_INPUT` for JSON that is not such a list, or the error of the edit.
+    pub fn set_validations_json(
+        &mut self,
+        sheet: usize,
+        validations_json: &str,
+    ) -> Result<(), Failure> {
+        let validations: Vec<DataValidation> =
+            serde_json::from_str(validations_json).map_err(|error| {
+                Failure::new("INVALID_INPUT", format!("invalid validations: {error}"))
+            })?;
+        Ok(self.workbook.set_validations(sheet, validations)?)
+    }
+
+    /// The look the conditional formats give each cell of a sheet they change.
+    ///
+    /// # Errors
+    ///
+    /// `NO_SUCH_SHEET`, `INTERNAL` when the JSON cannot be written.
+    pub fn conditional_looks_summary(&self, sheet: usize) -> Result<String, Failure> {
+        if sheet >= self.workbook.sheets().len() {
+            return Err(EditError::NoSuchSheet(sheet).into());
+        }
+        let looks = self.workbook.conditional_looks(sheet);
+        let output: Vec<LookOutput<'_>> = looks
+            .iter()
+            .map(|(cell, look)| LookOutput {
+                row: cell.row,
+                column: cell.column,
+                look,
+            })
+            .collect();
+        to_json(&output)
+    }
+
+    /// The validation of a cell: `{ validation, valid, items }`.
+    ///
+    /// # Errors
+    ///
+    /// `NO_SUCH_SHEET`, `INTERNAL` when the JSON cannot be written.
+    pub fn validation_summary(&self, sheet: usize, cell: CellRef) -> Result<String, Failure> {
+        if sheet >= self.workbook.sheets().len() {
+            return Err(EditError::NoSuchSheet(sheet).into());
+        }
+        to_json(&ValidationOutput {
+            validation: self.workbook.validation_at(sheet, cell),
+            valid: self.workbook.is_valid(sheet, cell),
+            items: self.workbook.validation_items(sheet, cell),
+        })
+    }
+
+    /// The cells whose value their validation refuses, as `[[row, column], ...]`.
+    ///
+    /// # Errors
+    ///
+    /// `NO_SUCH_SHEET`, `INTERNAL` when the JSON cannot be written.
+    pub fn invalid_cells_summary(&self, sheet: usize) -> Result<String, Failure> {
+        if sheet >= self.workbook.sheets().len() {
+            return Err(EditError::NoSuchSheet(sheet).into());
+        }
+        let cells: Vec<(u32, u32)> = self
+            .workbook
+            .invalid_cells(sheet)
+            .into_iter()
+            .map(|cell| (cell.row, cell.column))
+            .collect();
+        to_json(&cells)
+    }
 }
 
 fn to_json(value: &impl Serialize) -> Result<String, Failure> {
@@ -435,6 +578,17 @@ impl SheetDocument {
     #[wasm_bindgen]
     pub fn save(&self) -> Result<Vec<u8>, JsError> {
         write_xlsx(&self.workbook).map_err(|error| throw(&error.into()))
+    }
+
+    /// The workbook as ods: cells, styles, merges, sizes, conditional formats and validations;
+    /// pictures, charts and pivot tables are kept by `save` only.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = saveOds)]
+    pub fn save_ods(&self) -> Result<Vec<u8>, JsError> {
+        write_ods(&self.workbook).map_err(|error| throw(&error.into()))
     }
 
     /// `[{ name, rows, columns, columnWidths: [[column, width]] }]`.
@@ -816,6 +970,88 @@ impl SheetDocument {
         self.workbook
             .remove_sheet(sheet)
             .map_err(|error| throw(&error.into()))
+    }
+
+    /// The conditional formats of a sheet, as JSON.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = conditionalFormatsJson)]
+    pub fn conditional_formats_json(&self, sheet: usize) -> Result<String, JsError> {
+        self.conditional_formats_summary(sheet)
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// Replace the conditional formats of a sheet with a JSON list of them.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = setConditionalFormats)]
+    pub fn set_conditional_formats(
+        &mut self,
+        sheet: usize,
+        formats_json: &str,
+    ) -> Result<(), JsError> {
+        self.set_conditional_formats_json(sheet, formats_json)
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// The data validations of a sheet, as JSON.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = validationsJson)]
+    pub fn validations_json(&self, sheet: usize) -> Result<String, JsError> {
+        self.validations_summary(sheet)
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// Replace the data validations of a sheet with a JSON list of them.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = setValidations)]
+    pub fn set_validations(&mut self, sheet: usize, validations_json: &str) -> Result<(), JsError> {
+        self.set_validations_json(sheet, validations_json)
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// The look the conditional formats give each cell they change: `[{ row, column, fill,
+    /// fontColour, bold, italic, underline, strike, numberFormat, bar, icon }]`.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = conditionalLooksJson)]
+    pub fn conditional_looks_json(&self, sheet: usize) -> Result<String, JsError> {
+        self.conditional_looks_summary(sheet)
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// The validation of a cell, whether its value passes and the items of its list.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = validationJson)]
+    pub fn validation_json(&self, sheet: usize, row: u32, column: u32) -> Result<String, JsError> {
+        self.validation_summary(sheet, CellRef::new(row, column))
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// The cells whose value their validation refuses.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = invalidCellsJson)]
+    pub fn invalid_cells_json(&self, sheet: usize) -> Result<String, JsError> {
+        self.invalid_cells_summary(sheet)
+            .map_err(|failure| throw(&failure))
     }
 
     /// Set today's date, as a serial day count, for `TODAY` and `NOW`; a negative one unsets it.

@@ -304,3 +304,38 @@ fn writes_back_the_pictures_and_charts_of_the_file() {
         "the theme its charts take their colours from"
     );
 }
+
+#[test]
+fn reads_the_iso_dates_and_durations_of_an_ods() {
+    assert_eq!(iso_date_serial("2026-10-27"), Some(46322.0));
+    assert_eq!(iso_date_serial("2026-10-27T18:00:00"), Some(46322.75));
+    assert_eq!(
+        iso_date_serial("2026-10-27T06:30"),
+        Some(46322.0 + 6.5 / 24.0)
+    );
+    assert_eq!(iso_date_serial("27/10/2026"), None);
+    assert_eq!(iso_duration_days("PT36H00M00S"), Some(1.5));
+    assert_eq!(iso_duration_days("-P1DT12H"), Some(-1.5));
+    assert_eq!(iso_duration_days("PT0.5S"), Some(0.5 / 86_400.0));
+    assert_eq!(iso_duration_days("12:00"), None);
+    assert_eq!(iso_duration_days("PT1X"), None);
+    let date = cell_from_data(&Data::DateTimeIso("2026-10-27".to_owned())).unwrap();
+    assert_eq!(
+        (date.input, date.format),
+        (Input::Number(46322.0), NumberFormat::Date)
+    );
+    let moment = cell_from_data(&Data::DateTimeIso("2026-10-27T18:00:00".to_owned())).unwrap();
+    assert_eq!(moment.format, NumberFormat::DateTime);
+    assert_eq!(
+        cell_from_data(&Data::DateTimeIso("domani".to_owned()))
+            .unwrap()
+            .input,
+        Input::Text("domani".to_owned())
+    );
+    assert_eq!(
+        cell_from_data(&Data::DurationIso("PT12H".to_owned()))
+            .unwrap()
+            .input,
+        Input::Number(0.5)
+    );
+}

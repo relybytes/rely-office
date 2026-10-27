@@ -166,6 +166,34 @@ export class SheetDocument {
     call(() => this.document.removeSheet(sheet));
   }
 
+  conditionalFormats(sheet) {
+    return JSON.parse(call(() => this.document.conditionalFormatsJson(sheet)));
+  }
+
+  setConditionalFormats(sheet, formats) {
+    call(() => this.document.setConditionalFormats(sheet, JSON.stringify(formats ?? [])));
+  }
+
+  validations(sheet) {
+    return JSON.parse(call(() => this.document.validationsJson(sheet)));
+  }
+
+  setValidations(sheet, validations) {
+    call(() => this.document.setValidations(sheet, JSON.stringify(validations ?? [])));
+  }
+
+  conditionalLooks(sheet) {
+    return JSON.parse(call(() => this.document.conditionalLooksJson(sheet)));
+  }
+
+  validation(sheet, row, column) {
+    return JSON.parse(call(() => this.document.validationJson(sheet, row, column)));
+  }
+
+  invalidCells(sheet) {
+    return JSON.parse(call(() => this.document.invalidCellsJson(sheet)));
+  }
+
   /** Today's date for TODAY() and NOW(): a Date, a serial day count, or null to unset it. */
   setToday(today) {
     this.document.setToday(toSerial(today));
@@ -177,6 +205,10 @@ export class SheetDocument {
 
   save() {
     return call(() => this.document.save());
+  }
+
+  saveOds() {
+    return call(() => this.document.saveOds());
   }
 
   free() {

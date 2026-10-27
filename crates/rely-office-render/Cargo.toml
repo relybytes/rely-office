@@ -18,6 +18,7 @@ workspace = true
 [dependencies]
 comemo = "0.5.1"
 rely-office-core = { path = "../rely-office-core", version = "0.6.0" }
+rely-office-sheet = { path = "../rely-office-sheet", version = "0.6.0" }
 thiserror = "2.0.21"
 typst = "0.15.1"
 typst-layout = "0.15.1"

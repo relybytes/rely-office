@@ -52,6 +52,8 @@ pub(crate) enum Namespace {
     XLink,
     /// `LibreOffice`'s extensions, `loext:graphic-properties` among them.
     LoExt,
+    /// `LibreOffice`'s spreadsheet extensions: conditional formats among them.
+    OdfCalcExt,
     /// The timing attributes of ODF animations and transitions.
     OdfSmil,
     OdfAnimation,
@@ -108,6 +110,9 @@ impl Namespace {
             "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0" => Self::OdfNumber,
             "http://www.w3.org/1999/xlink" => Self::XLink,
             "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0" => Self::LoExt,
+            "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0" => {
+                Self::OdfCalcExt
+            }
             "urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0" => Self::OdfSmil,
             "urn:oasis:names:tc:opendocument:xmlns:animation:1.0" => Self::OdfAnimation,
             "http://www.w3.org/XML/1998/namespace" => Self::Xml,

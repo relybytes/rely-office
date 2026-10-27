@@ -69,8 +69,25 @@ pub struct CarriedDrawing {
     pub parts: Vec<CarriedPart>,
 }
 
+/// A pivot table of a sheet, written back as the file had it with the cache it reads: the cells
+/// it shows are ordinary cells of the sheet, and what an editor changes in them the next
+/// refresh replaces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarriedPivot {
+    /// The member name of the pivot table part the sheet points at.
+    pub table_part: String,
+    /// The member name of its cache definition, which the workbook lists.
+    pub cache_part: String,
+    /// The id the workbook gives the cache, which the pivot table names it by.
+    pub cache_id: u32,
+    /// The table, the cache, its records and their relationships.
+    pub parts: Vec<CarriedPart>,
+}
+
 /// The most parts one drawing carries.
 const MAX_CARRIED_PARTS: usize = 512;
+/// The most pivot tables one sheet carries.
+const MAX_PIVOTS: usize = 64;
 const RELATIONSHIPS_TYPE: &str = "application/vnd.openxmlformats-package.relationships+xml";
 
 /// The content types of a package: by part name, else by extension.
@@ -145,9 +162,68 @@ pub(crate) fn carried_drawing(
         .into_iter()
         .find(|relationship| !relationship.external && relationship.is_kind("drawing"))?
         .target;
+    let parts = carried_tree(package, &drawing_part, limits, types)?;
+    Some(CarriedDrawing {
+        drawing_part,
+        parts,
+    })
+}
+
+/// The pivot tables of a sheet, each with the cache the workbook names by id; a table whose
+/// cache the workbook does not list is left out, since nothing could refresh it.
+pub(crate) fn carried_pivots(
+    package: &mut ZipPackage<'_>,
+    sheet_part: &str,
+    caches: &HashMap<String, u32>,
+    limits: &Limits,
+    types: &ContentTypes,
+) -> Vec<CarriedPivot> {
+    let Ok(relationships) = read_relationships(package, sheet_part, limits) else {
+        return Vec::new();
+    };
+    let mut pivots = Vec::new();
+    for relationship in relationships
+        .into_iter()
+        .filter(|relationship| !relationship.external && relationship.is_kind("pivotTable"))
+        .take(MAX_PIVOTS)
+    {
+        let Some(cache_part) = read_relationships(package, &relationship.target, limits)
+            .ok()
+            .and_then(|links| {
+                links
+                    .into_iter()
+                    .find(|link| !link.external && link.is_kind("pivotCacheDefinition"))
+            })
+            .map(|link| link.target)
+        else {
+            continue;
+        };
+        let Some(cache_id) = caches.get(&cache_part).copied() else {
+            continue;
+        };
+        if let Some(parts) = carried_tree(package, &relationship.target, limits, types) {
+            pivots.push(CarriedPivot {
+                table_part: relationship.target,
+                cache_part,
+                cache_id,
+                parts,
+            });
+        }
+    }
+    pivots
+}
+
+/// A part with every part its relationships lead to, and those relationships; `None` past the
+/// carrying limits or when a part cannot be read.
+fn carried_tree(
+    package: &mut ZipPackage<'_>,
+    start: &str,
+    limits: &Limits,
+    types: &ContentTypes,
+) -> Option<Vec<CarriedPart>> {
     let mut parts = Vec::new();
-    let mut seen = HashSet::from([drawing_part.clone()]);
-    let mut queue = VecDeque::from([drawing_part.clone()]);
+    let mut seen = HashSet::from([start.to_owned()]);
+    let mut queue = VecDeque::from([start.to_owned()]);
     let mut total: u64 = 0;
     while let Some(name) = queue.pop_front() {
         let bytes = read_member_bytes(package, &name, limits.max_member_bytes).ok()??;
@@ -179,10 +255,7 @@ pub(crate) fn carried_drawing(
             return None;
         }
     }
-    Some(CarriedDrawing {
-        drawing_part,
-        parts,
-    })
+    Some(parts)
 }
 
 /// How much image data a workbook still may load.

@@ -91,6 +91,14 @@ pub fn read_workbook_in(
     Ok(Workbook { format, sheets })
 }
 
+/// How each sheet of an ods is laid out, by sheet name, as an xlsx gives it: widths, heights,
+/// cell styles, merges, conditional formats and validations; a package it cannot read gives
+/// none.
+#[must_use]
+pub fn read_ods_sheet_layouts(bytes: &[u8], limits: &Limits) -> HashMap<String, SheetLayout> {
+    read_ods_layouts(bytes, limits)
+}
+
 /// The sheets of a binary or zipped workbook; a sheet with a layout shows each value with its
 /// cell's number format.
 fn read_binary_workbook(

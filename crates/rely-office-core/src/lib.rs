@@ -36,6 +36,7 @@ mod relationships;
 mod sheet;
 mod sheet_drawings;
 mod sheet_layout;
+mod sheet_rules;
 mod sheet_styles;
 mod slides;
 mod text;
@@ -65,11 +66,17 @@ pub use number_format::{
     FormattedNumber, NumberLocale, builtin_format_code, format_number, format_text, general_number,
     is_date_code,
 };
-pub use sheet::{Sheet, Workbook, read_workbook, read_workbook_in};
-pub use sheet_drawings::{CarriedDrawing, CarriedPart, SheetDrawing};
+pub use opendocument::excel_formula_from_odf;
+pub use sheet::{Sheet, Workbook, read_ods_sheet_layouts, read_workbook, read_workbook_in};
+pub use sheet_drawings::{CarriedDrawing, CarriedPart, CarriedPivot, SheetDrawing};
 pub use sheet_layout::{
     CellRange, MergePlace, SheetLayout, read_xlsx_drawing_parts, read_xlsx_layouts,
-    read_xlsx_theme_part,
+    read_xlsx_pivot_parts, read_xlsx_theme_part,
+};
+pub use sheet_rules::{
+    ComparisonOperator, Condition, ConditionalFormat, ConditionalRule, DataValidation,
+    DifferentialLook, ErrorStyle, ScalePoint, ScaleValue, TextOperator, ValidationKind,
+    parse_ranges, range_reference,
 };
 pub use sheet_styles::{CellBorders, CellFont, CellStyle, HorizontalAlignment};
 pub use slides::{

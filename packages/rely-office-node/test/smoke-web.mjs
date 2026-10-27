@@ -31,6 +31,14 @@ assert.equal(sheet.styles()[sheet.cells(0, { top: 0, left: 0, bottom: 0, right: 
 assert.equal(sheet.merges(0).length, 1);
 const reopened = await web.openSheet(sheet.save(), 'a.xlsx');
 assert.equal(reopened.input(0, 0, 1), '=A1*3');
+sheet.setConditionalFormats(0, [
+  { ranges: [{ firstRow: 0, firstColumn: 0, lastRow: 0, lastColumn: 1 }], rules: [{ condition: { kind: 'expression', formula: 'A1>5' }, look: { italic: true }, priority: 1 }] },
+]);
+assert.equal(sheet.conditionalLooks(0)[0].italic, true);
+const asOds = await web.openSheet(sheet.saveOds(), 'a.ods');
+assert.equal(asOds.input(0, 0, 1), '=A1*3');
+assert.equal(asOds.conditionalFormats(0).length, 1);
+asOds.free();
 sheet.free();
 reopened.free();
 console.log('web smoke test passed');

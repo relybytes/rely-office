@@ -1834,6 +1834,7 @@ version = "0.6.0"
 dependencies = [
  "comemo",
  "rely-office-core",
+ "rely-office-sheet",
  "rust_xlsxwriter",
  "thiserror",
  "typst",

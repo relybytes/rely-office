@@ -9,9 +9,12 @@
 
 use std::collections::BTreeMap;
 
+use rely_office_core::CellRange;
+
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS};
 use crate::formula::{CellAddress, Expr, RangeAddress};
 use crate::model::{EditError, Sheet};
+use crate::rules::rewrite_rule_formulas;
 use crate::value::{ErrorKind, Input};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +118,18 @@ fn move_looks(sheet: &mut Sheet, shift: Shift) {
                 .then_some(merge)
         })
         .collect();
+    for format in &mut sheet.conditional_formats {
+        format.ranges = shift_ranges(&format.ranges, shift);
+    }
+    sheet
+        .conditional_formats
+        .retain(|format| !format.ranges.is_empty());
+    for validation in &mut sheet.validations {
+        validation.ranges = shift_ranges(&validation.ranges, shift);
+    }
+    sheet
+        .validations
+        .retain(|validation| !validation.ranges.is_empty());
     if shift.rows() {
         sheet.row_heights = std::mem::take(&mut sheet.row_heights)
             .into_iter()
@@ -126,6 +141,45 @@ fn move_looks(sheet: &mut Sheet, shift: Shift) {
             .filter_map(|(column, width)| shift.index(column).map(|column| (column, width)))
             .collect();
     }
+}
+
+/// Where the ranges of a rule land; a range all deleted is gone.
+fn shift_ranges(ranges: &[CellRange], shift: Shift) -> Vec<CellRange> {
+    ranges
+        .iter()
+        .filter_map(|range| {
+            let mut range = *range;
+            if shift.rows() {
+                (range.first_row, range.last_row) = shift.span(range.first_row, range.last_row)?;
+            } else {
+                (range.first_column, range.last_column) =
+                    shift.span(range.first_column, range.last_column)?;
+            }
+            Some(range)
+        })
+        .collect()
+}
+
+/// A formula of `local` sheet, or of another, after the cells of the sheet named `target` move.
+fn shifted_expression(expression: &Expr, local: bool, target: &str, shift: Shift) -> Expr {
+    let names_target = |sheet: &Option<String>| match sheet {
+        None => local,
+        Some(name) => name.to_lowercase() == target,
+    };
+    transform(expression, &mut |node| match node {
+        Expr::Cell(address) if names_target(&address.sheet) => Some(
+            shift
+                .cell(address.cell)
+                .map_or(Expr::Error(ErrorKind::Ref), |cell| {
+                    Expr::Cell(CellAddress {
+                        cell,
+                        ..address.clone()
+                    })
+                }),
+        ),
+        Expr::Range(range) if names_target(&range.sheet) => Some(shift_range(range, shift)),
+        _ => None,
+    })
 }
 
 /// Move the cells of a sheet and make every formula of the workbook follow them.
@@ -153,30 +207,14 @@ pub(crate) fn shift(sheets: &mut [Sheet], target: usize, shift: Shift) -> Result
     let target_name = sheets[target].name.to_lowercase();
     for (index, sheet) in sheets.iter_mut().enumerate() {
         let local = index == target;
+        let mut moved =
+            |expression: &Expr| shifted_expression(expression, local, &target_name, shift);
         for content in sheet.cells.values_mut() {
             if let Input::Formula(expression) = &mut content.input {
-                let names_target = |sheet: &Option<String>| match sheet {
-                    None => local,
-                    Some(name) => name.to_lowercase() == target_name,
-                };
-                **expression = transform(expression, &mut |node| match node {
-                    Expr::Cell(address) if names_target(&address.sheet) => Some(
-                        shift
-                            .cell(address.cell)
-                            .map_or(Expr::Error(ErrorKind::Ref), |cell| {
-                                Expr::Cell(CellAddress {
-                                    cell,
-                                    ..address.clone()
-                                })
-                            }),
-                    ),
-                    Expr::Range(range) if names_target(&range.sheet) => {
-                        Some(shift_range(range, shift))
-                    }
-                    _ => None,
-                });
+                **expression = moved(expression);
             }
         }
+        rewrite_rule_formulas(sheet, &mut moved);
     }
     Ok(())
 }
@@ -229,23 +267,25 @@ pub(crate) fn rename_references(sheets: &mut [Sheet], old: &str, new: &str) {
 /// References to a removed sheet become `#REF!`.
 pub(crate) fn break_references_to_sheet(sheets: &mut [Sheet], name: &str) {
     let name = name.to_lowercase();
+    let named = |sheet: &Option<String>| {
+        sheet
+            .as_ref()
+            .is_some_and(|sheet| sheet.to_lowercase() == name)
+    };
+    let mut broken = |expression: &Expr| {
+        transform(expression, &mut |node| match node {
+            Expr::Cell(address) if named(&address.sheet) => Some(Expr::Error(ErrorKind::Ref)),
+            Expr::Range(range) if named(&range.sheet) => Some(Expr::Error(ErrorKind::Ref)),
+            _ => None,
+        })
+    };
     for sheet in sheets.iter_mut() {
         for content in sheet.cells.values_mut() {
             if let Input::Formula(expression) = &mut content.input {
-                let named = |sheet: &Option<String>| {
-                    sheet
-                        .as_ref()
-                        .is_some_and(|sheet| sheet.to_lowercase() == name)
-                };
-                **expression = transform(expression, &mut |node| match node {
-                    Expr::Cell(address) if named(&address.sheet) => {
-                        Some(Expr::Error(ErrorKind::Ref))
-                    }
-                    Expr::Range(range) if named(&range.sheet) => Some(Expr::Error(ErrorKind::Ref)),
-                    _ => None,
-                });
+                **expression = broken(expression);
             }
         }
+        rewrite_rule_formulas(sheet, &mut broken);
     }
 }
 
@@ -254,38 +294,42 @@ fn rewrite_named(
     old: &str,
     rename: &mut dyn FnMut(&Option<String>) -> Option<String>,
 ) {
+    let named = |sheet: &Option<String>| {
+        sheet
+            .as_ref()
+            .is_some_and(|sheet| sheet.to_lowercase() == old)
+    };
+    let mut renamed = |expression: &Expr| {
+        transform(expression, &mut |node| match node {
+            Expr::Cell(address) if named(&address.sheet) => Some(Expr::Cell(CellAddress {
+                sheet: rename(&address.sheet),
+                ..address.clone()
+            })),
+            Expr::Range(range) if named(&range.sheet) => {
+                let sheet = rename(&range.sheet);
+                Some(Expr::Range(RangeAddress {
+                    start: CellAddress {
+                        sheet: sheet.clone(),
+                        ..range.start.clone()
+                    },
+                    end: CellAddress {
+                        sheet: sheet.clone(),
+                        ..range.end.clone()
+                    },
+                    sheet,
+                    whole_columns: range.whole_columns,
+                }))
+            }
+            _ => None,
+        })
+    };
     for sheet in sheets.iter_mut() {
         for content in sheet.cells.values_mut() {
             if let Input::Formula(expression) = &mut content.input {
-                let named = |sheet: &Option<String>| {
-                    sheet
-                        .as_ref()
-                        .is_some_and(|sheet| sheet.to_lowercase() == old)
-                };
-                **expression = transform(expression, &mut |node| match node {
-                    Expr::Cell(address) if named(&address.sheet) => Some(Expr::Cell(CellAddress {
-                        sheet: rename(&address.sheet),
-                        ..address.clone()
-                    })),
-                    Expr::Range(range) if named(&range.sheet) => {
-                        let sheet = rename(&range.sheet);
-                        Some(Expr::Range(RangeAddress {
-                            start: CellAddress {
-                                sheet: sheet.clone(),
-                                ..range.start.clone()
-                            },
-                            end: CellAddress {
-                                sheet: sheet.clone(),
-                                ..range.end.clone()
-                            },
-                            sheet,
-                            whole_columns: range.whole_columns,
-                        }))
-                    }
-                    _ => None,
-                });
+                **expression = renamed(expression);
             }
         }
+        rewrite_rule_formulas(sheet, &mut renamed);
     }
 }
 

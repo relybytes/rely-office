@@ -438,6 +438,59 @@ test('styles, merges and sizes the cells of a spreadsheet', () => {
   }
 });
 
+test('keeps the conditional formats and validations of a sheet, in xlsx and ods', () => {
+  const sheet = office.createSheet({ locale: 'en' });
+  try {
+    sheet.setInputs(0, [
+      [0, 0, '5'],
+      [1, 0, '50'],
+      [0, 1, 'maybe'],
+    ]);
+    const column = { firstRow: 0, firstColumn: 0, lastRow: 1, lastColumn: 0 };
+    sheet.setConditionalFormats(0, [
+      {
+        ranges: [column],
+        rules: [
+          { condition: { kind: 'cellIs', operator: 'greater', formulas: ['10'] }, look: { fill: 'FFC7CE', bold: true }, priority: 1 },
+          { condition: { kind: 'dataBar', min: { kind: 'min' }, max: { kind: 'max' }, colour: '638EC6', showValue: true }, priority: 2 },
+        ],
+      },
+    ]);
+    sheet.setValidations(0, [
+      { ranges: [{ firstRow: 0, firstColumn: 1, lastRow: 9, lastColumn: 1 }], kind: 'list', formulas: ['"yes,no"'], dropdown: true, errorStyle: 'warning' },
+    ]);
+    const looks = sheet.conditionalLooks(0);
+    assert.equal(looks[1].fill, 'FFC7CE');
+    assert.equal(looks[1].bar.length, 0.9);
+    assert.deepEqual(sheet.validation(0, 0, 1), {
+      validation: sheet.validations(0)[0],
+      valid: false,
+      items: ['yes', 'no'],
+    });
+    assert.deepEqual(sheet.invalidCells(0), [[0, 1]]);
+    assert.throws(
+      () => sheet.setConditionalFormats(0, [{ ranges: [column], rules: [{ condition: { kind: 'expression', formula: '=(' } }] }]),
+      (error) => error.code === 'INVALID_FORMULA',
+    );
+    for (const [bytes, name] of [
+      [sheet.save(), 'regole.xlsx'],
+      [sheet.saveOds(), 'regole.ods'],
+    ]) {
+      const opened = office.openSheet(bytes, name, { locale: 'en' });
+      try {
+        assert.deepEqual(opened.conditionalFormats(0), sheet.conditionalFormats(0), name);
+        assert.deepEqual(opened.validations(0), sheet.validations(0), name);
+        assert.equal(opened.sheets()[0].pivotTables, 0);
+      } finally {
+        opened.free();
+      }
+    }
+    assert.equal(Buffer.from(sheet.saveOds().subarray(30, 38)).toString(), 'mimetype');
+  } finally {
+    sheet.free();
+  }
+});
+
 test('survives many calls without leaking handles', () => {
   for (let round = 0; round < 200; round += 1) {
     office.readDocumentTree(docx);

@@ -21,7 +21,10 @@ mod display;
 mod edit;
 mod evaluate;
 mod formula;
+mod looks;
 mod model;
+mod ods;
+mod rules;
 mod styling;
 mod value;
 mod xlsx;
@@ -32,11 +35,15 @@ pub use formula::{
     BinaryOperator, CellAddress, Expr, FormulaError, MAX_FORMULA_CHARS, RangeAddress,
     UnaryOperator, parse_formula, print_formula,
 };
+pub use looks::{CellLook, DataBarLook, IconLook};
 pub use model::{Cell, EditError, MAX_CELLS, MAX_SHEETS, NumberFormat, Sheet, Workbook};
+pub use ods::write_ods;
 pub use rely_office_core::{
-    Border, BorderStyle, CellBorders, CellFont, CellRange, CellStyle, HorizontalAlignment,
-    VerticalAlignment,
+    Border, BorderStyle, CellBorders, CellFont, CellRange, CellStyle, ComparisonOperator,
+    Condition, ConditionalFormat, ConditionalRule, DataValidation, DifferentialLook, ErrorStyle,
+    HorizontalAlignment, ScalePoint, ScaleValue, TextOperator, ValidationKind, VerticalAlignment,
 };
+pub use rules::MAX_RULES;
 pub use styling::{
     BorderPlacement, MAX_MERGES, MAX_ROW_HEIGHT, MAX_STYLED_AREA, MAX_STYLED_CELLS, StylePatch,
 };

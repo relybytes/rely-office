@@ -9,7 +9,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use rely_office_core::{CarriedDrawing, CarriedPart, CellRange, CellStyle};
+use rely_office_core::{
+    CarriedDrawing, CarriedPart, CarriedPivot, CellRange, CellStyle, ConditionalFormat,
+    DataValidation,
+};
 
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS};
 use crate::evaluate;
@@ -60,9 +63,32 @@ pub struct Sheet {
     /// The pictures and charts of the file the sheet was read from, written back as they were:
     /// they stay anchored to the cells they had, whatever rows or columns move.
     pub(crate) drawing: Option<CarriedDrawing>,
+    pub(crate) conditional_formats: Vec<ConditionalFormat>,
+    pub(crate) validations: Vec<DataValidation>,
+    /// The pivot tables of the file the sheet was read from, written back as they were: the
+    /// cells they show are the sheet's own, and a refresh in Excel rebuilds them.
+    pub(crate) pivots: Vec<CarriedPivot>,
 }
 
 impl Sheet {
+    /// The conditional formats of the sheet, in the order the file lists them.
+    #[must_use]
+    pub fn conditional_formats(&self) -> &[ConditionalFormat] {
+        &self.conditional_formats
+    }
+
+    /// The data validations of the sheet.
+    #[must_use]
+    pub fn validations(&self) -> &[DataValidation] {
+        &self.validations
+    }
+
+    /// How many pivot tables the sheet carries.
+    #[must_use]
+    pub fn pivot_count(&self) -> usize {
+        self.pivots.len()
+    }
+
     /// The cell at a position, if it has content.
     #[must_use]
     pub fn cell(&self, cell: CellRef) -> Option<&Cell> {

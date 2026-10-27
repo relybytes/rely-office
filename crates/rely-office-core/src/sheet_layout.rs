@@ -17,10 +17,16 @@ use quick_xml::events::{BytesStart, Event};
 use crate::archive::{open_package, read_member_bytes, read_text_member};
 use crate::relationships::{main_part_path, read_relationships};
 use crate::sheet_drawings::{
-    CarriedDrawing, CarriedPart, ContentTypes, ImageBudget, SheetDrawing, WorkbookCells,
-    carried_drawing, sheet_drawings,
+    CarriedDrawing, CarriedPart, CarriedPivot, ContentTypes, ImageBudget, SheetDrawing,
+    WorkbookCells, carried_drawing, carried_pivots, sheet_drawings,
 };
-use crate::sheet_styles::{CellStyle, cell_styles, default_theme, theme_colours};
+use crate::sheet_rules::{
+    ConditionalFormat, DataValidation, MAX_SHEET_RULES, read_conditional_formatting,
+    read_data_validation,
+};
+use crate::sheet_styles::{
+    CellStyle, ThemeColours, cell_styles, default_theme, differential_looks, theme_colours,
+};
 use crate::theme::Theme;
 use crate::xml_text::attribute_value;
 use crate::{Limits, OfficeError};
@@ -123,6 +129,8 @@ pub struct SheetLayout {
     pub default_row_height: Option<u32>,
     /// The pictures and charts placed on the sheet.
     pub drawings: Vec<SheetDrawing>,
+    pub conditional_formats: Vec<ConditionalFormat>,
+    pub validations: Vec<DataValidation>,
 }
 
 impl SheetLayout {
@@ -214,6 +222,10 @@ fn read_layouts(
         .as_deref()
         .map(|xml| cell_styles(xml, &theme))
         .unwrap_or_default();
+    let differentials = styles_xml
+        .as_deref()
+        .map(|xml| differential_looks(xml, &theme))
+        .unwrap_or_default();
 
     let mut layouts = HashMap::new();
     for (name, relationship_id) in sheet_entries(&workbook)? {
@@ -226,8 +238,16 @@ fn read_layouts(
         let Some(sheet) = read_text_member(&mut package, &relationship.target, limits)? else {
             continue;
         };
-        let mut layout = sheet_layout(&sheet)?;
+        let (mut layout, looks) = sheet_layout(&sheet, &theme)?;
         drop(sheet);
+        for (format, looks) in layout.conditional_formats.iter_mut().zip(looks) {
+            for (rule, look) in format.rules.iter_mut().zip(looks) {
+                rule.look = look
+                    .and_then(|index| differentials.get(index))
+                    .filter(|look| !look.is_empty())
+                    .cloned();
+            }
+        }
         layout.drawings = sheet_drawings(
             &mut package,
             &relationship.target,
@@ -281,6 +301,76 @@ fn read_drawing_parts(
     Ok(drawings)
 }
 
+/// The pivot tables of every sheet of an xlsx that has some, by sheet name, with the caches they
+/// read, for a writer to put back unchanged; a package it cannot read gives none.
+#[must_use]
+pub fn read_xlsx_pivot_parts(bytes: &[u8], limits: &Limits) -> HashMap<String, Vec<CarriedPivot>> {
+    read_pivot_parts(bytes, limits).unwrap_or_default()
+}
+
+fn read_pivot_parts(
+    bytes: &[u8],
+    limits: &Limits,
+) -> Result<HashMap<String, Vec<CarriedPivot>>, OfficeError> {
+    let mut package = open_package(bytes)?;
+    let types = read_text_member(&mut package, "[Content_Types].xml", limits)?
+        .map(|xml| ContentTypes::parse(&xml))
+        .unwrap_or_default();
+    let workbook_part = main_part_path(&mut package, limits, WORKBOOK_PART)?;
+    let Some(workbook) = read_text_member(&mut package, &workbook_part, limits)? else {
+        return Ok(HashMap::new());
+    };
+    let relationships = read_relationships(&mut package, &workbook_part, limits)?;
+    let caches: HashMap<String, u32> = pivot_cache_entries(&workbook)
+        .into_iter()
+        .filter_map(|(id, relationship_id)| {
+            relationships
+                .iter()
+                .find(|relationship| relationship.id == relationship_id && !relationship.external)
+                .map(|relationship| (relationship.target.clone(), id))
+        })
+        .collect();
+    if caches.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut pivots = HashMap::new();
+    for (name, relationship_id) in sheet_entries(&workbook)? {
+        let Some(relationship) = relationships
+            .iter()
+            .find(|relationship| relationship.id == relationship_id && !relationship.external)
+        else {
+            continue;
+        };
+        let found = carried_pivots(&mut package, &relationship.target, &caches, limits, &types);
+        if !found.is_empty() {
+            pivots.insert(name, found);
+        }
+    }
+    Ok(pivots)
+}
+
+/// The id and relationship id of each `pivotCache` of the workbook part.
+fn pivot_cache_entries(workbook: &str) -> Vec<(u32, String)> {
+    let mut reader = Reader::from_str(workbook);
+    let mut entries = Vec::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element) | Event::Empty(element))
+                if element.local_name().as_ref() == "pivotCache" =>
+            {
+                if let (Some(id), Some(relationship)) = (
+                    attribute(&element, "cacheId").and_then(|id| id.parse().ok()),
+                    attribute_ending(&element, ":id"),
+                ) {
+                    entries.push((id, relationship));
+                }
+            }
+            Ok(Event::Eof) | Err(_) => return entries,
+            _ => {}
+        }
+    }
+}
+
 /// The theme part of an xlsx, which its charts take their colours from, for a writer to put back
 /// unchanged.
 #[must_use]
@@ -323,12 +413,64 @@ fn sheet_entries(workbook: &str) -> Result<Vec<(String, String)>, OfficeError> {
 }
 
 /// The print settings of one worksheet part.
-fn sheet_layout(sheet: &str) -> Result<SheetLayout, OfficeError> {
+/// The layout of a worksheet part, with the differential format each rule of its conditional
+/// formats names.
+type ReadLayout = (SheetLayout, Vec<Vec<Option<usize>>>);
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the worksheet for every setting it holds"
+)]
+fn sheet_layout(sheet: &str, theme: &ThemeColours) -> Result<ReadLayout, OfficeError> {
     let mut reader = Reader::from_str(sheet);
     let mut layout = SheetLayout::default();
+    let mut looks = Vec::new();
     let mut reading: Option<bool> = None;
+    // Inside the extensions only the validations Excel 2010 moved there are read: the rest
+    // repeat, with additions, the formats already read.
+    let mut extension_depth = 0_usize;
     loop {
-        match reader.read_event().map_err(malformed)? {
+        let event = reader.read_event().map_err(malformed)?;
+        match &event {
+            Event::Start(element) if element.local_name().as_ref() == "extLst" => {
+                extension_depth += 1;
+                continue;
+            }
+            Event::End(element) if element.local_name().as_ref() == "extLst" => {
+                extension_depth = extension_depth.saturating_sub(1);
+                continue;
+            }
+            Event::Start(element)
+                if element.local_name().as_ref() == "conditionalFormatting"
+                    && extension_depth == 0 =>
+            {
+                let element = element.clone().into_owned();
+                if let Some(read) = read_conditional_formatting(&mut reader, &element, theme)
+                    && layout.conditional_formats.len() < MAX_SHEET_RULES
+                {
+                    layout.conditional_formats.push(read.format);
+                    looks.push(read.looks);
+                }
+                continue;
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element.local_name().as_ref() == "dataValidation" =>
+            {
+                let element = element.clone().into_owned();
+                let empty = matches!(event, Event::Empty(_));
+                if let Some(validation) = read_data_validation(&mut reader, &element, empty)
+                    && layout.validations.len() < MAX_SHEET_RULES
+                {
+                    layout.validations.push(validation);
+                }
+                continue;
+            }
+            _ => {}
+        }
+        if extension_depth > 0 && !matches!(event, Event::Eof) {
+            continue;
+        }
+        match event {
             Event::Start(element) | Event::Empty(element) => match element.local_name().as_ref() {
                 "sheetFormatPr" => {
                     layout.default_column_width = attribute(&element, "defaultColWidth")
@@ -380,7 +522,7 @@ fn sheet_layout(sheet: &str) -> Result<SheetLayout, OfficeError> {
             {
                 reading = None;
             }
-            Event::Eof => return Ok(layout),
+            Event::Eof => return Ok((layout, looks)),
             _ => {}
         }
     }
@@ -564,6 +706,10 @@ fn malformed(error: impl std::fmt::Display) -> OfficeError {
 mod tests {
     use super::*;
 
+    fn layout_of(sheet: &str) -> Result<SheetLayout, OfficeError> {
+        sheet_layout(sheet, &default_theme()).map(|(layout, _)| layout)
+    }
+
     const SHEET: &str = concat!(
         r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">"#,
         r#"<sheetFormatPr defaultColWidth="11.5" defaultRowHeight="12.8"/>"#,
@@ -579,7 +725,7 @@ mod tests {
 
     #[test]
     fn reads_the_print_settings_of_a_sheet() {
-        let layout = sheet_layout(SHEET).unwrap();
+        let layout = layout_of(SHEET).unwrap();
         assert!(layout.landscape);
         assert!(layout.grid_lines);
         assert_eq!(
@@ -597,17 +743,16 @@ mod tests {
 
     #[test]
     fn keeps_the_defaults_for_what_a_sheet_does_not_say() {
-        let layout = sheet_layout(
-            "<worksheet><pageMargins left=\"x\"/><col min=\"2\" max=\"1\"/></worksheet>",
-        )
-        .unwrap();
+        let layout =
+            layout_of("<worksheet><pageMargins left=\"x\"/><col min=\"2\" max=\"1\"/></worksheet>")
+                .unwrap();
         assert_eq!(layout, SheetLayout::default());
-        assert!(sheet_layout("<worksheet><col").is_err());
+        assert!(layout_of("<worksheet><col").is_err());
     }
 
     #[test]
     fn caps_a_column_range_that_spans_the_whole_sheet() {
-        let layout = sheet_layout(
+        let layout = layout_of(
             r#"<worksheet><cols><col min="1" max="16384" width="9"/></cols></worksheet>"#,
         )
         .unwrap();
@@ -628,7 +773,7 @@ mod tests {
 
     #[test]
     fn reads_row_heights_cell_formats_and_merges() {
-        let layout = sheet_layout(concat!(
+        let layout = layout_of(concat!(
             r#"<worksheet><sheetFormatPr defaultRowHeight="15"/><cols><col min="2" max="3" width="9" style="7"/></cols>"#,
             r#"<sheetData><row r="1" ht="30" customHeight="1"><c r="A1" s="2"><v>1</v></c><c r="B1" s="0"/></row>"#,
             r#"<row r="2" hidden="1" s="5" customFormat="1"><c r="A2" s="0"/><c r="C2"/></row>"#,

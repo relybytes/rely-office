@@ -64,6 +64,47 @@ pub(crate) fn evaluate_workbook(workbook: &Workbook) -> Vec<HashMap<CellRef, Val
     evaluator.values
 }
 
+/// The workbook as computed, for formulas that belong to no cell: the conditions of conditional
+/// formats and validations, each computed as if it were in the cell it is checked for.
+pub(crate) struct FormulaContext<'a> {
+    evaluator: Evaluator<'a>,
+}
+
+impl<'a> FormulaContext<'a> {
+    pub(crate) fn new(workbook: &'a Workbook) -> Self {
+        let sheets = workbook.sheets.len();
+        Self {
+            evaluator: Evaluator {
+                workbook,
+                values: workbook.values.clone(),
+                states: vec![HashMap::new(); sheets],
+                formula_cells: vec![BTreeSet::new(); sheets],
+                current: std::cell::Cell::new(None),
+            },
+        }
+    }
+
+    /// The single value of a formula computed in `cell` of `sheet`; a range is `#VALUE!`.
+    pub(crate) fn value(&self, sheet: usize, cell: CellRef, expression: &Expr) -> Value {
+        self.evaluator.current.set(Some(cell));
+        finite(self.evaluator.scalar(sheet, expression))
+    }
+
+    /// Every value a formula computed in `cell` gives: a range's cells row by row, or its value.
+    pub(crate) fn values(&self, sheet: usize, cell: CellRef, expression: &Expr) -> Vec<Value> {
+        self.evaluator.current.set(Some(cell));
+        let mut found = Vec::new();
+        self.evaluator
+            .values_of(sheet, expression, |value, _| found.push(value));
+        found
+    }
+}
+
+/// Whether two values compare as an operator says, as a formula compares them.
+pub(crate) fn holds(operator: BinaryOperator, left: &Value, right: &Value) -> bool {
+    binary(operator, left, right) == Value::Bool(true)
+}
+
 struct Evaluator<'a> {
     workbook: &'a Workbook,
     values: Vec<HashMap<CellRef, Value>>,

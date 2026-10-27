@@ -17,14 +17,20 @@ use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use rely_office_core::{
     Border, BorderStyle, CarriedPart, CellBorders, CellFont, CellStyle, DocumentFormat,
     HorizontalAlignment, Limits, OfficeError, SheetLayout, VerticalAlignment, detect_format,
-    read_workbook, read_xlsx_drawing_parts, read_xlsx_layouts, read_xlsx_theme_part,
+    excel_formula_from_odf, read_ods_sheet_layouts, read_workbook, read_xlsx_drawing_parts,
+    read_xlsx_layouts, read_xlsx_pivot_parts, read_xlsx_theme_part,
 };
 use zip::write::SimpleFileOptions;
 
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS, column_name};
+use crate::dates::serial_from_date;
 use crate::formula::{Expr, PREFIXED_FUNCTIONS, number_text, parse_formula, print_formula};
 use crate::model::{Cell, MAX_CELLS, MAX_SHEETS, NumberFormat, Sheet, Workbook};
 use crate::value::{ErrorKind, Input, Locale, Value};
+
+mod rules;
+
+use rules::{Differentials, conditional_formatting_xml, data_validations_xml};
 
 /// Read a spreadsheet (xlsx, xls, ods, csv, tsv) as an editable workbook. The text of a CSV is
 /// read in `locale`, so `1.234,5` is a number in an Italian one.
@@ -50,15 +56,25 @@ pub fn read_spreadsheet(
     let mut styles = StyleTable::default();
     let sheets = match format {
         DocumentFormat::Xlsx | DocumentFormat::Xls | DocumentFormat::Ods => {
-            let mut sheets = read_binary(bytes)?;
+            let mut sheets = read_binary(bytes, format == DocumentFormat::Ods)?;
+            if format == DocumentFormat::Ods {
+                let mut layouts = read_ods_sheet_layouts(bytes, limits);
+                for sheet in &mut sheets {
+                    if let Some(layout) = layouts.remove(&sheet.name) {
+                        apply_layout(sheet, &layout, &mut styles);
+                    }
+                }
+            }
             if format == DocumentFormat::Xlsx {
                 let mut layouts = read_xlsx_layouts(bytes, limits);
                 let mut drawings = read_xlsx_drawing_parts(bytes, limits);
+                let mut pivots = read_xlsx_pivot_parts(bytes, limits);
                 for sheet in &mut sheets {
                     if let Some(layout) = layouts.remove(&sheet.name) {
                         apply_layout(sheet, &layout, &mut styles);
                     }
                     sheet.drawing = drawings.remove(&sheet.name);
+                    sheet.pivots = pivots.remove(&sheet.name).unwrap_or_default();
                 }
             }
             sheets
@@ -131,6 +147,10 @@ fn apply_layout(sheet: &mut Sheet, layout: &SheetLayout, styles: &mut StyleTable
         sheet.row_heights.insert(*row, f64::from(*height) / 20.0);
     }
     sheet.merges.clone_from(&layout.merges);
+    sheet
+        .conditional_formats
+        .clone_from(&layout.conditional_formats);
+    sheet.validations.clone_from(&layout.validations);
     let default_font = layout
         .styles
         .first()
@@ -172,8 +192,10 @@ fn apply_layout(sheet: &mut Sheet, layout: &SheetLayout, styles: &mut StyleTable
 /// The model's own format for an Excel code that means the same.
 fn simple_format(code: &str) -> Option<NumberFormat> {
     match code {
-        "m/d/yyyy" => Some(NumberFormat::Date),
-        "m/d/yyyy h:mm" => Some(NumberFormat::DateTime),
+        // The second of each pair is how an ods the model wrote reads back.
+        "m/d/yyyy" | "dd/mm/yyyy" => Some(NumberFormat::Date),
+        "m/d/yyyy h:mm" | "dd/mm/yyyy hh:mm" => Some(NumberFormat::DateTime),
+        "0.##%" => Some(NumberFormat::Percent),
         "0" => Some(NumberFormat::Decimals(0)),
         _ => {
             let decimals = code.strip_prefix("0.")?;
@@ -190,7 +212,9 @@ fn too_large(what: &str, limit: usize) -> OfficeError {
     }
 }
 
-fn read_binary(bytes: &[u8]) -> Result<Vec<Sheet>, OfficeError> {
+/// The sheets of an xlsx, xls or ods; an ods's formulas, in `OpenDocument`'s notation, are read
+/// in Excel's.
+fn read_binary(bytes: &[u8], odf_formulas: bool) -> Result<Vec<Sheet>, OfficeError> {
     let unreadable = |error: calamine::Error| OfficeError::UnreadableWorkbook(error.to_string());
     let mut workbook = open_workbook_auto_from_rs(Cursor::new(bytes)).map_err(unreadable)?;
     let names = workbook.sheet_names();
@@ -220,7 +244,12 @@ fn read_binary(bytes: &[u8]) -> Result<Vec<Sheet>, OfficeError> {
                 let format = cells
                     .get(&position)
                     .map_or(NumberFormat::General, |cell| cell.format);
-                let input = parse_formula(formula).map_or_else(
+                let formula = if odf_formulas {
+                    excel_formula_from_odf(formula)
+                } else {
+                    formula.clone()
+                };
+                let input = parse_formula(&formula).map_or_else(
                     |_| Input::Text(format!("={formula}")),
                     |expression| Input::Formula(Box::new(expression)),
                 );
@@ -275,9 +304,22 @@ fn cell_from_data(data: &Data) -> Option<Cell> {
         Data::Int(number) => general(Input::Number(*number as f64)),
         Data::Float(number) => general(Input::Number(*number)),
         Data::String(text) if text.is_empty() => None,
-        Data::String(text) | Data::DateTimeIso(text) | Data::DurationIso(text) => {
-            general(Input::Text(text.clone()))
-        }
+        // An ods keeps dates and durations as ISO text: a date is a serial, as in an xlsx.
+        Data::DateTimeIso(text) => match iso_date_serial(text) {
+            Some(serial) => Some(Cell {
+                input: Input::Number(serial),
+                format: if serial.fract() == 0.0 {
+                    NumberFormat::Date
+                } else {
+                    NumberFormat::DateTime
+                },
+            }),
+            None => general(Input::Text(text.clone())),
+        },
+        Data::DurationIso(text) => general(
+            iso_duration_days(text).map_or_else(|| Input::Text(text.clone()), Input::Number),
+        ),
+        Data::String(text) => general(Input::Text(text.clone())),
         Data::Bool(value) => general(Input::Bool(*value)),
         Data::DateTime(moment) => Some(Cell {
             input: Input::Number(moment.as_f64()),
@@ -296,6 +338,53 @@ fn cell_from_data(data: &Data) -> Option<Cell> {
             general(Input::Formula(Box::new(Expr::Error(kind))))
         }
     }
+}
+
+/// The serial of an ISO date, `2026-10-27` or `2026-10-27T18:30:00.5`.
+fn iso_date_serial(text: &str) -> Option<f64> {
+    let (date, time) = text.split_once('T').unwrap_or((text, ""));
+    let mut parts = date.splitn(3, '-').map(|part| part.parse::<i64>().ok());
+    let (year, month, day) = (parts.next()??, parts.next()??, parts.next()??);
+    let serial = serial_from_date(year, month, day)?;
+    if time.is_empty() {
+        return Some(serial);
+    }
+    let mut parts = time.splitn(3, ':').map(|part| part.parse::<f64>().ok());
+    let hours = parts.next()??;
+    let minutes = parts.next().flatten().unwrap_or(0.0);
+    let seconds = parts.next().flatten().unwrap_or(0.0);
+    Some(serial + (hours * 3_600.0 + minutes * 60.0 + seconds) / 86_400.0)
+}
+
+/// The days of an ISO duration, `PT36H30M00S`, as a sheet keeps a time.
+fn iso_duration_days(text: &str) -> Option<f64> {
+    let (negative, rest) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let rest = rest.strip_prefix('P')?;
+    let (days, time) = rest.split_once('T').unwrap_or((rest, ""));
+    let mut total = if days.is_empty() {
+        0.0
+    } else {
+        days.strip_suffix('D')?.parse::<f64>().ok()?
+    };
+    let mut number = String::new();
+    for character in time.chars() {
+        let unit = match character {
+            'H' => 24.0,
+            'M' => 1_440.0,
+            'S' => 86_400.0,
+            digit if digit.is_ascii_digit() || digit == '.' => {
+                number.push(digit);
+                continue;
+            }
+            _ => return None,
+        };
+        total += number.parse::<f64>().ok()? / unit;
+        number.clear();
+    }
+    Some(if negative { -total } else { total })
 }
 
 fn delimited_sheet(rows: &[Vec<String>], locale: Locale) -> Result<Sheet, OfficeError> {
@@ -334,7 +423,8 @@ fn delimited_sheet(rows: &[Vec<String>], locale: Locale) -> Result<Sheet, Office
 /// [`OfficeError::DamagedContainer`] when the zip cannot be written, which only a failing
 /// allocator causes.
 pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
-    let styles = Styles::new(workbook);
+    let differentials = Differentials::new(workbook);
+    let styles = Styles::new(workbook, &differentials);
 
     let mut package = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default();
@@ -356,22 +446,22 @@ pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
     add("xl/workbook.xml", workbook_part(workbook).as_bytes())?;
     add(
         "xl/_rels/workbook.xml.rels",
-        workbook_relationships(count, workbook.theme.is_some()).as_bytes(),
+        workbook_relationships(count, workbook.theme.is_some(), &pivot_caches(workbook)).as_bytes(),
     )?;
     if let Some(theme) = &workbook.theme {
         add(THEME_PART, &theme.bytes)?;
     }
     add("xl/styles.xml", styles.xml.as_bytes())?;
     for (index, sheet) in workbook.sheets.iter().enumerate() {
-        let xml = sheet_part(sheet, &workbook.values[index], &styles);
+        let xml = sheet_part(sheet, &workbook.values[index], &styles, &differentials);
         add(
             &format!("xl/worksheets/sheet{}.xml", index + 1),
             xml.as_bytes(),
         )?;
-        if let Some(drawing) = &sheet.drawing {
+        if sheet.drawing.is_some() || !sheet.pivots.is_empty() {
             add(
                 &format!("xl/worksheets/_rels/sheet{}.xml.rels", index + 1),
-                sheet_relationships(&drawing.drawing_part).as_bytes(),
+                sheet_relationships(sheet).as_bytes(),
             )?;
         }
     }
@@ -465,7 +555,7 @@ impl StyleLists {
 }
 
 /// The styles part: number formats, fonts, fills, borders and the cell formats using them.
-fn styles_part(lists: &StyleLists, cell_formats: &str, count: usize) -> String {
+fn styles_part(lists: &StyleLists, cell_formats: &str, count: usize, dxfs: &str) -> String {
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">"#,
     );
@@ -513,12 +603,16 @@ fn styles_part(lists: &StyleLists, cell_formats: &str, count: usize) -> String {
         r#"<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>"#,
     ));
     let _ = write!(xml, r#"<cellXfs count="{count}">{cell_formats}</cellXfs>"#);
-    xml.push_str(r#"<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>"#);
+    xml.push_str(
+        r#"<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>"#,
+    );
+    xml.push_str(dxfs);
+    xml.push_str("</styleSheet>");
     xml
 }
 
 impl Styles {
-    fn new(workbook: &Workbook) -> Self {
+    fn new(workbook: &Workbook, differentials: &Differentials) -> Self {
         let mut used: Vec<(u32, NumberFormat)> = vec![(0, NumberFormat::General)];
         for sheet in &workbook.sheets {
             for (cell, content) in &sheet.cells {
@@ -547,7 +641,7 @@ impl Styles {
         }
         Self {
             formats,
-            xml: styles_part(&lists, &cell_formats, used.len()),
+            xml: styles_part(&lists, &cell_formats, used.len(), &differentials.xml()),
         }
     }
 
@@ -653,7 +747,12 @@ fn alignment_xml(style: &CellStyle) -> String {
     xml
 }
 
-fn sheet_part(sheet: &Sheet, values: &HashMap<CellRef, Value>, styles: &Styles) -> String {
+fn sheet_part(
+    sheet: &Sheet,
+    values: &HashMap<CellRef, Value>,
+    styles: &Styles,
+    differentials: &Differentials,
+) -> String {
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" "#,
@@ -722,6 +821,8 @@ fn sheet_part(sheet: &Sheet, values: &HashMap<CellRef, Value>, styles: &Styles) 
         }
         xml.push_str("</mergeCells>");
     }
+    xml.push_str(&conditional_formatting_xml(sheet, differentials));
+    xml.push_str(&data_validations_xml(sheet));
     if sheet.drawing.is_some() {
         let _ = write!(xml, r#"<drawing r:id="{DRAWING_RELATIONSHIP}"/>"#);
     }
@@ -812,14 +913,46 @@ fn workbook_part(workbook: &Workbook) -> String {
             index + 1
         );
     }
-    xml.push_str(r#"</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>"#);
+    xml.push_str(r#"</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/>"#);
+    let caches = pivot_caches(workbook);
+    if !caches.is_empty() {
+        xml.push_str("<pivotCaches>");
+        for (index, (_, cache_id)) in caches.iter().enumerate() {
+            let _ = write!(
+                xml,
+                r#"<pivotCache cacheId="{cache_id}" r:id="rIdPivotCache{}"/>"#,
+                index + 1
+            );
+        }
+        xml.push_str("</pivotCaches>");
+    }
+    xml.push_str("</workbook>");
     xml
+}
+
+/// The pivot caches the sheets' pivot tables read, each once with its id, in sheet order.
+fn pivot_caches(workbook: &Workbook) -> Vec<(&str, u32)> {
+    let mut caches: Vec<(&str, u32)> = Vec::new();
+    for pivot in workbook.sheets.iter().flat_map(|sheet| &sheet.pivots) {
+        if !caches.iter().any(|(part, _)| *part == pivot.cache_part) {
+            caches.push((&pivot.cache_part, pivot.cache_id));
+        }
+    }
+    caches
+}
+
+/// A part's member name as a relationship of a part in `xl/` or below it names it.
+fn target_from(depth: usize, part: &str) -> String {
+    part.strip_prefix("xl/").map_or_else(
+        || format!("/{part}"),
+        |inside| format!("{}{inside}", "../".repeat(depth)),
+    )
 }
 
 /// Where the carried theme is written, whatever its name in the file it came from.
 const THEME_PART: &str = "xl/theme/theme1.xml";
 
-fn workbook_relationships(sheets: usize, theme: bool) -> String {
+fn workbook_relationships(sheets: usize, theme: bool, caches: &[(&str, u32)]) -> String {
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
     );
@@ -841,6 +974,14 @@ fn workbook_relationships(sheets: usize, theme: bool) -> String {
             sheets + 2
         );
     }
+    for (index, (part, _)) in caches.iter().enumerate() {
+        let _ = write!(
+            xml,
+            r#"<Relationship Id="rIdPivotCache{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="{}"/>"#,
+            index + 1,
+            escape(&target_from(0, part))
+        );
+    }
     xml.push_str("</Relationships>");
     xml
 }
@@ -852,8 +993,13 @@ fn carried_parts(workbook: &Workbook) -> Vec<&CarriedPart> {
     workbook
         .sheets
         .iter()
-        .filter_map(|sheet| sheet.drawing.as_ref())
-        .flat_map(|drawing| drawing.parts.iter())
+        .flat_map(|sheet| {
+            sheet
+                .drawing
+                .iter()
+                .flat_map(|drawing| drawing.parts.iter())
+                .chain(sheet.pivots.iter().flat_map(|pivot| pivot.parts.iter()))
+        })
         .filter(|part| {
             let name = part.name.to_ascii_lowercase();
             !name.starts_with("xl/worksheets/")
@@ -868,21 +1014,29 @@ fn carried_parts(workbook: &Workbook) -> Vec<&CarriedPart> {
         .collect()
 }
 
-/// The relationships of a worksheet: its drawing.
-fn sheet_relationships(drawing_part: &str) -> String {
-    format!(
-        concat!(
-            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
-            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
-            r#"<Relationship Id="{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="{}"/>"#,
-            "</Relationships>"
-        ),
-        DRAWING_RELATIONSHIP,
-        escape(&drawing_part.strip_prefix("xl/").map_or_else(
-            || format!("/{drawing_part}"),
-            |inside| format!("../{inside}")
-        ))
-    )
+/// The relationships of a worksheet: its drawing and its pivot tables.
+fn sheet_relationships(sheet: &Sheet) -> String {
+    let mut xml = String::from(concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+    ));
+    if let Some(drawing) = &sheet.drawing {
+        let _ = write!(
+            xml,
+            r#"<Relationship Id="{DRAWING_RELATIONSHIP}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="{}"/>"#,
+            escape(&target_from(1, &drawing.drawing_part))
+        );
+    }
+    for (index, pivot) in sheet.pivots.iter().enumerate() {
+        let _ = write!(
+            xml,
+            r#"<Relationship Id="rIdPivot{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable" Target="{}"/>"#,
+            index + 1,
+            escape(&target_from(1, &pivot.table_part))
+        );
+    }
+    xml.push_str("</Relationships>");
+    xml
 }
 
 /// The relationship a worksheet names its drawing by.

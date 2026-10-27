@@ -10,6 +10,7 @@ mod styles;
 mod text_tree;
 
 pub(crate) use presentation::read_odp;
+pub use spreadsheet::excel_formula_from_odf;
 pub(crate) use spreadsheet::read_ods_layouts;
 pub(crate) use text_tree::read_odt_tree;
 

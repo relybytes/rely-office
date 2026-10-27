@@ -166,6 +166,24 @@ impl Styles {
         automatic.get(&key).or_else(|| self.named.get(&key))
     }
 
+    /// The name of a common style of a family that a file names by its display name, as
+    /// `LibreOffice` names the styles of conditional formats: `ConditionalStyle_1` for the style
+    /// named `ConditionalStyle_5f_1`.
+    pub(super) fn named_style(&self, family: &str, name: &str) -> Option<String> {
+        if self
+            .named
+            .contains_key(&(family.to_owned(), name.to_owned()))
+        {
+            return Some(name.to_owned());
+        }
+        self.named
+            .iter()
+            .find(|((own_family, _), style)| {
+                own_family == family && style.attribute(STYLE, "display-name") == Some(name)
+            })
+            .map(|((_, own_name), _)| own_name.clone())
+    }
+
     /// A style and its parents, nearest first, then the family's default style.
     pub(super) fn chain(&self, scope: Scope, family: &str, name: Option<&str>) -> Vec<&Element> {
         let mut chain = Vec::new();

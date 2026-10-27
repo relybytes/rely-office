@@ -16,9 +16,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use rely_office_core::{
-    Border, BorderStyle, CellRange, CellStyle, HorizontalAlignment, Sheet, SheetDrawing,
+    Border, BorderStyle, CellRange, CellStyle, HorizontalAlignment, Limits, Sheet, SheetDrawing,
     SheetLayout, VerticalAlignment, Workbook,
 };
+use rely_office_sheet::{CellLook, IconLook, Locale};
 
 use crate::fonts::body_fonts;
 use crate::markup::{font_list, points, string_literal};
@@ -41,12 +42,63 @@ const EMU_PER_POINT: f64 = 12_700.0;
 /// The table reaches as far as a drawing's anchor cell, but never past this row or column.
 const MAX_DRAWING_REACH: usize = 10_000;
 
-/// The source of a workbook and the image files of its drawings. With `with_images` false the
-/// drawings are left out, for a workbook whose images Typst cannot decode.
+/// The look the conditional formats give the cells of a sheet, by row and column.
+pub(crate) type SheetLooks = HashMap<(usize, usize), CellLook>;
+
+/// The looks of the cells of each sheet of a workbook, computed by the editable model from the
+/// same bytes; none when no sheet has a conditional format or the model cannot read the file.
+pub(crate) fn conditional_looks(
+    bytes: &[u8],
+    file_name: Option<&str>,
+    limits: &Limits,
+    workbook: &Workbook,
+) -> Vec<SheetLooks> {
+    if workbook
+        .sheets
+        .iter()
+        .all(|sheet| sheet.layout.conditional_formats.is_empty())
+    {
+        return Vec::new();
+    }
+    let Ok(model) = rely_office_sheet::read_spreadsheet(bytes, file_name, limits, Locale::Italian)
+    else {
+        return Vec::new();
+    };
+    workbook
+        .sheets
+        .iter()
+        .map(|sheet| {
+            model
+                .sheet_index(&sheet.name)
+                .map(|index| {
+                    model
+                        .conditional_looks(index)
+                        .into_iter()
+                        .filter_map(|(cell, look)| {
+                            Some((
+                                (
+                                    usize::try_from(cell.row).ok()?,
+                                    usize::try_from(cell.column).ok()?,
+                                ),
+                                look,
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// The source of a workbook and the image files of its drawings, each sheet's cells with the
+/// looks of `looks` at its index. With `with_images` false the drawings are left out, for a
+/// workbook whose images Typst cannot decode.
 pub(crate) fn workbook_source(
     workbook: &Workbook,
+    looks: &[SheetLooks],
     with_images: bool,
 ) -> (String, Vec<(String, Vec<u8>)>) {
+    let no_looks = SheetLooks::new();
     let mut source = String::new();
     let mut files = Vec::new();
     for (index, sheet) in workbook.sheets.iter().enumerate() {
@@ -58,7 +110,8 @@ pub(crate) fn workbook_source(
         } else {
             Vec::new()
         };
-        let (text_width, anchored) = write_sheet(&mut source, sheet, &drawings);
+        let sheet_looks = looks.get(index).unwrap_or(&no_looks);
+        let (text_width, anchored) = write_sheet(&mut source, sheet, sheet_looks, &drawings);
         write_loose_drawings(&mut source, &drawings, &anchored, text_width);
     }
     (source, files)
@@ -170,6 +223,7 @@ fn image_extension(content_type: &str) -> Option<&'static str> {
 fn write_sheet(
     source: &mut String,
     sheet: &Sheet,
+    looks: &SheetLooks,
     drawings: &[PlacedDrawing],
 ) -> (f64, HashSet<usize>) {
     let layout = &sheet.layout;
@@ -239,7 +293,14 @@ fn write_sheet(
     // The lines of a wrapped cell sit as close as a spreadsheet sets them.
     source.push_str("#set par(leading: 0.1em)\n");
 
-    let anchored = write_tables(source, sheet, width - left - right, font_size, drawings);
+    let anchored = write_tables(
+        source,
+        sheet,
+        looks,
+        width - left - right,
+        font_size,
+        drawings,
+    );
     (width - left - right, anchored)
 }
 
@@ -260,9 +321,14 @@ enum Placement {
 /// The cells of a sheet as tables, one group of columns that fits the page after the other,
 /// reaching as far as the cells its drawings are anchored in; hidden rows are left out. The
 /// cell a drawing is anchored in carries its marker; the drawings marked are given back.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the columns, rows and every cell of one table"
+)]
 fn write_tables(
     source: &mut String,
     sheet: &Sheet,
+    looks: &SheetLooks,
     text_width: f64,
     font_size: f64,
     drawings: &[PlacedDrawing],
@@ -360,7 +426,15 @@ fn write_tables(
                     )
                 });
                 source.push(' ');
-                source.push_str(&cell_markup(value, style, colour, spans, marker.as_deref()));
+                let look = looks.get(&origin);
+                source.push_str(&cell_markup(
+                    value,
+                    style,
+                    colour,
+                    look,
+                    spans,
+                    marker.as_deref(),
+                ));
                 source.push(',');
             }
         }
@@ -470,13 +544,54 @@ fn placement(
 
 /// One cell as table content: its text with the font of its format, its fill, borders and
 /// alignment; a number aligns right unless the format says otherwise.
+#[expect(
+    clippy::too_many_lines,
+    reason = "every part of a cell's look, its conditional one included"
+)]
 fn cell_markup(
     value: &str,
     style: Option<&CellStyle>,
     value_colour: Option<&str>,
+    look: Option<&CellLook>,
     spans: Option<(usize, usize)>,
     marker: Option<&str>,
 ) -> String {
+    // A conditional format outdoes the cell's own look, and its font colour the number
+    // format's.
+    let looked;
+    let (style, value_colour) = match look {
+        Some(look) => {
+            let mut own = style.cloned().unwrap_or_default();
+            if look.fill.is_some() {
+                own.fill.clone_from(&look.fill);
+            }
+            if let Some(bold) = look.bold {
+                own.font.bold = bold;
+            }
+            if let Some(italic) = look.italic {
+                own.font.italic = italic;
+            }
+            if let Some(underline) = look.underline {
+                own.font.underline = underline;
+            }
+            if let Some(strike) = look.strike {
+                own.font.strike = strike;
+            }
+            looked = own;
+            (Some(&looked), look.font_colour.as_deref().or(value_colour))
+        }
+        None => (style, value_colour),
+    };
+    let shown_value = match look {
+        Some(look)
+            if look.bar.as_ref().is_some_and(|bar| !bar.show_value)
+                || look.icon.as_ref().is_some_and(|icon| !icon.show_value) =>
+        {
+            ""
+        }
+        _ => value,
+    };
+    let value = shown_value;
     let mut arguments = Vec::new();
     if let Some((columns, rows)) = spans {
         if columns > 1 {
@@ -557,6 +672,26 @@ fn cell_markup(
             format!("box({text})")
         }
     };
+    let content = match look {
+        Some(look) if look.bar.is_some() || look.icon.is_some() => {
+            let content = look.icon.as_ref().map_or(content.clone(), |icon| {
+                format!(
+                    "grid(columns: (auto, 1fr), column-gutter: 3pt, align: (left + horizon, auto), {}, {content})",
+                    icon_markup(icon)
+                )
+            });
+            match &look.bar {
+                Some(bar) => format!(
+                    "[#place(left + horizon, dx: -{}, rect(width: {}%, height: 1.1em, fill: gradient.linear(rgb(\"#{}\"), rgb(\"#FFFFFF\"))))#{{{content}}}]",
+                    points(CELL_INSET_X_POINTS),
+                    (bar.length * 100.0).round(),
+                    bar.colour
+                ),
+                None => content,
+            }
+        }
+        _ => content,
+    };
     let content = match marker {
         Some(marker) => format!("[#{marker}#{{{content}}}]"),
         None => content,
@@ -565,6 +700,60 @@ fn cell_markup(
         content
     } else {
         format!("table.cell({}, {content})", arguments.join(", "))
+    }
+}
+
+/// An icon of a set as Typst draws it: an arrow for the arrow sets, a disc for the others,
+/// coloured from the lowest icon to the highest.
+fn icon_markup(icon: &IconLook) -> String {
+    let count = icon
+        .set
+        .chars()
+        .next()
+        .and_then(|digit| digit.to_digit(10))
+        .map_or(3, |digit| digit.max(2) as usize);
+    let index = icon.index.min(count - 1);
+    #[expect(clippy::cast_precision_loss, reason = "a set has five icons at most")]
+    let share = index as f64 / (count - 1) as f64;
+    let colour = if icon.set.contains("Gray") || icon.set.contains("RedToBlack") {
+        let level = 200.0 - share * 150.0;
+        format!("luma({})", level.round())
+    } else if icon.set.contains("Rating")
+        || icon.set.contains("Quarters")
+        || icon.set.contains("Boxes")
+    {
+        format!(
+            "rgb(\"#4472C4\").lighten({}%)",
+            ((1.0 - share) * 70.0).round()
+        )
+    } else {
+        let (red, yellow, green) = (
+            (248.0, 105.0, 107.0),
+            (255.0, 192.0, 0.0),
+            (99.0, 190.0, 123.0),
+        );
+        let (from, to, part) = if share <= 0.5 {
+            (red, yellow, share * 2.0)
+        } else {
+            (yellow, green, (share - 0.5) * 2.0)
+        };
+        let mix = |a: f64, b: f64| (a + (b - a) * part).round();
+        format!(
+            "rgb({}, {}, {})",
+            mix(from.0, to.0),
+            mix(from.1, to.1),
+            mix(from.2, to.2)
+        )
+    };
+    if icon.set.contains("Arrows") {
+        // Down for the lowest, up for the highest, turned in steps between.
+        let angle = 180.0 - share * 180.0;
+        format!(
+            "box(width: 0.85em, height: 0.85em, rotate({}deg, polygon(fill: {colour}, (0.425em, 0em), (0.85em, 0.425em), (0.6em, 0.425em), (0.6em, 0.85em), (0.25em, 0.85em), (0.25em, 0.425em), (0em, 0.425em))))",
+            angle.round()
+        )
+    } else {
+        format!("box(height: 0.85em, circle(radius: 0.38em, fill: {colour}))")
     }
 }
 
@@ -842,7 +1031,7 @@ mod tests {
             format: DocumentFormat::Xlsx,
             sheets: vec![drawn],
         };
-        let (source, files) = workbook_source(&workbook, true);
+        let (source, files) = workbook_source(&workbook, &[], true);
         assert_eq!(
             files,
             vec![
@@ -873,7 +1062,7 @@ mod tests {
             source.contains("0-2.svg\", width: 494.48pt, height: 49.45pt"),
             "a drawing with no printed anchor follows the cells, never wider than the page"
         );
-        let (without, files) = workbook_source(&workbook, false);
+        let (without, files) = workbook_source(&workbook, &[], false);
         assert_eq!(files, Vec::<(String, Vec<u8>)>::new());
         assert!(!without.contains("/media/"));
         assert!(!without.contains("foreground"));
@@ -891,7 +1080,7 @@ mod tests {
                 sheet("Vuoto", &[]),
             ],
         };
-        let source = workbook_source(&workbook, true).0;
+        let source = workbook_source(&workbook, &[], true).0;
         assert!(source.starts_with(
             "#set page(width: 595.28pt, height: 841.89pt, margin: (top: 54pt, right: 50.4pt, bottom: 54pt, left: 50.4pt), header: none, footer: none)\n"
         ));
@@ -929,6 +1118,7 @@ mod tests {
                 format: DocumentFormat::Xlsx,
                 sheets: vec![printed],
             },
+            &[],
             true,
         );
         assert!(source.starts_with(
@@ -1015,6 +1205,7 @@ mod tests {
                 format: DocumentFormat::Xlsx,
                 sheets: vec![printed],
             },
+            &[],
             true,
         );
         assert!(source.contains("rows: (30pt, auto, auto, ),"), "{source}");
@@ -1037,6 +1228,7 @@ mod tests {
                 format: DocumentFormat::Xlsx,
                 sheets: vec![negative],
             },
+            &[],
             true,
         );
         assert!(
@@ -1146,5 +1338,102 @@ mod tests {
         for text in ["", "abc", "12a", "-", "€"] {
             assert!(!looks_numeric(text), "{text}");
         }
+    }
+
+    #[test]
+    fn draws_the_look_a_conditional_format_gives_a_cell() {
+        let own = CellStyle {
+            fill: Some("FFFFFF".to_owned()),
+            ..CellStyle::default()
+        };
+        let look = CellLook {
+            fill: Some("FFC7CE".to_owned()),
+            font_colour: Some("9C0006".to_owned()),
+            bold: Some(true),
+            italic: Some(true),
+            underline: Some(true),
+            strike: Some(true),
+            ..CellLook::default()
+        };
+        let drawn = cell_markup("12", Some(&own), Some("FF0000"), Some(&look), None, None);
+        assert!(drawn.contains("fill: rgb(\"#FFC7CE\")"), "{drawn}");
+        assert!(drawn.contains("weight: \"bold\""));
+        assert!(drawn.contains("style: \"italic\""));
+        assert!(
+            drawn.contains("fill: rgb(\"#9C0006\")"),
+            "the rule's colour outdoes the number format's"
+        );
+        assert!(drawn.contains("strike(underline("));
+        let bar = CellLook {
+            bar: Some(rely_office_sheet::DataBarLook {
+                length: 0.5,
+                colour: "638EC6".to_owned(),
+                show_value: false,
+            }),
+            icon: Some(IconLook {
+                set: "3Arrows".to_owned(),
+                index: 2,
+                show_value: true,
+            }),
+            ..CellLook::default()
+        };
+        let drawn = cell_markup("7", None, None, Some(&bar), None, None);
+        assert!(drawn.contains("rect(width: 50%"), "{drawn}");
+        assert!(drawn.contains("grid(columns: (auto, 1fr)"));
+        assert!(drawn.contains("hide[0]"), "a bar without its value");
+        assert!(drawn.contains("rotate(0deg"), "the highest arrow points up");
+    }
+
+    #[test]
+    fn colours_the_icons_of_each_kind_of_set() {
+        let icon = |set: &str, index: usize| {
+            icon_markup(&IconLook {
+                set: set.to_owned(),
+                index,
+                show_value: true,
+            })
+        };
+        assert!(icon("3Arrows", 0).contains("rotate(180deg, polygon(fill: rgb(248, 105, 107)"));
+        assert!(icon("5Arrows", 2).contains("rotate(90deg"));
+        assert!(
+            icon("3TrafficLights1", 2).contains("circle(radius: 0.38em, fill: rgb(99, 190, 123))")
+        );
+        assert!(icon("3ArrowsGray", 0).contains("luma(200)"));
+        assert!(icon("4RedToBlack", 3).contains("luma(50)"));
+        assert!(icon("5Rating", 4).contains("lighten(0%)"));
+        assert!(
+            icon("Mystery", 9).contains("circle"),
+            "an unknown set has three discs"
+        );
+    }
+
+    #[test]
+    fn computes_the_looks_of_a_workbook_from_its_bytes() {
+        use rust_xlsxwriter::{ConditionalFormatCell, ConditionalFormatCellRule, Format};
+        let mut book = rust_xlsxwriter::Workbook::new();
+        let sheet = book.add_worksheet();
+        for row in 0..3u32 {
+            sheet.write_number(row, 0, f64::from(row)).unwrap();
+        }
+        let rule = ConditionalFormatCell::new()
+            .set_rule(ConditionalFormatCellRule::EqualTo(2))
+            .set_format(Format::new().set_background_color("#00FF00"));
+        sheet.add_conditional_format(0, 0, 2, 0, &rule).unwrap();
+        let bytes = book.save_to_buffer().unwrap();
+        let limits = Limits::default();
+        let workbook = rely_office_core::read_workbook(&bytes, Some("a.xlsx"), &limits).unwrap();
+        let looks = conditional_looks(&bytes, Some("a.xlsx"), &limits, &workbook);
+        assert_eq!(looks.len(), 1);
+        assert_eq!(looks[0][&(2, 0)].fill.as_deref(), Some("00FF00"));
+        assert!(
+            workbook_source(&workbook, &looks, true)
+                .0
+                .contains("fill: rgb(\"#00FF00\")")
+        );
+        let plain = rely_office_core::read_workbook(b"a,b\n1,2\n", Some("a.csv"), &limits).unwrap();
+        assert_eq!(
+            conditional_looks(b"a,b\n1,2\n", Some("a.csv"), &limits, &plain),
+            Vec::<SheetLooks>::new()
+        );
     }
 }

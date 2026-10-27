@@ -13,6 +13,7 @@ use quick_xml::events::{BytesStart, Event};
 
 use crate::document::{Border, BorderStyle, VerticalAlignment};
 use crate::number_format::builtin_format_code;
+use crate::sheet_rules::DifferentialLook;
 use crate::xml_text::attribute_value;
 
 /// The most cell formats read; Excel's own limit is 64,000.
@@ -165,6 +166,8 @@ struct Format {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Other,
+    /// The differential formats of conditional formats, which no cell format names.
+    Differential,
     Fonts,
     Fills,
     Borders,
@@ -204,7 +207,9 @@ pub(crate) fn cell_styles(xml: &str, theme: &ThemeColours) -> Vec<CellStyle> {
             Ok(Event::Empty(element)) => (element, true),
             Ok(Event::End(element)) => {
                 match element.local_name().as_ref() {
-                    "fonts" | "fills" | "borders" | "cellXfs" => section = Section::Other,
+                    "fonts" | "fills" | "borders" | "cellXfs" | "dxfs" => {
+                        section = Section::Other;
+                    }
                     "left" | "right" | "top" | "bottom" | "start" | "end" => {
                         parts.edge = None;
                     }
@@ -216,6 +221,8 @@ pub(crate) fn cell_styles(xml: &str, theme: &ThemeColours) -> Vec<CellStyle> {
         };
         let name = element.local_name();
         match (section, name.as_ref()) {
+            (Section::Differential, _) => {}
+            (_, "dxfs") if !empty => section = Section::Differential,
             (_, "numFmt") => {
                 if let (Some(id), Some(code)) = (
                     attribute(&element, "numFmtId").and_then(|id| id.parse().ok()),
@@ -260,6 +267,67 @@ pub(crate) fn cell_styles(xml: &str, theme: &ThemeColours) -> Vec<CellStyle> {
         }
     }
     resolve(&parts)
+}
+
+/// The differential formats of the styles part, `dxfs`, in order: what each conditional rule
+/// changes in the look of a cell.
+pub(crate) fn differential_looks(xml: &str, theme: &ThemeColours) -> Vec<DifferentialLook> {
+    let mut looks = Vec::new();
+    let mut inside = false;
+    let mut in_fill = false;
+    let mut in_font = false;
+    let mut reader = Reader::from_str(xml);
+    loop {
+        let (element, empty) = match reader.read_event() {
+            Ok(Event::Eof) | Err(_) => break,
+            Ok(Event::Start(element)) => (element, false),
+            Ok(Event::Empty(element)) => (element, true),
+            Ok(Event::End(element)) => {
+                match element.local_name().as_ref() {
+                    "dxfs" => inside = false,
+                    "fill" => in_fill = false,
+                    "font" => in_font = false,
+                    _ => {}
+                }
+                continue;
+            }
+            Ok(_) => continue,
+        };
+        let name = element.local_name();
+        if !inside {
+            inside = name.as_ref() == "dxfs" && !empty;
+            continue;
+        }
+        let on = || attribute(&element, "val").is_none_or(|value| is_on(Some(value)));
+        match name.as_ref() {
+            "dxf" if looks.len() < MAX_FORMATS => looks.push(DifferentialLook::default()),
+            "font" => in_font = !empty,
+            "fill" => in_fill = !empty,
+            _ => {
+                let Some(look) = looks.last_mut() else {
+                    continue;
+                };
+                match name.as_ref() {
+                    "b" if in_font => look.bold = Some(on()),
+                    "i" if in_font => look.italic = Some(on()),
+                    "strike" if in_font => look.strike = Some(on()),
+                    "u" if in_font => {
+                        look.underline =
+                            Some(attribute(&element, "val").is_none_or(|value| value != "none"));
+                    }
+                    "color" if in_font => look.font_colour = colour(&element, theme),
+                    // A differential fill keeps a solid colour in its background colour.
+                    "bgColor" if in_fill => look.fill = colour(&element, theme),
+                    "fgColor" if in_fill && look.fill.is_none() => {
+                        look.fill = colour(&element, theme);
+                    }
+                    "numFmt" => look.number_format = attribute(&element, "formatCode"),
+                    _ => {}
+                }
+            }
+        }
+    }
+    looks
 }
 
 fn resolve(parts: &Parts) -> Vec<CellStyle> {
@@ -404,7 +472,7 @@ fn border_width(style: &str) -> u32 {
 }
 
 /// A colour element: an `rgb`, a `theme` colour with its `tint`, or an `indexed` one.
-fn colour(element: &BytesStart<'_>, theme: &ThemeColours) -> Option<String> {
+pub(crate) fn colour(element: &BytesStart<'_>, theme: &ThemeColours) -> Option<String> {
     let base = if let Some(rgb) = attribute(element, "rgb") {
         hex(&rgb)?
     } else if let Some(index) =

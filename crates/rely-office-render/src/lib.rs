@@ -197,7 +197,8 @@ fn source_with(
                     drawing.bytes = svg;
                 }
             }
-            let (source, files) = sheet::workbook_source(&workbook, with_images);
+            let looks = sheet::conditional_looks(bytes, file_name, limits, &workbook);
+            let (source, files) = sheet::workbook_source(&workbook, &looks, with_images);
             let truncated = workbook.sheets.iter().any(|sheet| {
                 sheet.total_rows > sheet.rows.len()
                     || sheet.total_columns > sheet.rows.first().map_or(0, Vec::len)
