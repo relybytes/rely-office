@@ -719,7 +719,17 @@ fn anchor(shape: u32, bounds: [i32; 4], flags: u16) -> Vec<u8> {
 }
 
 fn drawn_shape(identifier: u32, properties: &[(u16, u32)]) -> Vec<u8> {
-    let mut body = record(2, 75, 0xF00A, &[identifier.to_le_bytes(), [0; 4]].concat());
+    drawn_shape_of(75, identifier, properties)
+}
+
+/// A shape of type `kind`, mirrored across.
+fn drawn_shape_of(kind: u16, identifier: u32, properties: &[(u16, u32)]) -> Vec<u8> {
+    let mut body = record(
+        2,
+        kind,
+        0xF00A,
+        &[identifier.to_le_bytes(), 0x40_u32.to_le_bytes()].concat(),
+    );
     let mut values = Vec::new();
     for (property, value) in properties {
         values.extend_from_slice(&property.to_le_bytes());
@@ -735,6 +745,10 @@ fn drawn_shape(identifier: u32, properties: &[(u16, u32)]) -> Vec<u8> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story anchors a picture, a text box and a shape"
+)]
 fn places_floating_pictures_and_text_boxes() {
     let main = "Con figura\u{8} e casella\u{8} e forma\u{8}.\r";
     let anchors: Vec<u32> = main
@@ -825,8 +839,85 @@ fn places_floating_pictures_and_text_boxes() {
     assert_eq!(frame.anchor.vertical.offset_emu, -63_500);
     assert_eq!(frame.anchor.width_emu, 1_905_000);
     assert_eq!(frame.anchor.wrap, Wrap::Behind);
-    assert_eq!((tree.report.text_boxes, tree.report.shapes), (1, 1));
-    assert_eq!(tree.media.len(), 1);
+    assert_eq!((tree.report.text_boxes, tree.report.shapes), (1, 0));
+    assert_eq!(tree.media.len(), 2, "the frame shape drawn as a picture");
+    assert_eq!(tree.media[1].content_type, "image/svg+xml");
+    let Inline::Image {
+        anchor: Some(_),
+        width: Some(1),
+        ..
+    } = &content(&tree.blocks[0])[4]
+    else {
+        panic!(
+            "the shape as a floating picture: {:?}",
+            content(&tree.blocks[0])
+        );
+    };
+}
+
+#[test]
+fn draws_the_shapes_of_a_type_and_counts_the_rest() {
+    let main = "a\u{8}b\u{8}c\u{8}d\u{8}.\r";
+    let anchors: Vec<u32> = main
+        .match_indices('\u{8}')
+        .map(|(index, _)| u32::try_from(index).unwrap())
+        .collect();
+    let mut builder = styled(main);
+    let mut shapes = drawn_shape_of(13, 1, &[(0x0181, 0x0000_00FF), (0x01FF, 0x0008_0000)]);
+    shapes.extend(drawn_shape_of(3, 2, &[(0x01BF, 0x0010_0000)]));
+    shapes.extend(drawn_shape_of(20, 3, &[]));
+    shapes.extend(drawn_shape_of(0, 4, &[]));
+    let mut content_bytes = record(0xF, 0, 0xF000, &[]);
+    content_bytes.push(0);
+    content_bytes.extend(record(0xF, 0, 0xF002, &record(0xF, 0, 0xF003, &shapes)));
+    let shapes_plex = plex_of(
+        &[
+            anchors[0],
+            anchors[1],
+            anchors[2],
+            anchors[3],
+            anchors[3] + 1,
+        ],
+        &[
+            &anchor(1, [0, 0, 1_500, 750], 0),
+            &anchor(2, [0, 0, 300, 300], 0),
+            &anchor(3, [0, 0, 300, 0], 0),
+            &anchor(4, [0, 0, 300, 300], 0),
+        ],
+    );
+    let special = [0x55, 0x08, 0x01];
+    for position in &anchors {
+        builder = builder.character(*position as usize..*position as usize + 1, &special);
+    }
+    let builder = builder
+        .structure(pair::DRAWINGS, content_bytes)
+        .structure(pair::MAIN_SHAPES, shapes_plex);
+    let tree = read(&builder);
+    assert_eq!(tree.media.len(), 3, "an arrow, an ellipse and a line");
+    assert_eq!(tree.report.shapes, 1, "a shape of no outline it can draw");
+    let arrow = String::from_utf8(tree.media[0].bytes.clone()).unwrap();
+    assert!(
+        arrow.contains(r##"fill="#FF0000""##) && !arrow.contains("stroke="),
+        "{arrow}"
+    );
+    let ellipse = String::from_utf8(tree.media[1].bytes.clone()).unwrap();
+    assert!(!ellipse.contains("fill-rule"), "no fill: {ellipse}");
+    assert!(ellipse.contains(r##"stroke="#000000""##));
+    let images: Vec<(Option<u32>, Option<u32>)> = content(&tree.blocks[0])
+        .iter()
+        .filter_map(|inline| match inline {
+            Inline::Image { width, height, .. } => Some((*width, *height)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        images,
+        vec![
+            (Some(100), Some(50)),
+            (Some(20), Some(20)),
+            (Some(20), Some(1))
+        ]
+    );
 }
 
 #[test]

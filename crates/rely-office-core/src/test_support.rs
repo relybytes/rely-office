@@ -24,6 +24,7 @@ const DOCX_NAMESPACES: &str = concat!(
     r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,
     r#"xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" "#,
     r#"xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" "#,
+    r#"xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" "#,
     r#"xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" "#,
     r#"xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" "#,
     r#"xmlns:v="urn:schemas-microsoft-com:vml" "#,

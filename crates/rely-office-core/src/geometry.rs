@@ -11,11 +11,13 @@
 mod drawingml;
 mod enhanced;
 mod enhanced_presets;
+mod picture;
 mod presets;
 mod svg;
 
 pub(crate) use drawingml::{custom_geometry, preset_geometry};
 pub(crate) use enhanced::enhanced_geometry;
+pub(crate) use picture::{DrawnShape, TextLine, rectangle_paths, shapes_svg};
 pub(crate) use svg::svg_path_geometry;
 
 use std::f64::consts::{FRAC_PI_2, TAU};

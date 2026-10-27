@@ -885,13 +885,16 @@ impl<'a, 'p> Converter<'a, 'p> {
             });
         } else if uri.contains("/diagram") {
             self.report.smart_art += 1;
-        } else if let Some(text_box) = frame.descendant(W, "txbxContent") {
+        } else if let Some(text_box) = frame
+            .descendant(W, "txbxContent")
+            .filter(|_| !uri.ends_with("/wordprocessingGroup"))
+        {
             let text_frame = anchor.map(|anchor| {
                 let properties = frame.descendant(Namespace::WordShape, "spPr");
                 self.text_frame(anchor, properties)
             });
             self.append_text_box(text_box, text_frame.as_ref());
-        } else {
+        } else if !self.append_shape(frame, graphic_data, anchor, content) {
             self.report.shapes += 1;
         }
     }
@@ -1547,6 +1550,8 @@ fn decimal_hundredths(number: &str) -> Option<u64> {
         .fold(0, |total, digit| total * 10 + u64::from(digit - b'0'));
     whole.checked_mul(100)?.checked_add(fraction)
 }
+
+mod shapes;
 
 #[cfg(test)]
 mod tests {

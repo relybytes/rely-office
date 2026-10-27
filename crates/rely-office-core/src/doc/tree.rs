@@ -31,6 +31,8 @@ use crate::document::{
     NoteKind, PageField, PageLayout, ParagraphLook, RunLook, Section, TextFrame, Wrap,
     bullet_character, format_number, push_block, set_frame, sniff_image_type,
 };
+use crate::geometry::{DrawnShape, flip_paths, preset_geometry, rectangle_paths, shapes_svg};
+use crate::office_art::preset_of_shape_type;
 use crate::{Limits, OfficeError};
 use table::TableBuilder;
 
@@ -931,8 +933,17 @@ impl Converter<'_> {
             .text
             .and_then(|_| self.text_boxes.get(&anchor.shape).cloned())
         else {
-            self.report.shapes += 1;
-            return None;
+            let drawn = self.shape_picture(&shape, &anchor);
+            if drawn.is_none() {
+                self.report.shapes += 1;
+            }
+            return drawn.map(|(media, width, height)| Inline::Image {
+                media,
+                alt: None,
+                width: Some(width),
+                height: Some(height),
+                anchor: Some(Box::new(placed)),
+            });
         };
         self.report.text_boxes += 1;
         self.next_frame += 1;
@@ -969,6 +980,71 @@ impl Converter<'_> {
         self.floating = outer;
         self.floating.extend(blocks);
         None
+    }
+
+    /// A shape with no picture and no text, drawn as an SVG picture of its anchor's size: its
+    /// type's outline, filled and lined as its properties say. Its media and size in pixels.
+    fn shape_picture(
+        &mut self,
+        shape: &ShapeContent,
+        anchor: &ShapeAnchor,
+    ) -> Option<(usize, u32, u32)> {
+        let [left, top, right, bottom] = anchor.bounds;
+        let (width, height) = (
+            i64::from(right - left) * EMU_PER_TWIP,
+            i64::from(bottom - top) * EMU_PER_TWIP,
+        );
+        if width <= 0 && height <= 0 {
+            return None;
+        }
+        // A line along one side has no extent across it; the picture keeps a sliver.
+        let (width, height) = (width.max(1), height.max(1));
+        let mut paths = match shape.kind {
+            1 => rectangle_paths(width, height),
+            3 => preset_geometry("ellipse", None, width, height)?,
+            20 | 32 => preset_geometry("line", None, width, height)?,
+            kind => preset_geometry(preset_of_shape_type(kind)?, None, width, height)?,
+        };
+        flip_paths(
+            &mut paths,
+            width,
+            height,
+            shape.flip_horizontal,
+            shape.flip_vertical,
+        );
+        let fill = shape
+            .filled
+            .then(|| {
+                shape
+                    .fill
+                    .map_or_else(|| Some("FFFFFF".to_owned()), colour_reference)
+            })
+            .flatten();
+        let line = shape.stroked.then(|| {
+            (
+                shape
+                    .line
+                    .and_then(colour_reference)
+                    .unwrap_or_else(|| "000000".to_owned()),
+                shape.line_width.map_or(9_525, i64::from),
+            )
+        });
+        let drawn = DrawnShape {
+            x: 0,
+            y: 0,
+            width,
+            height,
+            rotation: 0.0,
+            paths,
+            fill,
+            line,
+            text: Vec::new(),
+        };
+        let bytes = shapes_svg(&[drawn], width, height)?;
+        let media = self.keep_image(bytes)?;
+        let pixels =
+            |twips: i32| (u32::try_from(twips.max(0)).unwrap_or(0) / TWIPS_PER_PIXEL).max(1);
+        Some((media, pixels(right - left), pixels(bottom - top)))
     }
 
     /// The label of a list paragraph, its level's number counted on.

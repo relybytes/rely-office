@@ -114,7 +114,15 @@ pub(super) fn shape_anchors(plex_bytes: &[u8]) -> HashMap<usize, ShapeAnchor> {
 /// What a drawing's shape shows, a picture's store entry or a text box's text, and how it is
 /// drawn and placed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a shape property of its own"
+)]
 pub(super) struct ShapeContent {
+    /// The shape type, `MSOSPT`, and whether the shape is mirrored across and down.
+    pub(super) kind: u16,
+    pub(super) flip_horizontal: bool,
+    pub(super) flip_vertical: bool,
     pub(super) picture: Option<u32>,
     pub(super) text: Option<u32>,
     /// The `COLORREF`s of the fill and the line, and the line's width in English Metric Units.
@@ -135,6 +143,9 @@ pub(super) struct ShapeContent {
 impl Default for ShapeContent {
     fn default() -> Self {
         Self {
+            kind: 1,
+            flip_horizontal: false,
+            flip_vertical: false,
             picture: None,
             text: None,
             fill: None,
@@ -212,7 +223,13 @@ fn collect_shapes(container: &[u8], shapes: &mut HashMap<u32, ShapeContent>, dep
             let mut content = ShapeContent::default();
             for part in records(record.body) {
                 match part.kind {
-                    SHAPE => identifier = u32_at(part.body, 0),
+                    SHAPE => {
+                        identifier = u32_at(part.body, 0);
+                        content.kind = part.instance;
+                        let flags = u32_at(part.body, 4).unwrap_or(0);
+                        content.flip_horizontal = flags & 0x40 != 0;
+                        content.flip_vertical = flags & 0x80 != 0;
+                    }
                     PROPERTIES | TERTIARY_PROPERTIES => shape_properties(part, &mut content),
                     _ => {}
                 }
