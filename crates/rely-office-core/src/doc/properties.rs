@@ -151,6 +151,10 @@ pub(super) struct Paragraph {
     pub(super) in_table: bool,
     /// The paragraph ends a table row.
     pub(super) row_end: bool,
+    /// The paragraph mark ends a cell of a nested table, which has no cell mark of its own.
+    pub(super) inner_cell_end: bool,
+    /// The paragraph ends a row of a nested table.
+    pub(super) inner_row_end: bool,
     /// How deep in tables the paragraph is, 1 for a table that is not nested.
     pub(super) table_depth: u32,
     pub(super) list_level: u8,
@@ -188,6 +192,8 @@ impl Paragraph {
                     }
                 }
                 0x2417 => self.row_end = byte(operand) != 0,
+                0x244B => self.inner_cell_end = byte(operand) != 0,
+                0x244C => self.inner_row_end = byte(operand) != 0,
                 0x6649 => self.table_depth = long(operand),
                 0x260A => self.list_level = byte(operand).min(8),
                 0x460B => self.list_override = word(operand),

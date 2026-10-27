@@ -52,6 +52,8 @@ const DEFAULT_SIZE: u16 = 20;
 const DEFAULT_TAB_TWIPS: u32 = 720;
 /// The headings a style can be: `heading 1` to `heading 9` are built-in styles 1 to 9.
 const MAX_HEADING: u16 = 9;
+/// How deep tables nest before the deeper ones are read into the cells of the deepest.
+const MAX_TABLE_DEPTH: usize = 8;
 /// No field nests deeper than this.
 const MAX_FIELD_DEPTH: usize = 32;
 
@@ -373,7 +375,9 @@ impl Converter<'_> {
     fn blocks(&mut self, range: Range<usize>) -> Vec<Block> {
         let end = range.end.min(self.text.len());
         let mut blocks = Vec::new();
-        let mut table: Option<TableBuilder> = None;
+        // The tables being read, the outermost first: a nested table sits in a cell of the one
+        // before it.
+        let mut tables: Vec<TableBuilder> = Vec::new();
         let mut previous: Option<(u16, bool)> = None;
         let mut position = range.start;
         while position < end {
@@ -384,27 +388,46 @@ impl Converter<'_> {
             let terminator = self.paragraph_end(position, end);
             let properties = self.paragraph_properties(terminator.min(end - 1));
             if properties.in_table && properties.table_depth >= 1 {
-                let builder = table.get_or_insert_with(TableBuilder::default);
+                let depth = usize::try_from(properties.table_depth)
+                    .unwrap_or(MAX_TABLE_DEPTH)
+                    .min(MAX_TABLE_DEPTH);
+                close_tables(&mut tables, depth, &mut blocks);
+                while tables.len() < depth {
+                    tables.push(TableBuilder::default());
+                }
                 let mark = self.text.get(terminator).copied();
-                if properties.row_end && mark == Some('\u{07}') {
+                let (row_end, cell_end) = if depth == 1 {
+                    (
+                        properties.row_end && mark == Some('\u{07}'),
+                        mark == Some('\u{07}'),
+                    )
+                } else {
+                    (properties.inner_row_end, properties.inner_cell_end)
+                };
+                if row_end {
                     let grpprl = self
                         .paragraph_run(terminator)
                         .map(|run| run.grpprl.clone())
                         .unwrap_or_default();
-                    builder.end_row(Row::read(&grpprl));
+                    if let Some(builder) = tables.last_mut() {
+                        builder.end_row(Row::read(&grpprl));
+                    }
                 } else {
                     let block = self.paragraph(position..terminator, &properties);
-                    builder.push(block);
-                    for floating in std::mem::take(&mut self.floating) {
-                        builder.push(floating);
-                    }
-                    if mark == Some('\u{07}') && properties.table_depth == 1 {
-                        builder.end_cell();
+                    let floating = std::mem::take(&mut self.floating);
+                    if let Some(builder) = tables.last_mut() {
+                        builder.push(block);
+                        for floating in floating {
+                            builder.push(floating);
+                        }
+                        if cell_end {
+                            builder.end_cell();
+                        }
                     }
                 }
             } else {
-                if let Some(finished) = table.take().and_then(TableBuilder::finish) {
-                    blocks.push(finished);
+                if !tables.is_empty() {
+                    close_tables(&mut tables, 0, &mut blocks);
                     previous = None;
                 }
                 let mut block = self.paragraph(position..terminator, &properties);
@@ -422,9 +445,7 @@ impl Converter<'_> {
             }
             position = terminator + 1;
         }
-        if let Some(finished) = table.take().and_then(TableBuilder::finish) {
-            blocks.push(finished);
-        }
+        close_tables(&mut tables, 0, &mut blocks);
         blocks
     }
 
@@ -1204,6 +1225,20 @@ fn marks_of(properties: &Character, look: &RunLook, link: Option<&str>) -> Vec<M
         });
     }
     marks
+}
+
+/// Finish the tables nested deeper than `depth`, each into the cell of the table around it and
+/// the outermost into `blocks`.
+fn close_tables(tables: &mut Vec<TableBuilder>, depth: usize, blocks: &mut Vec<Block>) {
+    while tables.len() > depth {
+        let Some(finished) = tables.pop().and_then(TableBuilder::finish) else {
+            continue;
+        };
+        match tables.last_mut() {
+            Some(outer) => outer.push(finished),
+            None => blocks.push(finished),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -387,6 +387,52 @@ fn gathers_tables_from_their_cells_and_rows() {
 }
 
 #[test]
+fn reads_a_table_nested_in_a_cell() {
+    let main = "A\u{7}Su\rX\rY\r\rGiu\u{7}\u{7}Dopo\r";
+    let in_table = [0x16, 0x24, 0x01];
+    let nested = [in_table.as_slice(), &[0x49, 0x66, 2, 0, 0, 0]].concat();
+    let inner_cell = [nested.as_slice(), &[0x4B, 0x24, 0x01]].concat();
+    let mut inner_row = [nested.as_slice(), &[0x4C, 0x24, 0x01]].concat();
+    inner_row.extend(table_definition(&[0, 700, 1_400], &[]));
+    let mut outer_row = [in_table.as_slice(), &[0x17, 0x24, 0x01]].concat();
+    outer_row.extend(table_definition(&[0, 1_500, 3_000], &[]));
+    let marks: Vec<usize> = main
+        .char_indices()
+        .filter(|(_, character)| matches!(character, '\r' | '\u{7}'))
+        .map(|(index, _)| index)
+        .collect();
+    let properties: [&[u8]; 8] = [
+        &in_table,
+        &in_table,
+        &inner_cell,
+        &inner_cell,
+        &inner_row,
+        &in_table,
+        &outer_row,
+        &[],
+    ];
+    let mut builder = styled(main);
+    for (mark, grpprl) in marks.iter().zip(properties) {
+        builder = builder.paragraph(*mark, 0, grpprl);
+    }
+    let tree = read(&builder);
+    assert_eq!(texts(&tree.blocks), vec!["table of 1", "Dopo"]);
+    let Block::Table { rows, .. } = &tree.blocks[0] else {
+        panic!("a table");
+    };
+    assert_eq!(rows[0].cells.len(), 2);
+    assert_eq!(texts(&rows[0].cells[0].blocks), vec!["A"]);
+    let cell = &rows[0].cells[1].blocks;
+    assert_eq!(texts(cell), vec!["Su", "table of 1", "Giu"]);
+    let Block::Table { rows: inner, look } = &cell[1] else {
+        panic!("the nested table");
+    };
+    assert_eq!(look.column_widths_twips, vec![700, 700]);
+    assert_eq!(inner[0].cells.len(), 2);
+    assert_eq!(texts(&inner[0].cells[1].blocks), vec!["Y"]);
+}
+
+#[test]
 fn keeps_field_results_links_and_page_numbers() {
     let main = concat!(
         "Vai al \u{13} HYPERLINK \"https://rely.example/x\" \u{14}sito\u{15}, ",
