@@ -26,9 +26,22 @@ pub(super) fn anchor_start(
     let [top, bottom, left, right] = anchor.distance_emu.map(|distance| distance.max(0));
     let behind = u8::from(anchor.wrap == Wrap::Behind);
     let wrap = match anchor.wrap {
-        Wrap::Around => r#"<wp:wrapSquare wrapText="bothSides"/>"#,
-        Wrap::TopAndBottom => "<wp:wrapTopAndBottom/>",
-        Wrap::InFront | Wrap::Behind => "<wp:wrapNone/>",
+        Wrap::Around => r#"<wp:wrapSquare wrapText="bothSides"/>"#.to_owned(),
+        Wrap::Contour(outline) => {
+            let mut polygon =
+                String::from(r#"<wp:wrapTight wrapText="bothSides"><wp:wrapPolygon edited="1">"#);
+            for (index, (x, y)) in outline.polygon().into_iter().enumerate() {
+                let _ = write!(
+                    polygon,
+                    r#"<wp:{} x="{x}" y="{y}"/>"#,
+                    if index == 0 { "start" } else { "lineTo" }
+                );
+            }
+            polygon.push_str("</wp:wrapPolygon></wp:wrapTight>");
+            polygon
+        }
+        Wrap::TopAndBottom => "<wp:wrapTopAndBottom/>".to_owned(),
+        Wrap::InFront | Wrap::Behind => "<wp:wrapNone/>".to_owned(),
     };
     let mut xml = String::new();
     let _ = write!(

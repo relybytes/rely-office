@@ -13,7 +13,9 @@
 use std::borrow::Cow;
 use std::fmt::Write;
 
-use rely_office_core::{Anchor, AnchorAlign, AnchorBase, Block, Inline, TextFrame, Wrap};
+use rely_office_core::{
+    Alignment, Anchor, AnchorAlign, AnchorBase, Block, Inline, ParagraphLook, TextFrame, Wrap,
+};
 
 use super::{Placed, Writer};
 use crate::markup::points;
@@ -60,7 +62,172 @@ fn emu(value: i64) -> f64 {
     value / EMU_PER_POINT
 }
 
+/// Sets a paragraph around an object at one side: each line as wide as the room the object
+/// leaves at its height, `reaches` saying how much it takes line by line, then the rest of the
+/// words at the full width, the block at least as tall as the object.
+pub(super) const FLOW_FUNCTION: &str = r"#let rely-flow(object, on-right, drop, height, reaches, leading, justify, indent, words, style) = layout(size => {
+  let full = size.width
+  let lines = ()
+  let index = 0
+  let line = 0
+  while index < words.len() and line < reaches.len() {
+    let first = if line == 0 { indent } else { 0pt }
+    let room = calc.max(full - reaches.at(line) - first, 1pt)
+    let count = 1
+    while index + count < words.len() and measure(style(words.slice(index, index + count + 1).join([ ]))).width <= room {
+      count += 1
+    }
+    let body = words.slice(index, index + count).join([ ])
+    if justify and index + count < words.len() { body = body + linebreak(justify: true) }
+    let shift = if on-right { 0pt } else { reaches.at(line) }
+    lines.push(pad(left: shift + first, block(width: room, style(body))))
+    index += count
+    line += 1
+  }
+  if index < words.len() {
+    let first = if line == 0 { indent } else { 0pt }
+    lines.push(pad(left: first, block(width: full - first, style(words.slice(index).join([ ])))))
+  }
+  let body = stack(spacing: leading, ..lines)
+  let used = measure(block(width: full, body)).height
+  block(width: full, {
+    place(top + (if on-right { right } else { left }), dy: drop, object)
+    body
+    if used < drop + height { v(drop + height - used) }
+  })
+})
+";
+
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a band index, clamped to the bands first"
+)]
+fn usize_of(value: f64) -> usize {
+    value.clamp(0.0, 1_000.0) as usize
+}
+
 impl Writer<'_> {
+    /// A paragraph that flows around the one object it anchors beside it, line by line along
+    /// the object's outline or its rectangle, then on at the full width below it; `None` for
+    /// one that sets no such object, or whose text holds a tab.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the object's side, gap and outline give the room of each line"
+    )]
+    pub(super) fn flowed(
+        &mut self,
+        content: &[Inline],
+        align: Option<Alignment>,
+        look: &ParagraphLook,
+        floats: &mut Vec<Float>,
+    ) -> Option<Placed> {
+        let [float] = floats.as_slice() else {
+            return None;
+        };
+        let anchor = float.anchor;
+        let outline = match anchor.wrap {
+            Wrap::Around => None,
+            Wrap::Contour(outline) => Some(outline),
+            _ => return None,
+        };
+        if emu(anchor.width_emu) > self.text_width * 0.6 || look.list_label.is_some() {
+            return None;
+        }
+        let words = self.words(content, &look.font)?;
+        let parts = self.paragraph_parts(content, look, None, 0.0);
+        let width = emu(anchor.width_emu).min(self.text_width * 0.8).max(1.0);
+        let height = emu(anchor.height_emu).max(1.0);
+        let start = match anchor.horizontal.base {
+            AnchorBase::Page => emu(anchor.horizontal.offset_emu) - self.page.left,
+            _ => emu(anchor.horizontal.offset_emu),
+        };
+        let right = match anchor.horizontal.align {
+            Some(AnchorAlign::End) => true,
+            Some(AnchorAlign::Start) => false,
+            Some(AnchorAlign::Center) | None => start + width / 2.0 > self.text_width / 2.0,
+        };
+        let [above, below, left_gap, right_gap] = anchor.distance_emu.map(emu);
+        let gap = match (right, left_gap, right_gap) {
+            (true, gap, _) | (false, _, gap) if gap > 0.0 => gap,
+            _ => DEFAULT_GAP,
+        };
+        let top = match (anchor.vertical.base, anchor.vertical.align) {
+            (AnchorBase::Paragraph | AnchorBase::Line, None) => {
+                emu(anchor.vertical.offset_emu).max(0.0)
+            }
+            _ => 0.0,
+        };
+        // The width the object takes at a height of it, between 0 and 1 of its own.
+        let taken = |from: f64, to: f64| -> f64 {
+            let Some(outline) = outline else {
+                return 1.0;
+            };
+            let bands = rely_office_core::OUTLINE_BANDS;
+            #[expect(clippy::cast_precision_loss, reason = "sixteen bands")]
+            let scale = bands as f64;
+            let first = usize_of((from / height * scale).floor()).min(bands - 1);
+            let last = usize_of((to / height * scale).ceil()).clamp(first + 1, bands);
+            (first..last)
+                .filter(|band| outline.left[*band] <= outline.right[*band])
+                .map(|band| {
+                    let edge = if right {
+                        255 - u32::from(outline.left[band])
+                    } else {
+                        u32::from(outline.right[band])
+                    };
+                    f64::from(edge) / 255.0
+                })
+                .fold(0.0, f64::max)
+        };
+        let mut reaches = String::new();
+        let mut y = 0.0;
+        while y < top + height + below {
+            let (from, to) = (y - top + above.min(top), y - top + parts.line_height);
+            let reach = if to < -above || from > height + below {
+                0.0
+            } else {
+                let share = taken(from.clamp(0.0, height), to.clamp(0.0, height));
+                if share > 0.0 {
+                    share * width + gap
+                } else {
+                    0.0
+                }
+            };
+            let _ = write!(reaches, "{}, ", points(reach.min(self.text_width)));
+            y += parts.line_height;
+        }
+        let mut list = String::new();
+        for word in &words {
+            let _ = write!(list, "[{word}], ");
+        }
+        let object = std::mem::take(floats).remove(0).expression;
+        let mut expression = format!(
+            "rely-flow({object}, {right}, {}, {}, ({reaches}), {}, {}, {}, ({list}), it => text({}, par(leading: {}, justify: {}, it)))",
+            points(top),
+            points(height),
+            points(parts.leading),
+            align == Some(Alignment::Justify),
+            points(parts.first_line.max(0.0)),
+            parts.text_arguments,
+            points(parts.leading),
+            align == Some(Alignment::Justify),
+        );
+        if parts.left > 0.0 || parts.right > 0.0 {
+            expression = format!(
+                "pad(left: {}, right: {}, {expression})",
+                points(parts.left.max(0.0)),
+                points(parts.right.max(0.0))
+            );
+        }
+        Some(Placed {
+            expression,
+            before: parts.before,
+            after: parts.after + parts.leading,
+            page_break: parts.page_break,
+        })
+    }
+
     /// The content of a paragraph without its floating images, and those images written out.
     pub(super) fn split_floats<'c>(
         &mut self,
@@ -114,11 +281,11 @@ impl Writer<'_> {
                 Wrap::InFront => {
                     let _ = writeln!(front, "{}", self.overlay(&float.expression, &float.anchor));
                 }
-                Wrap::Around if !wide => {
+                Wrap::Around | Wrap::Contour(_) if !wide => {
                     placed.expression =
                         self.beside(&placed.expression, &float.expression, &float.anchor);
                 }
-                Wrap::Around | Wrap::TopAndBottom => {
+                Wrap::Around | Wrap::Contour(_) | Wrap::TopAndBottom => {
                     placed.expression = format!(
                         "stack(dir: ttb, spacing: {}, {}, {})",
                         points(emu(float.anchor.distance_emu[1]).max(0.0)),

@@ -48,11 +48,105 @@ pub struct AnchorPosition {
     pub align: Option<AnchorAlign>,
 }
 
+/// How many bands down an object a [`WrapOutline`] measures.
+pub const OUTLINE_BANDS: usize = 16;
+
+/// The outline text keeps clear of when it wraps tight around an object: in each of
+/// [`OUTLINE_BANDS`] bands from its top, the leftmost and the rightmost point of the outline,
+/// in 255ths of the object's width. A band the outline leaves empty has its left past its right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WrapOutline {
+    pub left: [u8; OUTLINE_BANDS],
+    pub right: [u8; OUTLINE_BANDS],
+}
+
+impl WrapOutline {
+    /// The outline of a polygon in Word's wrap space, 21,600 units each way; `None` for one of
+    /// fewer than three points.
+    #[must_use]
+    pub fn from_polygon(points: &[(f64, f64)]) -> Option<Self> {
+        if points.len() < 3 {
+            return None;
+        }
+        let mut left = [u8::MAX; OUTLINE_BANDS];
+        let mut right = [0_u8; OUTLINE_BANDS];
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a share of the width is clamped to 0..=255"
+        )]
+        let share = |x: f64| (x / 21_600.0 * 255.0).round().clamp(0.0, 255.0) as u8;
+        let band_count = f64::from(u8::try_from(OUTLINE_BANDS).unwrap_or(16));
+        for band in 0..OUTLINE_BANDS {
+            let index = f64::from(u8::try_from(band).unwrap_or(0));
+            let (top, bottom) = (
+                index / band_count * 21_600.0,
+                (index + 1.0) / band_count * 21_600.0,
+            );
+            let mut reach = |x: f64| {
+                left[band] = left[band].min(share(x));
+                right[band] = right[band].max(share(x));
+            };
+            for (start, end) in points.iter().zip(points.iter().cycle().skip(1)) {
+                let (low, high) = (start.1.min(end.1), start.1.max(end.1));
+                if high < top || low > bottom {
+                    continue;
+                }
+                // The edge's part inside the band: its ends there, or where it crosses the
+                // band's top and bottom.
+                for y in [top, bottom, start.1, end.1] {
+                    if y < top || y > bottom || y < low || y > high {
+                        continue;
+                    }
+                    let x = if (end.1 - start.1).abs() < f64::EPSILON {
+                        reach(start.0);
+                        end.0
+                    } else {
+                        start.0 + (end.0 - start.0) * (y - start.1) / (end.1 - start.1)
+                    };
+                    reach(x);
+                }
+            }
+        }
+        Some(Self { left, right })
+    }
+
+    /// The outline of a polygon written back: down the right side, up the left, in Word's wrap
+    /// space; the bands the outline leaves empty are skipped.
+    #[must_use]
+    pub fn polygon(&self) -> Vec<(i64, i64)> {
+        let band_count = i64::try_from(OUTLINE_BANDS).unwrap_or(16);
+        let x = |share: u8| i64::from(share) * 21_600 / 255;
+        let filled: Vec<(i64, u8, u8)> = (0..OUTLINE_BANDS)
+            .filter(|band| self.left[*band] <= self.right[*band])
+            .map(|band| {
+                (
+                    i64::try_from(band).unwrap_or(0),
+                    self.left[band],
+                    self.right[band],
+                )
+            })
+            .collect();
+        let mut points = Vec::with_capacity(filled.len() * 4);
+        for (band, _, right) in &filled {
+            points.push((x(*right), band * 21_600 / band_count));
+            points.push((x(*right), (band + 1) * 21_600 / band_count));
+        }
+        for (band, left, _) in filled.iter().rev() {
+            points.push((x(*left), (band + 1) * 21_600 / band_count));
+            points.push((x(*left), band * 21_600 / band_count));
+        }
+        points
+    }
+}
+
 /// How the text goes around a floating object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wrap {
-    /// Beside it, on the side with room, as Word's square, tight and through wrapping.
+    /// Beside it, on the side with room, as Word's square wrapping.
     Around,
+    /// Beside its outline, as Word's tight and through wrapping.
+    Contour(WrapOutline),
     /// Above and below it, nothing beside it.
     TopAndBottom,
     /// Over it: the object is in front of the text.
@@ -126,6 +220,30 @@ impl Anchor {
             .is_some_and(|value| matches!(value, "1" | "true"));
         let wrap = if anchor.child(WP, "wrapTopAndBottom").is_some() {
             Wrap::TopAndBottom
+        } else if let Some(outline) = ["wrapTight", "wrapThrough"]
+            .iter()
+            .find_map(|name| anchor.child(WP, name))
+            .and_then(|wrap| wrap.child(WP, "wrapPolygon"))
+            .and_then(|polygon| {
+                let points: Vec<(f64, f64)> = polygon
+                    .elements()
+                    .filter(|point| point.is(WP, "start") || point.is(WP, "lineTo"))
+                    .filter_map(|point| {
+                        let coordinate = |name: &str| {
+                            point
+                                .attribute(Namespace::None, name)?
+                                .parse::<f64>()
+                                .ok()
+                                .filter(|value| value.is_finite())
+                        };
+                        Some((coordinate("x")?, coordinate("y")?))
+                    })
+                    .take(10_000)
+                    .collect();
+                WrapOutline::from_polygon(&points)
+            })
+        {
+            Wrap::Contour(outline)
         } else if ["wrapSquare", "wrapTight", "wrapThrough"]
             .iter()
             .any(|name| anchor.child(WP, name).is_some())

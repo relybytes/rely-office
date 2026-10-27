@@ -7,7 +7,7 @@
 use super::*;
 use crate::document::{
     AnchorAlign, AnchorBase, AnchorPosition, CellLook, ImportReport, PageLayout, ParagraphLook,
-    RunLook, TableCell, TableLook, Wrap,
+    RunLook, TableCell, TableLook, Wrap, WrapOutline,
 };
 use crate::{Limits, read_document_tree};
 
@@ -433,8 +433,15 @@ fn framed(value: &str, frame: &TextFrame) -> Block {
     reason = "one document with every kind of floating object"
 )]
 fn writes_floating_pictures_and_text_boxes_where_they_float() {
+    let outline = WrapOutline::from_polygon(&[
+        (1_000.0, 0.0),
+        (20_000.0, 0.0),
+        (20_000.0, 21_600.0),
+        (1_000.0, 21_600.0),
+    ])
+    .unwrap();
     let picture_anchor = floating_anchor(
-        Wrap::Around,
+        Wrap::Contour(outline),
         at(AnchorBase::Margin, 0, Some(AnchorAlign::End)),
         at(AnchorBase::Paragraph, 127_000, None),
     );

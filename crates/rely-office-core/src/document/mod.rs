@@ -23,7 +23,9 @@ use crate::xml_tree::{Element, Namespace, parse_tree};
 use crate::{DocumentFormat, Limits, OfficeError, detect_format};
 
 pub(crate) use anchor::set_frame;
-pub use anchor::{Anchor, AnchorAlign, AnchorBase, AnchorPosition, TextFrame, Wrap};
+pub use anchor::{
+    Anchor, AnchorAlign, AnchorBase, AnchorPosition, OUTLINE_BANDS, TextFrame, Wrap, WrapOutline,
+};
 pub use edges::{
     Border, BorderStyle, Borders, CellLook, TabKind, TabLeader, TabStop, VerticalAlignment,
 };

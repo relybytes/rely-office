@@ -184,6 +184,7 @@ pub(crate) fn document_source(
     let endnotes = writer.endnote_list();
 
     let mut source = String::from(TAB_FUNCTION);
+    source.push_str(floats::FLOW_FUNCTION);
     let _ = writeln!(
         source,
         "#set text(font: {}, size: {}, lang: \"it\", hyphenate: false, top-edge: \"ascender\", bottom-edge: \"descender\")",
@@ -309,6 +310,8 @@ impl Placed {
 struct ParagraphParts {
     text_arguments: String,
     leading: f64,
+    /// The distance from one line to the next.
+    line_height: f64,
     inlines: String,
     before: f64,
     after: f64,
@@ -513,7 +516,10 @@ impl Writer<'_> {
                 align,
                 look,
             } => {
-                let (content, floats) = self.split_floats(content);
+                let (content, mut floats) = self.split_floats(content);
+                if let Some(flowed) = self.flowed(&content, *align, look, &mut floats) {
+                    return flowed;
+                }
                 let placed = self.paragraph(&content, *align, look, None);
                 self.with_floats(placed, floats)
             }
@@ -674,6 +680,7 @@ impl Writer<'_> {
         ParagraphParts {
             text_arguments,
             leading: (line_height - metrics.box_em * size).max(0.0),
+            line_height: line_height.max(1.0),
             inlines,
             before: twips(look.space_before_twips),
             after: twips(look.space_after_twips),
@@ -771,6 +778,39 @@ impl Writer<'_> {
 
     /// Inline content as markup, one expression after the other with nothing between them; text
     /// with tabs is laid out against the paragraph's stops.
+    /// The words of a paragraph's content, each as markup: a text breaks where it has a space,
+    /// and runs with no space between them stay one word; `None` for content with a tab, which
+    /// needs the paragraph's stops.
+    fn words(&mut self, content: &[Inline], paragraph_font: &RunLook) -> Option<Vec<String>> {
+        let mut words = vec![String::new()];
+        for inline in content {
+            match inline {
+                Inline::Text { text, .. } if text.contains('\t') => return None,
+                Inline::Text { text, marks, look } if look.field.is_none() => {
+                    for (index, piece) in text.split(' ').enumerate() {
+                        if index > 0 {
+                            words.push(String::new());
+                        }
+                        if !piece.is_empty() {
+                            push_expression(
+                                &mut words,
+                                &marked(piece, marks, look, paragraph_font),
+                            );
+                        }
+                    }
+                }
+                other => {
+                    let markup = self.inlines(std::slice::from_ref(other), None, paragraph_font);
+                    if let Some(word) = words.last_mut() {
+                        word.push_str(&markup);
+                    }
+                }
+            }
+        }
+        words.retain(|word| !word.is_empty());
+        (!words.is_empty()).then_some(words)
+    }
+
     fn inlines(
         &mut self,
         content: &[Inline],

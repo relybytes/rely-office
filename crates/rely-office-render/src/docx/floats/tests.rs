@@ -473,3 +473,95 @@ fn places_a_page_on_a4_by_default() {
     assert_eq!((page.width, page.height), (595.3, 841.9));
     assert_eq!(page.left, 70.85);
 }
+
+#[test]
+fn flows_a_paragraph_around_its_object_line_by_line() {
+    let mut writer = writer(&[]);
+    let look = ParagraphLook::default();
+    let content = vec![
+        text("Una riga che gira"),
+        Inline::Text {
+            text: "attorno".to_owned(),
+            marks: vec![rely_office_core::Mark::Bold],
+            look: RunLook::default(),
+        },
+        text(" al disegno"),
+    ];
+    let left = anchor(
+        Wrap::Around,
+        position(AnchorBase::Column, 0, Some(AnchorAlign::Start)),
+        position(AnchorBase::Paragraph, 0, None),
+    );
+    let flowed = writer
+        .flowed(
+            &content,
+            Some(Alignment::Justify),
+            &look,
+            &mut vec![float(left)],
+        )
+        .expect("a paragraph beside its object");
+    assert!(
+        flowed
+            .expression
+            .starts_with("rely-flow(O, false, 0pt, 50pt, (109pt, "),
+        "{}",
+        flowed.expression
+    );
+    assert!(
+        flowed.expression.contains("[#\"Una\"], "),
+        "{}",
+        flowed.expression
+    );
+    assert!(
+        flowed
+            .expression
+            .contains(r##"[#"gira"#text(weight: "bold", "attorno")]"##),
+        "runs with no space between stay one word: {}",
+        flowed.expression
+    );
+    assert!(flowed.expression.contains("justify: true, it)))"));
+    let mut outline = rely_office_core::WrapOutline {
+        left: [u8::MAX; rely_office_core::OUTLINE_BANDS],
+        right: [0; rely_office_core::OUTLINE_BANDS],
+    };
+    outline.left[0] = 0;
+    outline.right[0] = 255;
+    let mut contour = anchor(
+        Wrap::Contour(outline),
+        position(AnchorBase::Column, 0, Some(AnchorAlign::End)),
+        position(AnchorBase::Paragraph, 0, None),
+    );
+    contour.distance_emu = [0, 0, 4 * 12_700, 0];
+    let flowed = writer
+        .flowed(&content, None, &look, &mut vec![float(contour)])
+        .unwrap();
+    assert!(
+        flowed
+            .expression
+            .starts_with("rely-flow(O, true, 0pt, 50pt, (104pt, 0pt, "),
+        "the object reaches only its first band: {}",
+        flowed.expression
+    );
+    let mut wide = left;
+    wide.width_emu = 300 * 12_700;
+    assert!(
+        writer
+            .flowed(&content, None, &look, &mut vec![float(wide)])
+            .is_none()
+    );
+    assert!(
+        writer
+            .flowed(&[text("con\ttab")], None, &look, &mut vec![float(left)])
+            .is_none()
+    );
+    let mut two = vec![float(left), float(left)];
+    assert!(writer.flowed(&content, None, &look, &mut two).is_none());
+    let mut behind = left;
+    behind.wrap = Wrap::Behind;
+    assert!(
+        writer
+            .flowed(&content, None, &look, &mut vec![float(behind)])
+            .is_none()
+    );
+    assert!(FLOW_FUNCTION.starts_with("#let rely-flow("));
+}

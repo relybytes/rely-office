@@ -259,3 +259,62 @@ fn puts_every_block_of_a_text_box_in_its_frame() {
         vec![Some(7), Some(7), Some(7), Some(7), Some(7), None, None]
     );
 }
+
+#[test]
+fn reads_the_outline_a_tight_wrap_follows() {
+    let wrap = |inner: &str| {
+        Anchor::parse(&element(&format!("<wp:anchor>{inner}</wp:anchor>")))
+            .expect("an anchor")
+            .wrap
+    };
+    let diamond = concat!(
+        r#"<wp:wrapTight wrapText="bothSides"><wp:wrapPolygon edited="0"><wp:start x="10800" y="0"/>"#,
+        r#"<wp:lineTo x="21600" y="10800"/><wp:lineTo x="10800" y="21600"/><wp:lineTo x="0" y="10800"/>"#,
+        r#"<wp:lineTo x="10800" y="0"/><wp:lineTo x="bad" y="1"/></wp:wrapPolygon></wp:wrapTight>"#
+    );
+    let Wrap::Contour(outline) = wrap(diamond) else {
+        panic!("a contour");
+    };
+    // Narrow at the top and the bottom, as wide as the object across the middle.
+    assert_eq!((outline.left[0], outline.right[0]), (112, 143));
+    assert_eq!((outline.left[7], outline.right[7]), (0, 255));
+    assert_eq!((outline.left[6], outline.right[6]), (16, 239));
+    assert_eq!((outline.left[8], outline.right[8]), (0, 255));
+    assert_eq!((outline.left[15], outline.right[15]), (112, 143));
+    assert_eq!(
+        wrap(
+            r#"<wp:wrapThrough><wp:wrapPolygon><wp:start x="0" y="0"/><wp:lineTo x="5" y="5"/></wp:wrapPolygon></wp:wrapThrough>"#
+        ),
+        Wrap::Around,
+        "a polygon of two points wraps as a rectangle"
+    );
+    let points = outline.polygon();
+    assert_eq!(points.len(), OUTLINE_BANDS * 4);
+    assert_eq!(points[0], (i64::from(outline.right[0]) * 21_600 / 255, 0));
+    assert_eq!(
+        WrapOutline::from_polygon(
+            &points
+                .iter()
+                .map(|(x, y)| (
+                    f64::from(i32::try_from(*x).unwrap()),
+                    f64::from(i32::try_from(*y).unwrap())
+                ))
+                .collect::<Vec<_>>()
+        )
+        .map(|again| again.right[7]),
+        Some(outline.right[7]),
+        "the outline written back reads the same"
+    );
+    let half = WrapOutline::from_polygon(&[
+        (0.0, 0.0),
+        (21_600.0, 0.0),
+        (21_600.0, 10_000.0),
+        (0.0, 10_000.0),
+    ])
+    .unwrap();
+    assert!(
+        half.left[15] > half.right[15],
+        "a band the outline leaves empty"
+    );
+    assert_eq!(half.polygon().len(), 8 * 4);
+}
