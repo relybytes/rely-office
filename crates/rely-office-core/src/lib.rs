@@ -26,6 +26,7 @@ mod format;
 mod geometry;
 mod limits;
 mod number_format;
+mod office_art;
 mod opendocument;
 mod ppt;
 mod presentation;

@@ -16,7 +16,8 @@
 //!   split across pages when they do not fit ([`Fidelity::Layout`]);
 //! - pptx and odp are drawn slide by slide, one page each at the slide's size, its shapes placed
 //!   where the slide, its layout and its master put them ([`Fidelity::Layout`]);
-//! - doc and ppt are set as their text, on A4 ([`Fidelity::Text`]).
+//! - doc is laid out from its document tree as docx is, ppt drawn slide by slide as pptx is;
+//!   one whose structure cannot be read is set as its text, on A4 ([`Fidelity::Text`]).
 
 mod docx;
 mod fonts;
@@ -162,7 +163,12 @@ fn source_with(
     let format = detect_format(bytes, file_name);
     match format {
         DocumentFormat::Docx | DocumentFormat::Odt | DocumentFormat::Doc => {
-            let tree = read_document_tree(bytes, limits)?;
+            let tree = match read_document_tree(bytes, limits) {
+                Err(OfficeError::UnreadableDocument(_)) if format == DocumentFormat::Doc => {
+                    return text_only(bytes, file_name, limits, format);
+                }
+                read => read?,
+            };
             let truncated = tree.report.truncated;
             let (source, files) = docx::document_source(&tree, with_images, lines);
             Ok(TypstSource {
@@ -193,8 +199,13 @@ fn source_with(
                 truncated,
             })
         }
-        DocumentFormat::Pptx | DocumentFormat::Odp => {
-            let presentation = read_presentation(bytes, limits)?;
+        DocumentFormat::Pptx | DocumentFormat::Odp | DocumentFormat::Ppt => {
+            let presentation = match read_presentation(bytes, limits) {
+                Err(OfficeError::UnreadableDocument(_)) if format == DocumentFormat::Ppt => {
+                    return text_only(bytes, file_name, limits, format);
+                }
+                read => read?,
+            };
             let truncated = presentation.truncated;
             let (source, files) = slides::presentation_source(&presentation, with_images, lines);
             Ok(TypstSource {
@@ -205,18 +216,25 @@ fn source_with(
                 truncated,
             })
         }
-        DocumentFormat::Ppt => {
-            let extracted = extract_text(bytes, file_name, limits)?;
-            Ok(TypstSource {
-                format,
-                fidelity: Fidelity::Text,
-                source: plain::text_source(&extracted.text),
-                files: Vec::new(),
-                truncated: extracted.truncated,
-            })
-        }
         DocumentFormat::Unknown => Err(RenderError::UnsupportedFormat(format)),
     }
+}
+
+/// The text of a document whose structure cannot be read, set on A4.
+fn text_only(
+    bytes: &[u8],
+    file_name: Option<&str>,
+    limits: &Limits,
+    format: DocumentFormat,
+) -> Result<TypstSource, RenderError> {
+    let extracted = extract_text(bytes, file_name, limits)?;
+    Ok(TypstSource {
+        format,
+        fidelity: Fidelity::Text,
+        source: plain::text_source(&extracted.text),
+        files: Vec::new(),
+        truncated: extracted.truncated,
+    })
 }
 
 /// Typesets documents with a fixed set of fonts; build it once and reuse it, since reading the

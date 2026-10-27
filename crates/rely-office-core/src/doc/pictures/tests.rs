@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::doc::test_doc::{plex, png_blip, record, store_entry};
+use crate::office_art::GROUP_CONTAINER;
 
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\nimmagine";
 
@@ -96,63 +97,6 @@ fn reads_a_picture_whose_image_is_in_the_delay_stream() {
 }
 
 #[test]
-fn reads_each_kind_of_blip() {
-    let blip_of = |kind: u16, instance: u16, identifiers: usize, tag: bool, image: &[u8]| {
-        let mut body = vec![0_u8; 16 * identifiers + usize::from(tag)];
-        body.extend_from_slice(image);
-        blip(records(&record(0, instance, kind, &body)).next().unwrap())
-    };
-    assert_eq!(
-        blip_of(0xF01D, 0x46A, 1, true, b"jpeg"),
-        Some(b"jpeg".to_vec())
-    );
-    assert_eq!(
-        blip_of(0xF01D, 0x46B, 2, true, b"jpeg"),
-        Some(b"jpeg".to_vec())
-    );
-    assert_eq!(
-        blip_of(0xF01E, 0x6E1, 2, true, b"png"),
-        Some(b"png".to_vec())
-    );
-    assert_eq!(
-        blip_of(0xF029, 0x6E5, 2, true, b"tiff"),
-        Some(b"tiff".to_vec())
-    );
-    assert_eq!(
-        blip_of(0xF02A, 0x6E2, 1, true, b"cmyk"),
-        Some(b"cmyk".to_vec())
-    );
-    assert_eq!(
-        blip_of(0xF01A, 0x3D4, 1, false, b"emf"),
-        None,
-        "a metafile is not drawn"
-    );
-    let mut dib = vec![0_u8; 40];
-    dib[0..4].copy_from_slice(&40_u32.to_le_bytes());
-    dib[14..16].copy_from_slice(&8_u16.to_le_bytes());
-    let bitmap = blip_of(0xF01F, 0x7A8, 1, true, &dib).unwrap();
-    assert_eq!(&bitmap[0..2], b"BM");
-    assert_eq!(u32::from_le_bytes(bitmap[2..6].try_into().unwrap()), 54);
-    assert_eq!(
-        u32::from_le_bytes(bitmap[10..14].try_into().unwrap()),
-        14 + 40 + 1_024
-    );
-    let mut true_colour = dib.clone();
-    true_colour[14..16].copy_from_slice(&24_u16.to_le_bytes());
-    assert_eq!(
-        u32::from_le_bytes(bitmap_file(&true_colour)[10..14].try_into().unwrap()),
-        54
-    );
-    let mut counted = dib;
-    counted[32..36].copy_from_slice(&2_u32.to_le_bytes());
-    assert_eq!(
-        u32::from_le_bytes(bitmap_file(&counted)[10..14].try_into().unwrap()),
-        62
-    );
-    assert_eq!(records(&[1, 2, 3]).count(), 0);
-}
-
-#[test]
 fn reads_the_floating_shapes_a_story_anchors() {
     let mut anchor = vec![0_u8; ANCHOR_SIZE];
     anchor[0..4].copy_from_slice(&1_025_u32.to_le_bytes());
@@ -188,7 +132,7 @@ fn reads_the_drawings_their_images_and_what_each_shape_shows() {
         ]
         .concat(),
     );
-    let group = record(0xF, 0, 0xF000, &store);
+    let group = record(0xF, 0, GROUP_CONTAINER, &store);
     let mut shapes = shape(
         1_025,
         &[

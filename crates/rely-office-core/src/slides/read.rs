@@ -109,6 +109,9 @@ pub fn read_presentation(bytes: &[u8], limits: &Limits) -> Result<Presentation, 
     if format == DocumentFormat::Odp {
         return crate::opendocument::read_odp(bytes, limits);
     }
+    if format == DocumentFormat::Ppt {
+        return crate::ppt::read_ppt_presentation(bytes, limits);
+    }
     if format != DocumentFormat::Pptx {
         return Err(OfficeError::UnsupportedFormat(format));
     }

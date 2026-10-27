@@ -7,6 +7,15 @@
 //! The text of a `PowerPoint` 97-2003 presentation ([MS-PPT]): the `TextCharsAtom` and
 //! `TextBytesAtom` records of the `PowerPoint Document` stream, in stream order.
 
+mod freeform;
+mod persist;
+mod slides;
+#[cfg(test)]
+mod test_ppt;
+mod text_style;
+
+pub(crate) use slides::read_ppt_presentation;
+
 use crate::compound::{open_compound_file, read_stream, u16_at, u32_at};
 use crate::text::TextBuffer;
 use crate::{Limits, OfficeError};
