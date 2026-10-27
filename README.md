@@ -15,14 +15,15 @@ files a team stores, and is published under the Mozilla Public License 2.0 so th
 
 | Format | Detect | Text for search | Sheets as tables | Document tree | Render | Write | Edit |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| docx | yes | body, headers, footers, notes | - | yes | layout, with sections, headers, footers, notes, floating objects and charts | yes | through the tree |
+| docx | yes | body, headers, footers, notes | - | yes | layout, with sections, headers, footers, notes, floating objects, drawn shapes, metafiles and charts | yes | through the tree |
 | doc (97-2003) | yes | every story | - | yes | layout, as a docx | as docx | through the tree |
 | odt | yes | body with headers and footers | - | yes | layout, as a docx | as docx | through the tree |
-| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings, cell formats, merges, pictures and charts | yes | yes, its styles, merges, pictures and charts kept |
-| xls, ods | yes | every sheet | yes | - | layout | as xlsx | yes |
+| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings, cell formats, merges, and pictures and charts over their cells | yes | yes, its styles, merges, pictures and charts kept |
+| ods | yes | every sheet | yes | - | layout, as an xlsx | as xlsx | yes |
+| xls | yes | every sheet | yes | - | layout | as xlsx | yes |
 | csv, tsv | by name, text only | yes | yes, UTF-8 or Windows-1252, `;` or `,` | - | layout | as xlsx | yes |
-| pptx, odp | yes | slides and pages with their notes | - | - | slides, with their masters, shapes, tables, pictures and charts | as pptx | - |
-| ppt (97-2003) | yes | every text atom outside the masters | - | - | slides, with their masters, shapes, tables and pictures | as pptx | - |
+| pptx, odp | yes | slides and pages with their notes | - | - | slides, with their masters, shapes, gradient and picture fills, tables, pictures and charts | as pptx | - |
+| ppt (97-2003) | yes | every text atom outside the masters | - | - | slides, with their masters, shapes, fills, tables and pictures | as pptx | - |
 
 The format comes from the bytes, never from the file name alone. Every input is bounded by
 [`Limits`](crates/rely-office-core/src/limits.rs): the input size, each decompressed archive
@@ -34,9 +35,9 @@ length and nesting.
 
 ```toml
 [dependencies]
-rely-office-core = "0.5"    # reading, the document tree, writing docx and pptx
-rely-office-render = "0.5"  # PDF and PNG through Typst
-rely-office-sheet = "0.5"   # the editable spreadsheet
+rely-office-core = "0.6"    # reading, the document tree, writing docx and pptx
+rely-office-render = "0.6"  # PDF and PNG through Typst
+rely-office-sheet = "0.6"   # the editable spreadsheet
 ```
 
 ```rust
@@ -84,6 +85,7 @@ cargo run -p rely-office-cli -- text contract.docx
 cargo run -p rely-office-cli -- tree contract.docx
 cargo run -p rely-office-cli -- pdf contract.docx       # writes contract.docx.pdf
 cargo run -p rely-office-cli -- png sales.xlsx          # one PNG per page
+cargo run -p rely-office-cli -- svg logo.emf            # an EMF or WMF picture as SVG
 cargo run -p rely-office-cli -- rewrite contract.docx   # through the tree and back
 cargo run -p rely-office-cli -- rewrite relazione.doc   # a doc converted to docx
 cargo run -p rely-office-cli -- rewrite riunione.ppt    # a ppt converted to pptx

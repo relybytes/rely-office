@@ -31,7 +31,7 @@ this crate read the file the same way:
 | `text` marks | `w:b`, `w:i`, `w:u`, `w:strike`, `w:vertAlign`, the `Code Char` style, `w:rFonts`, `w:sz` and `w:color` for `textStyle`, `w:shd` for `highlight`, and a `w:hyperlink` to an external relationship for `link` |
 | page number and page count runs | `fldSimple` with `PAGE` and `NUMPAGES` |
 | `hardBreak`, tabs | `w:br`, `w:tab` |
-| `image` | an inline drawing of its size, cut to the text width, the image stored once in `word/media/` |
+| `image` | an inline drawing of its size, cut to the text width, the image stored once in `word/media/`; EMF and WMF pictures are kept as they are |
 | `noteReference` and `notes` | `w:footnoteReference` and `w:endnoteReference`, the notes in `footnotes.xml` and `endnotes.xml` with their separators |
 | `headersFooters` | header and footer parts with their own relationships, `w:titlePg` for a first page, `w:evenAndOddHeaders` in `settings.xml` for even pages |
 | the looks (Rust) | paragraph borders, shading, tabs, spacing and indents; table widths, borders and cell margins; cell fills, borders and vertical alignment; a numbered heading keeps its label as text |
@@ -60,12 +60,12 @@ and layout and every shape on the slide itself:
 | Slide model | pptx |
 | --- | --- |
 | the page size | `p:sldSz`, clamped to the 1 to 56 inch PowerPoint accepts |
-| `background` | a solid `p:bg` |
+| `background` | a `p:bg` with its solid, gradient or picture fill |
 | a rectangle, rounded rectangle, ellipse or line | `p:sp` with its `prstGeom`, a line flipped when it runs the other way |
 | a `Path` geometry | `a:custGeom` in the shape's own size, each path with its fill and stroke switches |
-| fill, line, rotation | `a:solidFill`, `a:ln` with its width, `rot` on `a:xfrm` |
+| fill, line, rotation | `a:solidFill`, `a:gradFill` with its stops and its angle or centre, `a:blipFill` stretched or tiled with the image stored once; `a:ln` with its width, `rot` on `a:xfrm` |
 | `Text` | a `p:txBody` with its insets, anchor and wrapping; each paragraph's level, alignment, indents, line spacing, spacing and bullet or numbering; runs with size, bold, italic, underline, strike, colour and font, line breaks as `a:br` |
-| `Picture` | `p:pic` with the image stored once in `ppt/media/`; an image PowerPoint does not show (WMF, EMF, unknown bytes) is left out |
+| `Picture` | `p:pic` with the image stored once in `ppt/media/`, EMF and WMF included; an image PowerPoint does not show (unknown bytes) is left out |
 | `Table` | a `graphicFrame` holding an `a:tbl` with column widths, row heights, cell text and fills, `gridSpan`, `rowSpan`, and `hMerge` on a covered cell |
 
 A shape with neither fill, line nor content draws nothing and is left out; a presentation with no

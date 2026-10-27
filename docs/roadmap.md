@@ -65,10 +65,21 @@ A doc and a ppt are converted rather than edited in place: the library reads the
 structures a docx and a pptx give, so rendering, editing and saving only know the new formats, and
 a converted file is saved as docx or pptx.
 
+## Phase 5: drawing what the files draw (0.6.0)
+
+| Step | Content | Status |
+| --- | --- | --- |
+| 5.1 | Every DrawingML preset, the faces shaded as the preset says | done (0.6.0) |
+| 5.2 | Gradient and picture fills of shapes and slide backgrounds, read from pptx, odp and ppt and written back | done (0.6.0) |
+| 5.3 | The pictures and charts of a sheet over the cells they are anchored in; the ods layout | done (0.6.0) |
+| 5.4 | EMF and WMF pictures drawn as SVG | done (0.6.0) |
+| 5.5 | The drawn shapes of docx, odt and doc as pictures where they float; nested doc tables | done (0.6.0) |
+| 5.6 | Radar, bubble and stock charts | done (0.6.0) |
+
 ## Next
 
-- Sheet drawings over the cells they are anchored to; picture fills and gradients.
-- The remaining DrawingML presets (curved and circular arrows, ribbons, waves, braces).
+- The adjust values of a ppt's preset shapes, which OfficeArt gives in each shape's own units.
+- Surface charts and the `chartex` charts (waterfall, treemap, sunburst).
 - A larger corpus with documents made by Word and pptx and odp pages, and the corpus figure as a
   CI gate once it is stable.
 - Publishing to the public npm registry (issue #1).

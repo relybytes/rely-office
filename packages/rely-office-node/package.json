@@ -1,6 +1,6 @@
 {
   "name": "@relybytes/rely-office",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Office documents in Node and the browser through WebAssembly: format detection, text for search, sheet tables, the docx document tree, PDF and PNG rendering through Typst, docx writing and an editable spreadsheet with formulas.",
   "license": "MPL-2.0",
   "author": "RelyBytes Consulting (https://relybytes.com)",

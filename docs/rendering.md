@@ -10,10 +10,10 @@ WebAssembly included.
 
 | Format | Fidelity | How |
 | --- | --- | --- |
-| docx, odt, doc | `layout` | the document tree with its looks: each section's page size, orientation, margins and columns, headers and footers with their first and even variants, page numbers, body font, paragraph spacing, line spacing, indents, tabs with their leaders, alignment, borders and shading, page breaks, run fonts, sizes, colours and highlights, list labels in the numbering's own formats, tables with their style's regions, per-cell borders, fills and vertical alignment, footnotes and endnotes, text boxes and images where they float, charts |
-| xlsx | `layout` | every sheet with its print settings and its cells' formats: orientation, margins, column widths and row heights, hidden rows and columns, header and footer, grid lines, number formats, fonts, fills, borders, alignment and wrapping, merged cells; its pictures and charts after the cells |
-| xls, ods, csv, tsv | `layout` | the sheets with Excel's print defaults (portrait A4, 0.7 and 0.75 inch margins, 8.43 character columns, no grid) |
-| pptx, odp, ppt | `layout` | one page per slide at the slide's size: background, the shapes of the master and layout behind the slide's own, placeholders placed and styled as their layout and master say, text frames, preset shapes (arrows, stars, callouts, flowchart symbols), custom and free-form outlines, lines, groups, rotations, tables, pictures and charts |
+| docx, odt, doc | `layout` | the document tree with its looks: each section's page size, orientation, margins and columns, headers and footers with their first and even variants, page numbers, body font, paragraph spacing, line spacing, indents, tabs with their leaders, alignment, borders and shading, page breaks, run fonts, sizes, colours and highlights, list labels in the numbering's own formats, tables with their style's regions, per-cell borders, fills and vertical alignment, tables nested in cells, footnotes and endnotes, text boxes, images and drawn shapes where they float, EMF and WMF pictures, charts |
+| xlsx, ods | `layout` | every sheet with its print settings and its cells' formats: orientation, margins, column widths and row heights, hidden rows and columns, header and footer, grid lines, number formats, fonts, fills, borders, alignment and wrapping, merged cells; its pictures and charts over the cells they are anchored in |
+| xls, csv, tsv | `layout` | the sheets with Excel's print defaults (portrait A4, 0.7 and 0.75 inch margins, 8.43 character columns, no grid) |
+| pptx, odp, ppt | `layout` | one page per slide at the slide's size: background, the shapes of the master and layout behind the slide's own, placeholders placed and styled as their layout and master say, text frames, every `DrawingML` preset shape, custom and free-form outlines, lines, groups, rotations, solid, gradient and picture fills, tables, pictures and charts |
 | doc, ppt that cannot be read | `text` | the extracted text, one paragraph per line, on A4 |
 
 `Rendered::fidelity` says which of the two a render had, so a viewer can tell a laid-out preview
@@ -51,6 +51,12 @@ The rules follow Word, the program most docx files come from, rather than Typst'
   its side; one with text above and below on a line of its own. Typst sets no text around a shape,
   so text that would wrap a picture's outline lines up beside its box instead. A text box draws its
   own fill and outline at its anchored size.
+- **Drawn shapes are pictures.** A docx `wps` shape or `wpg` group, an odt rectangle, ellipse,
+  line, polygon, path or custom shape, and a doc's OfficeArt shape become an SVG picture of their
+  frame (`geometry/picture.rs`): the outline of their geometry, their fill and line, and the text
+  they carry centred in them. The picture is anchored where the shape floats; a group is one
+  picture, its shapes placed through the group's child frame. The text of a shape is not
+  editable in the tree, as Word draws it and an editor has no node for it.
 
 Text only ever enters the generated source as a Typst string literal, so no document content can
 become markup or code.
@@ -62,7 +68,19 @@ them (256ths of a character to pixels at a 7 pixel digit, then points). Columns 
 across the page continue on the next pages, all rows of one group of columns first, as the default
 page order does. Cells never wrap: text longer than its column runs over the next one. Values that
 read as numbers are aligned right. The header and footer codes `&L &C &R`, `&A` (sheet name), `&P`
-(page), `&N` (pages), `&&`, `&"font,style"` and a font size are drawn; other codes are dropped.
+(page), `&N` (pages), `&&`, `&"font,style"` and a font size are drawn; other codes are dropped. A
+number wider than its column shows as `#` signs filling it, as a spreadsheet shows it.
+
+An ods is read into the same layout as an xlsx (`opendocument/spreadsheet.rs`): column widths,
+row heights, hidden rows and columns, the cell styles with their data styles turned into Excel
+format codes (`opendocument/spreadsheet/number_styles.rs`), merges, the page layout with its header and footer,
+and the drawings and charts of each sheet. Dates and durations stored as ISO text become serial
+numbers so they go through the cell's format.
+
+The pictures and charts of a sheet are drawn over the cells they are anchored in: the cell of
+each anchor carries an invisible marker, and the page's foreground places each drawing at its
+marker with the anchor's offset. A drawing whose anchor cell is not printed goes after the cells
+instead.
 
 ## How a slide is drawn
 
@@ -85,6 +103,17 @@ presets in that language, one statement a line); an `a:custGeom` with the same e
 again from its preset, since its saved path can miss the arcs. Polygons, polylines and SVG paths
 are read as outlines. Paths are curves filled even-odd, so a ring or a frame keeps its hole.
 
+The presets `presets.rs` does not write in guide language (curved and circular arrows, ribbons,
+waves, braces, scrolls, the action buttons and the rest of the 187) are drawn from
+`enhanced_presets.rs`, the `oox-drawingml-cs-presets` table of LibreOffice (MPL-2.0) as enhanced
+geometries, which `scripts/enhanced-presets.py` regenerates. A face of a preset that is shaded
+darker or lighter (the side of a cube, the fold of a ribbon) is drawn in its shade, and every
+face is filled before any outline is drawn.
+
+A shape or a slide background is filled with a solid colour, a gradient or a picture (`Paint`).
+A linear gradient keeps its angle and a radial one its centre; an ODF axial gradient is drawn as
+the linear gradient it mirrors; a picture fill is stretched or tiled at its size.
+
 A ppt is read into the same slide model ([MS-PPT]): the persist directories of every saved edit
 locate the document, its slides and their masters; the slide list holds the text of placeholders;
 each shape gives its frame (mapped through the groups it is in), its type, which draws the
@@ -93,17 +122,31 @@ vertex can name, its fill, line, rotation, picture and text. Text is styled by i
 character runs over the master's text styles, and colours that name the scheme take the slide's or
 the master's.
 
+## How a metafile is drawn
+
+EMF and WMF pictures ([MS-EMF], [MS-WMF]) are converted to SVG (`metafile.rs`, also the CLI's
+`svg` command): their records are played on a device context as Windows plays them, with its
+mapping modes, world transforms, pens, brushes, fonts, paths and clipping regions, and every line,
+shape, arc, Bezier, text and bitmap becomes an SVG element. Bitmaps are decoded from their DIBs,
+RLE-compressed ones included, and a mask drawn with the source-paint and source-and pair becomes
+the picture's transparency. The EMF+ records a file carries in comments are skipped, since such a
+file also holds the plain EMF drawing. A docx, pptx or doc keeps its metafiles when it is written
+back.
+
 ## How a chart is drawn
 
 A chart is read from the values the file stores beside each formula (`c:numCache`), from the
 workbook's own cells when it stores none, or, in an `OpenDocument` file, from the table the chart
-object carries. It is drawn as SVG in the look of Office's default chart style: columns and bars
-clustered, stacked or to a whole, lines with or without markers, areas, pies, doughnuts and
-scatter charts, with the title, legend, axis titles, gridlines, data labels and a secondary value
-axis. Axis steps are round numbers (1, 2 or 5 times a power of ten) unless the file fixes them.
-The SVG becomes an image of the document tree in a docx or an odt, a picture of the slide in a
-pptx or an odp, and a drawing after the cells of an xlsx sheet. Radar, stock, bubble and surface
-charts are left out, and so are the newer `chartex` charts (waterfall, treemap).
+object carries; the chart of an ods finds the cells of the sheet it names in that table, where
+LibreOffice notes each range it copied. It is drawn as SVG in the look of Office's default chart
+style: columns and bars clustered, stacked or to a whole, lines with or without markers, areas,
+pies, doughnuts, scatter and bubble charts, radar charts outlined, marked or filled, and stock
+charts with their high-low lines, up-down bars and close ticks, with the title, legend, axis
+titles, gridlines, data labels and a secondary value axis. Axis steps are round numbers (1, 2 or
+5 times a power of ten) unless the file fixes them. The SVG becomes an image of the document tree
+in a docx or an odt, a picture of the slide in a pptx or an odp, and a drawing over the cells of
+an xlsx or ods sheet. Surface charts are left out, and so are the newer `chartex` charts
+(waterfall, treemap).
 
 ## Fonts
 
@@ -166,14 +209,13 @@ SOFFICE=soffice node scripts/corpus.mjs                 # the corpus comparison
 
 - Text does not flow around a floating picture's outline, only beside its box; a picture the text
   goes around is set beside its whole paragraph.
-- The pictures and charts of a sheet print after its cells, at their size, not over the cells
-  they are anchored to; an ods sheet prints no drawings.
-- Gradients show their first colour, pictures as fills are not drawn, and the presets without a
-  definition here (curved and circular arrows, ribbons, waves, braces, scrolls) are drawn as their
-  rectangle.
-- A doc's shapes without a picture or a text box, its OLE objects beyond their replacement
-  picture, and the metafiles (WMF, EMF) of its pictures are left out; nested tables are flattened
-  into their cell. Word 6 and 95 files are not read.
+- A drawing anchored in a sheet is placed at its anchor cell and offset at its own size; it does
+  not stretch with the cells of a two-cell anchor.
+- A table cell's fill is a solid colour; gradients and pictures fill shapes and backgrounds only.
+- A doc's OLE objects are drawn as their replacement picture and its shapes take the preset of
+  their type with no adjust values. Word 6 and 95 files are not read.
+- EMF+ drawings are drawn from the plain EMF records beside them, so what only EMF+ holds
+  (antialiased gradients, GDI+ text effects) is lost.
 - A ppt's preset shapes are drawn with their default adjust values, and its notes, animations and
   slide transitions are left out. LibreOffice writes the shapes it exports to ppt from `DrawingML`
   with guide constants cut to sixteen bits, so those outlines come out wrong; LibreOffice cannot

@@ -103,12 +103,16 @@ the document.
 
 `{ index, contentType, bytes }`, each image once however many times it is referenced. The type is
 sniffed from the bytes: PNG, JPEG, GIF, BMP, TIFF, WebP, WMF, EMF, SVG, else
-`application/octet-stream`. WMF and EMF are returned for the caller to convert or drop; an SVG is
+`application/octet-stream`. WMF and EMF are returned as they are: the renderer draws them, and in
+Rust `convert_metafile_to_svg` turns one into SVG for a caller that shows it elsewhere. An SVG is
 returned as it is and must be sanitized before a browser shows it.
 
 Images come from DrawingML pictures (`a:blip r:embed`) and from VML (`v:imagedata r:id`, sized by
 the shape's `width` and `height` in `pt` or `px`). A chart becomes an `image/svg+xml` image drawn
-from the values the chart stores, with its title as `alt`; written back, it stays a picture. An
+from the values the chart stores, with its title as `alt`; written back, it stays a picture. A
+drawn shape or group with no text box of its own (a docx `wps` shape or `wpg` group, an odt
+rectangle, ellipse, line, polygon, path or custom shape, a doc's OfficeArt shape) becomes an
+`image/svg+xml` image of its outline, fill, line and text, anchored where the shape floats. An
 image is returned only within `maxImageBytes` each, `maxImages` in number and
 `maxTotalImageBytes` together.
 
@@ -126,7 +130,7 @@ Counts of what the tree leaves out or changes:
 | `fieldsKeptAsText` | fields kept as their result |
 | `charts` | charts, drawn as SVG images when their values can be read |
 | `smartArt`, `equations` | left out |
-| `shapes` | shapes and groups without a picture, left out |
+| `shapes` | shapes and groups that draw nothing (no size, no fill and no line, or a geometry this reader does not know), left out |
 | `embeddedObjects` | OLE objects, left out |
 | `unsupportedLinks` | links dropped by the target rule |
 | `oversizedImages` | images past `maxImageBytes` |
@@ -215,7 +219,7 @@ toggles them.
 | `heading` | a paragraph whose style is the built-in heading 1 to 9, or whose outline level is set |
 | `paragraph` | a run of text up to its paragraph mark, with alignment, indents, spacing, line spacing, page breaks, shading and borders; contextual spacing drops the space between paragraphs of one style |
 | `listItem` | a paragraph naming a list override, its label counted in the level's number format and template, a start override restarting it |
-| `table` | the paragraphs in a table, a cell ending at its cell mark and a row at its row mark, whose cell layout (`sprmTDefTable`) gives the grid, the merges going across and down, the header rows, the cell fills and borders; a nested table is flattened into its cell |
+| `table` | the paragraphs in a table, a cell ending at its cell mark and a row at its row mark, whose cell layout (`sprmTDefTable`) gives the grid, the merges going across and down, the header rows, the cell fills and borders; a nested table, whose cells end at paragraph marks flagged as inner cell ends, becomes a table in the cell that holds it |
 
 Inline pictures are read from the Data stream (`PICF` and the drawing records that hold their
 bytes); floating pictures and text boxes from the drawings the main text anchors, their position

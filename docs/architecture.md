@@ -43,10 +43,11 @@ spreadsheet features past values, formulas, number formats and column widths.
 | `relationships` | the `_rels/*.rels` parts of OOXML: targets resolved like OPC, the main part from `_rels/.rels` |
 | `xml_text` | a streaming walk from XML to search text, configured per format by a `TextRules` |
 | `xml_tree` | a small element tree with resolved namespaces, depth-capped, for structural reads |
-| `word`, `presentation`, `opendocument` | the text of docx, pptx, odt and odp; `opendocument` also reads an odt into the document tree and an odp into slides, through its style resolver |
+| `word`, `presentation`, `opendocument` | the text of docx, pptx, odt and odp; `opendocument` also reads an odt into the document tree, an odp into slides and an ods into a sheet layout, through its style resolver |
 | `doc`, `ppt` | the text of the binary formats, a doc as the document tree and a ppt as slides |
 | `office_art` | the drawing records doc and ppt share: shapes, their properties and the pictures of the blip store |
-| `geometry` | shape outlines as paths: the `DrawingML` presets and custom geometries, `OpenDocument` enhanced geometries, polygons and SVG paths |
+| `geometry` | shape outlines as paths: the `DrawingML` presets (the ones `presets.rs` writes in guide language, the rest generated into `enhanced_presets.rs`) and custom geometries, `OpenDocument` enhanced geometries, polygons and SVG paths; `picture` draws the shapes of a document as an SVG picture |
+| `metafile` | EMF and WMF pictures played on a device context and written as SVG |
 | `sheet` | spreadsheets as tables, through calamine, and delimited text |
 | `sheet_layout`, `sheet_styles`, `number_format` | the print settings, cell styles and merges of xlsx sheets, read as a stream that skips the cells, and Excel's number format codes |
 | `sheet_drawings` | the pictures and charts a sheet's drawing anchors to its cells, and the drawing parts an editor writes back unchanged |
