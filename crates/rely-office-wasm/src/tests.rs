@@ -263,3 +263,50 @@ fn writes_a_docx_from_the_json_of_a_tree() {
         "INVALID_TREE"
     );
 }
+
+#[test]
+fn converts_a_document_to_a_docx() {
+    let source = docx("<w:p><w:r><w:t>Da convertire</w:t></w:r></w:p>", &[]);
+    let written = convert_to_docx(&source, None).unwrap();
+    let tree = read_document_tree(&written, &Limits::default()).unwrap();
+    let Block::Paragraph { content, .. } = &tree.blocks[0] else {
+        panic!("a paragraph");
+    };
+    let text: String = content
+        .iter()
+        .filter_map(|inline| match inline {
+            rely_office_core::Inline::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "Da convertire");
+    assert_eq!(
+        convert_to_docx(b"nothing", None).unwrap_err().code,
+        "UNSUPPORTED_FORMAT"
+    );
+    assert_eq!(
+        convert_to_docx(&source, Some("[")).unwrap_err().code,
+        "INVALID_LIMITS"
+    );
+}
+
+#[test]
+fn converts_a_presentation_to_a_pptx() {
+    let presentation = zip(&[
+        (
+            "[Content_Types].xml",
+            br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/></Types>"#,
+        ),
+        (
+            "ppt/presentation.xml",
+            br#"<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldSz cx="9144000" cy="6858000"/></p:presentation>"#,
+        ),
+    ]);
+    let written = convert_to_pptx(&presentation, None).unwrap();
+    let read = rely_office_core::read_presentation(&written, &Limits::default()).unwrap();
+    assert_eq!((read.width_emu, read.slides.len()), (9_144_000, 1));
+    assert_eq!(
+        convert_to_pptx(b"nothing", None).unwrap_err().code,
+        "UNSUPPORTED_FORMAT"
+    );
+}

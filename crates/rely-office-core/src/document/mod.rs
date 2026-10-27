@@ -30,6 +30,7 @@ pub use edges::{
 pub use look::{LabelSuffix, LineSpacing, ListLabel, PageField, ParagraphLook, RunLook, TableLook};
 pub use media::sniff_image_type;
 pub use write::write_docx;
+pub(crate) use write::{escape as escape_xml, image_extension, zip_members};
 
 pub(crate) use convert::{plain_text, push_block};
 pub(crate) use numbering::{bullet_character, bullet_label, format_number, number_label};

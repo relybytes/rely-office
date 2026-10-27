@@ -70,6 +70,6 @@ pub use sheet_styles::{CellBorders, CellFont, CellStyle, HorizontalAlignment};
 pub use slides::{
     Bullet, Frame, Presentation, ShapeContent, ShapeGeometry, ShapeLine, Slide, SlideParagraph,
     SlideRun, SlideShape, SlideTable, SlideTableCell, SlideTableRow, TextAnchor, TextBody,
-    read_presentation,
+    read_presentation, write_pptx,
 };
 pub use text::{ExtractedText, extract_text};

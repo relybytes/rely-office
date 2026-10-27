@@ -249,8 +249,8 @@ export function extractText(
 export function readSheets(bytes: DocumentBytes, fileName?: string, limits?: Limits): Workbook;
 
 /**
- * A docx or an odt as a neutral tree of blocks for a rich-text editor, with its images and a
- * report. Charts come as SVG images; the tree is written back with `writeDocx`.
+ * A docx, a doc or an odt as a neutral tree of blocks for a rich-text editor, with its images
+ * and a report. Charts come as SVG images; the tree is written back with `writeDocx`.
  */
 export function readDocumentTree(bytes: DocumentBytes, limits?: Limits): DocumentTree;
 
@@ -307,6 +307,18 @@ export interface DocxInput {
 
 /** A docx Word opens and `readDocumentTree` reads back to the same tree. */
 export function writeDocx(tree: DocxInput): Uint8Array;
+
+/**
+ * A doc, an odt or a docx as a docx: the document read into its tree and written back, so a
+ * Word 97-2003 file can be kept in the format an editor saves.
+ */
+export function convertToDocx(bytes: DocumentBytes, limits?: Limits): Uint8Array;
+
+/**
+ * A ppt, an odp or a pptx as a pptx: each slide's shapes, text, pictures and tables written on
+ * the slide itself, over a blank layout.
+ */
+export function convertToPptx(bytes: DocumentBytes, limits?: Limits): Uint8Array;
 
 /** How a cell's number is shown. */
 export type CellFormat =

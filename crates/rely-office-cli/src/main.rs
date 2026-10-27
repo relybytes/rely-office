@@ -11,7 +11,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use rely_office_core::{
-    Limits, detect_format, extract_text, read_document_tree, read_workbook, write_docx,
+    Limits, detect_format, extract_text, read_document_tree, read_presentation, read_workbook,
+    write_docx, write_pptx,
 };
 use rely_office_render::{PageImages, RenderRequest, Renderer, render_limits};
 use rely_office_sheet::{Locale, read_spreadsheet, write_xlsx};
@@ -22,8 +23,9 @@ const USAGE: &str = "usage: rely-office <detect|text|sheets|tree|rewrite|typst|p
   text     print the text a search index would store
   sheets   print every sheet as tab-separated rows
   tree     print the document tree of a docx, its images and its import report
-  rewrite  write a docx back from its document tree as <file>.rewritten.docx, a spreadsheet
-           back from its editable model as <file>.rewritten.xlsx
+  rewrite  write a document back from its document tree as <file>.rewritten.docx, a
+           presentation from its slides as <file>.rewritten.pptx, a spreadsheet from its
+           editable model as <file>.rewritten.xlsx
   typst    print the Typst source a render typesets
   pdf      write <file>.pdf next to the file
   png      write <file>-<page>.png next to the file, at 144 dpi
@@ -103,6 +105,23 @@ fn run(command: &str, path: &Path) -> Result<String, String> {
             let target = path.with_file_name(format!(
                 "{}.rewritten.xlsx",
                 file_name.unwrap_or("workbook")
+            ));
+            std::fs::write(&target, written)
+                .map_err(|error| format!("{}: {error}", target.display()))?;
+            Ok(format!("{}\n", target.display()))
+        }
+        "rewrite"
+            if matches!(
+                detect_format(&bytes, file_name).as_str(),
+                "pptx" | "odp" | "ppt"
+            ) =>
+        {
+            let presentation =
+                read_presentation(&bytes, &limits).map_err(|error| error.to_string())?;
+            let written = write_pptx(&presentation).map_err(|error| error.to_string())?;
+            let target = path.with_file_name(format!(
+                "{}.rewritten.pptx",
+                file_name.unwrap_or("presentation")
             ));
             std::fs::write(&target, written)
                 .map_err(|error| format!("{}: {error}", target.display()))?;

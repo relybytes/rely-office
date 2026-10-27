@@ -91,6 +91,16 @@ function readDocumentTree(bytes, limits) {
   }
 }
 
+/** A doc, an odt or a docx as a docx. */
+function convertToDocx(bytes, limits) {
+  return call(() => wasm.convertToDocx(toBytes(bytes), toLimitsJson(limits)));
+}
+
+/** A ppt, an odp or a pptx as a pptx. */
+function convertToPptx(bytes, limits) {
+  return call(() => wasm.convertToPptx(toBytes(bytes), toLimitsJson(limits)));
+}
+
 let bundledRenderer = null;
 
 /** The typesetter with the fonts of the package, set up on the first render only. */
@@ -317,6 +327,8 @@ module.exports = {
   readDocumentTree,
   render,
   writeDocx,
+  convertToDocx,
+  convertToPptx,
   createSheet,
   openSheet,
   version: wasm.version(),

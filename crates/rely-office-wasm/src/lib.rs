@@ -14,8 +14,8 @@
 
 use rely_office_core::{
     Block, DocumentTree, HeadersFooters, ImportReport, Limits, Media, Note, OfficeError,
-    PageLayout, Section, Sheet, detect_format, extract_text, read_document_tree, read_workbook,
-    sniff_image_type, write_docx,
+    PageLayout, Section, Sheet, detect_format, extract_text, read_document_tree, read_presentation,
+    read_workbook, sniff_image_type, write_docx, write_pptx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -508,6 +508,51 @@ pub fn read_document_tree_js(
     limits_json: Option<String>,
 ) -> Result<DocumentTreeHandle, JsError> {
     document_tree(bytes, limits_json.as_deref()).map_err(|failure| throw(&failure))
+}
+
+/// A document as a docx: a doc, an odt or a docx read into its tree and written back, so an
+/// old file can be kept in the format an editor saves.
+///
+/// # Errors
+///
+/// The failure of reading the document, or of writing the docx.
+pub fn convert_to_docx(bytes: &[u8], limits_json: Option<&str>) -> Result<Vec<u8>, Failure> {
+    let limits = parse_limits(limits_json)?;
+    Ok(write_docx(&read_document_tree(bytes, &limits)?)?)
+}
+
+/// A presentation as a pptx: a ppt, an odp or a pptx read into its slides and written back.
+///
+/// # Errors
+///
+/// The failure of reading the presentation, or of writing the pptx.
+pub fn convert_to_pptx(bytes: &[u8], limits_json: Option<&str>) -> Result<Vec<u8>, Failure> {
+    let limits = parse_limits(limits_json)?;
+    Ok(write_pptx(&read_presentation(bytes, &limits)?)?)
+}
+
+/// # Errors
+///
+/// An `Error` whose message starts with the failure code.
+#[wasm_bindgen(js_name = convertToDocx)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "wasm-bindgen hands an optional string over owned; it has no Option<&str>"
+)]
+pub fn convert_to_docx_js(bytes: &[u8], limits_json: Option<String>) -> Result<Vec<u8>, JsError> {
+    convert_to_docx(bytes, limits_json.as_deref()).map_err(|failure| throw(&failure))
+}
+
+/// # Errors
+///
+/// An `Error` whose message starts with the failure code.
+#[wasm_bindgen(js_name = convertToPptx)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "wasm-bindgen hands an optional string over owned; it has no Option<&str>"
+)]
+pub fn convert_to_pptx_js(bytes: &[u8], limits_json: Option<String>) -> Result<Vec<u8>, JsError> {
+    convert_to_pptx(bytes, limits_json.as_deref()).map_err(|failure| throw(&failure))
 }
 
 #[cfg(test)]

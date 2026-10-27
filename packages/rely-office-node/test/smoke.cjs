@@ -201,6 +201,31 @@ test('reads an odt as a document tree and draws an odp as slides', () => {
   assert.equal(rendered.pageCount, 1);
 });
 
+test('converts a document to docx and a presentation to pptx', () => {
+  const converted = office.convertToDocx(docx);
+  assert.equal(office.detectFormat(converted), 'docx');
+  assert.deepEqual(office.readDocumentTree(converted).blocks, office.readDocumentTree(docx).blocks);
+  const namespaces =
+    'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ' +
+    'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ' +
+    'xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" ' +
+    'xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"';
+  const odp = storedZip([
+    ['mimetype', 'application/vnd.oasis.opendocument.presentation'],
+    [
+      'content.xml',
+      `<office:document-content ${namespaces}><office:body><office:presentation>` +
+        '<draw:page><draw:frame svg:x="1cm" svg:y="1cm" svg:width="10cm" svg:height="2cm">' +
+        '<draw:text-box><text:p>Ordine del giorno</text:p></draw:text-box></draw:frame></draw:page>' +
+        '</office:presentation></office:body></office:document-content>',
+    ],
+  ]);
+  const pptx = office.convertToPptx(odp);
+  assert.equal(office.detectFormat(pptx), 'pptx');
+  assert.match(office.extractText(pptx).text, /Ordine del giorno/);
+  assert.throws(() => office.convertToPptx(docx), (error) => error.code === 'UNSUPPORTED_FORMAT');
+});
+
 test('throws coded errors', () => {
   assert.throws(
     () => office.extractText(Buffer.from('testo'), 'nota.txt'),

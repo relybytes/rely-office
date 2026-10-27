@@ -11,8 +11,10 @@
 
 mod read;
 mod text;
+mod write;
 
 pub use read::read_presentation;
+pub use write::write_pptx;
 
 use crate::document::{Alignment, Media};
 use crate::geometry::ShapePath;
