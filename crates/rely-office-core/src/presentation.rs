@@ -60,7 +60,7 @@ pub(crate) fn extract_pptx_text(
 
 /// The slide parts in the order `p:sldIdLst` lists them; when the presentation part is missing
 /// or lists none, every `ppt/slides/slideN.xml` by its number.
-fn slide_parts(
+pub(crate) fn slide_parts(
     package: &mut ZipPackage<'_>,
     main_part: &str,
     limits: &Limits,

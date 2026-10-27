@@ -14,7 +14,9 @@
 //!   document ([`Fidelity::Layout`]);
 //! - xlsx, xls, ods, csv and tsv are laid out as tables, one sheet after the other, the columns
 //!   split across pages when they do not fit ([`Fidelity::Layout`]);
-//! - pptx, odt, odp, doc and ppt are set as their text, on A4 ([`Fidelity::Text`]).
+//! - pptx is drawn slide by slide, one page each at the slide's size, its shapes placed where
+//!   the slide, its layout and its master put them ([`Fidelity::Layout`]);
+//! - odt, odp, doc and ppt are set as their text, on A4 ([`Fidelity::Text`]).
 
 mod docx;
 mod fonts;
@@ -22,11 +24,12 @@ mod markup;
 mod metrics;
 mod plain;
 mod sheet;
+mod slides;
 mod world;
 
 use rely_office_core::{
     DocumentFormat, Limits, NumberLocale, OfficeError, detect_format, extract_text,
-    read_document_tree, read_workbook_in,
+    read_document_tree, read_presentation, read_workbook_in,
 };
 use typst::LibraryExt;
 use typst::diag::SourceDiagnostic;
@@ -189,11 +192,19 @@ fn source_with(
                 truncated,
             })
         }
-        DocumentFormat::Pptx
-        | DocumentFormat::Odt
-        | DocumentFormat::Odp
-        | DocumentFormat::Doc
-        | DocumentFormat::Ppt => {
+        DocumentFormat::Pptx => {
+            let presentation = read_presentation(bytes, limits)?;
+            let truncated = presentation.truncated;
+            let (source, files) = slides::presentation_source(&presentation, with_images, lines);
+            Ok(TypstSource {
+                format,
+                fidelity: Fidelity::Layout,
+                source,
+                files,
+                truncated,
+            })
+        }
+        DocumentFormat::Odt | DocumentFormat::Odp | DocumentFormat::Doc | DocumentFormat::Ppt => {
             let extracted = extract_text(bytes, file_name, limits)?;
             Ok(TypstSource {
                 format,

@@ -463,3 +463,59 @@ fn typesets_headers_footers_notes_tabs_labels_and_cell_looks() {
     assert_eq!(rendered.page_count, 1);
     assert!(rendered.pdf.unwrap().starts_with(b"%PDF-"));
 }
+
+#[test]
+fn draws_the_slides_of_a_presentation() {
+    const NS: &str = concat!(
+        r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,
+        r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" "#,
+        r#"xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main""#
+    );
+    let presentation = format!(
+        r#"<p:presentation {NS}><p:sldIdLst><p:sldId id="256" r:id="rId1"/><p:sldId id="257" r:id="rId2"/></p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/></p:presentation>"#
+    );
+    let relationships = concat!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+        r#"<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>"#,
+        r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide2.xml"/>"#,
+        r#"</Relationships>"#
+    );
+    let slide = format!(
+        concat!(
+            r#"<p:sld {}><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id="2" name="Box"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>"#,
+            r#"<p:spPr><a:xfrm rot="1800000"><a:off x="914400" y="914400"/><a:ext cx="3657600" cy="1828800"/></a:xfrm>"#,
+            r#"<a:prstGeom prst="ellipse"/><a:solidFill><a:srgbClr val="ED7D31"/></a:solidFill></p:spPr>"#,
+            r#"<p:txBody><a:bodyPr anchor="ctr"/><a:p><a:pPr algn="ctr"><a:buChar char="&#x2022;"/></a:pPr>"#,
+            r#"<a:r><a:rPr sz="2400" b="1"/><a:t>Novit&#xE0;</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#
+        ),
+        NS
+    );
+    let content_types = concat!(
+        r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">"#,
+        r#"<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/></Types>"#
+    );
+    let package_relationships = concat!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+        r#"<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>"#,
+        r#"</Relationships>"#
+    );
+    let bytes = zip(&[
+        ("[Content_Types].xml", content_types.as_bytes()),
+        ("_rels/.rels", package_relationships.as_bytes()),
+        ("ppt/presentation.xml", presentation.as_bytes()),
+        ("ppt/_rels/presentation.xml.rels", relationships.as_bytes()),
+        ("ppt/slides/slide1.xml", slide.as_bytes()),
+        ("ppt/slides/slide2.xml", slide.as_bytes()),
+    ]);
+    let rendered = RENDERER
+        .render(&bytes, Some("offerta.pptx"), &thumbnail_request(320))
+        .unwrap();
+    assert_eq!(rendered.format, DocumentFormat::Pptx);
+    assert_eq!(rendered.fidelity, Fidelity::Layout);
+    assert_eq!(rendered.page_count, 2);
+    assert_eq!(
+        png_size(&rendered.thumbnail.unwrap()),
+        (320, 180),
+        "a 16:9 slide"
+    );
+}

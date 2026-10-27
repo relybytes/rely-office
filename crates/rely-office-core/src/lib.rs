@@ -31,6 +31,7 @@ mod relationships;
 mod sheet;
 mod sheet_layout;
 mod sheet_styles;
+mod slides;
 mod text;
 mod word;
 mod xml_text;
@@ -55,4 +56,9 @@ pub use number_format::{
 pub use sheet::{Sheet, Workbook, read_workbook, read_workbook_in};
 pub use sheet_layout::{CellRange, MergePlace, SheetLayout, read_xlsx_layouts};
 pub use sheet_styles::{CellBorders, CellFont, CellStyle, HorizontalAlignment};
+pub use slides::{
+    Bullet, Frame, Presentation, ShapeContent, ShapeGeometry, ShapeLine, Slide, SlideParagraph,
+    SlideRun, SlideShape, SlideTable, SlideTableCell, SlideTableRow, TextAnchor, TextBody,
+    read_presentation,
+};
 pub use text::{ExtractedText, extract_text};

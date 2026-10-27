@@ -456,7 +456,7 @@ fn tinted(colour: &str, tint: f64) -> String {
     format!("{:02X}{:02X}{:02X}", byte(red), byte(green), byte(blue))
 }
 
-fn to_hsl(red: f64, green: f64, blue: f64) -> (f64, f64, f64) {
+pub(crate) fn to_hsl(red: f64, green: f64, blue: f64) -> (f64, f64, f64) {
     let max = red.max(green).max(blue);
     let min = red.min(green).min(blue);
     let lightness = f64::midpoint(max, min);
@@ -479,7 +479,7 @@ fn to_hsl(red: f64, green: f64, blue: f64) -> (f64, f64, f64) {
     (hue, saturation, lightness)
 }
 
-fn from_hsl(hue: f64, saturation: f64, lightness: f64) -> (f64, f64, f64) {
+pub(crate) fn from_hsl(hue: f64, saturation: f64, lightness: f64) -> (f64, f64, f64) {
     if saturation == 0.0 {
         return (lightness, lightness, lightness);
     }
