@@ -5,10 +5,12 @@
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
 mod presentation;
+mod spreadsheet;
 mod styles;
 mod text_tree;
 
 pub(crate) use presentation::read_odp;
+pub(crate) use spreadsheet::read_ods_layouts;
 pub(crate) use text_tree::read_odt_tree;
 
 use crate::archive::{open_package, read_text_member};

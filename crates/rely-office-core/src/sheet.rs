@@ -10,6 +10,7 @@ use std::io::Cursor;
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 
 use crate::number_format::{NumberLocale, format_number, format_text, general_number};
+use crate::opendocument::read_ods_layouts;
 use crate::sheet_layout::{SheetLayout, read_xlsx_layouts};
 use crate::{DocumentFormat, Limits, OfficeError, detect_format};
 
@@ -77,9 +78,11 @@ pub fn read_workbook_in(
             let mut layouts = read_xlsx_layouts(bytes, limits);
             read_binary_workbook(bytes, limits, &mut layouts, locale)?
         }
-        DocumentFormat::Xls | DocumentFormat::Ods => {
-            read_binary_workbook(bytes, limits, &mut HashMap::new(), locale)?
+        DocumentFormat::Ods => {
+            let mut layouts = read_ods_layouts(bytes, limits);
+            read_binary_workbook(bytes, limits, &mut layouts, locale)?
         }
+        DocumentFormat::Xls => read_binary_workbook(bytes, limits, &mut HashMap::new(), locale)?,
         DocumentFormat::Csv => vec![read_delimited(bytes, b',', limits)],
         DocumentFormat::Tsv => vec![read_delimited(bytes, b'\t', limits)],
         other => return Err(OfficeError::UnsupportedFormat(other)),
@@ -207,11 +210,72 @@ fn display_value(
         #[allow(clippy::cast_precision_loss)]
         Data::Int(number) => *number as f64,
         Data::DateTime(moment) => moment.as_f64(),
+        Data::DateTimeIso(text) | Data::DurationIso(text) => match iso_serial(text) {
+            Some(serial) => serial,
+            None => return (text.clone(), None),
+        },
         Data::String(text) => return (format_text(text, code), None),
         other => return (display_cell(other), None),
     };
     let formatted = format_number(number, code, locale);
     (formatted.text, formatted.colour)
+}
+
+/// An ISO 8601 date, date and time, or duration as an `OpenDocument` sheet stores it, as the
+/// serial day count of Excel's 1900 system: `2026-10-27`, `2026-10-27T08:30:00`, `PT36H30M`.
+fn iso_serial(text: &str) -> Option<f64> {
+    let text = text.trim();
+    if let Some(duration) = text.strip_prefix("PT").or_else(|| text.strip_prefix("-PT")) {
+        let mut seconds = 0.0;
+        let mut number = String::new();
+        for character in duration.chars() {
+            match character {
+                'H' | 'M' | 'S' => {
+                    let value: f64 = number.parse().ok()?;
+                    seconds += value
+                        * match character {
+                            'H' => 3_600.0,
+                            'M' => 60.0,
+                            _ => 1.0,
+                        };
+                    number.clear();
+                }
+                digit if digit.is_ascii_digit() || digit == '.' => number.push(digit),
+                _ => return None,
+            }
+        }
+        let days = seconds / 86_400.0;
+        return Some(if text.starts_with('-') { -days } else { days });
+    }
+    let (date, time) = text.split_once('T').unwrap_or((text, ""));
+    let mut parts = date.splitn(3, '-');
+    let year: i64 = parts.next()?.parse().ok()?;
+    let month: i64 = parts.next()?.parse().ok()?;
+    let day: i64 = parts.next()?.parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || !(1..=9_999).contains(&year) {
+        return None;
+    }
+    // Days from the civil calendar, then from Excel's day zero, 30 December 1899.
+    let shifted = if month <= 2 { year - 1 } else { year };
+    let era = shifted.div_euclid(400);
+    let year_of_era = shifted - era * 400;
+    let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468 + 25_569;
+    let mut fraction = 0.0;
+    if !time.is_empty() {
+        let mut clock = time.trim_end_matches('Z').split(':');
+        let hours: f64 = clock.next()?.parse().ok()?;
+        let minutes: f64 = clock.next().unwrap_or("0").parse().ok()?;
+        let seconds: f64 = clock.next().unwrap_or("0").parse().ok()?;
+        fraction = (hours * 3_600.0 + minutes * 60.0 + seconds) / 86_400.0;
+    }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a day count of the years 1 to 9999 fits in f64"
+    )]
+    let days = days as f64;
+    Some(days + fraction)
 }
 
 /// The text a cell shows; an error shows its Excel code, an empty cell nothing.
@@ -306,6 +370,43 @@ fn split_delimited_line(line: &str, separator: char) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::test_support::{build_ods, build_xlsx, build_xlsx_with_uncached_formula};
+
+    #[test]
+    fn reads_iso_dates_times_and_durations_as_serial_days() {
+        let close = |text: &str, expected: f64| {
+            let serial = iso_serial(text).unwrap();
+            assert!((serial - expected).abs() < 1e-9, "{text}: {serial}");
+        };
+        close("1899-12-30", 0.0);
+        close("1900-03-01", 61.0);
+        close("2026-10-27", 46_322.0);
+        close("2026-10-27T12:00:00", 46_322.5);
+        close("2026-10-27T06:00:00.000Z", 46_322.25);
+        close("PT36H", 1.5);
+        close("PT1H30M36S", 0.062_916_666_666_666_7);
+        close("-PT12H", -0.5);
+        for broken in [
+            "2026-13-01",
+            "2026-10",
+            "PT5X",
+            "yesterday",
+            "2026-10-27Tnoon",
+        ] {
+            assert_eq!(iso_serial(broken), None, "{broken}");
+        }
+        let (text, _) = display_value(
+            &Data::DateTimeIso("2026-10-27".to_owned()),
+            Some("dd/mm/yyyy"),
+            NumberLocale::default(),
+        );
+        assert_eq!(text, "27/10/2026");
+        let (text, _) = display_value(
+            &Data::DateTimeIso("sometime".to_owned()),
+            Some("dd/mm/yyyy"),
+            NumberLocale::default(),
+        );
+        assert_eq!(text, "sometime");
+    }
 
     #[test]
     fn reads_every_sheet_of_an_xlsx_from_a1() {

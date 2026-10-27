@@ -45,6 +45,8 @@ pub(crate) enum Namespace {
     OdfSvg,
     OdfPresentation,
     OdfChart,
+    /// The data styles, `number:number-style` and its kind.
+    OdfNumber,
     XLink,
     /// `LibreOffice`'s extensions, `loext:graphic-properties` among them.
     LoExt,
@@ -87,6 +89,7 @@ impl Namespace {
             "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" => Self::OdfSvg,
             "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" => Self::OdfPresentation,
             "urn:oasis:names:tc:opendocument:xmlns:chart:1.0" => Self::OdfChart,
+            "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0" => Self::OdfNumber,
             "http://www.w3.org/1999/xlink" => Self::XLink,
             "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0" => Self::LoExt,
             _ => Self::Other,

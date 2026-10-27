@@ -548,6 +548,11 @@ fn cell_markup(
         }
         if style.is_some_and(|style| style.wrap) {
             text
+        } else if looks_numeric(value) {
+            // A number wider than its column shows as hashes, as a spreadsheet prints it.
+            format!(
+                "layout(size => {{ let shown = box({text}); if measure(shown).width > size.width {{ \"#\" * calc.max(1, int(calc.floor(size.width / measure(\"#\").width))) }} else {{ shown }} }})"
+            )
         } else {
             format!("box({text})")
         }
@@ -896,9 +901,10 @@ mod tests {
         assert!(source.contains(
             "#table(columns: (48pt, 48pt, ), rows: (auto, auto, ), stroke: none, align: bottom,"
         ));
-        assert!(source.contains(
-            r#" box("Rossi \"srl\""), table.cell(align: right + bottom, box("1.234,50")),"#
-        ));
+        assert!(source.contains(concat!(
+            r#" box("Rossi \"srl\""), table.cell(align: right + bottom, layout(size => { let shown = box("1.234,50"); "#,
+            r##"if measure(shown).width > size.width { "#" * calc.max(1, int(calc.floor(size.width / measure("#").width))) } else { shown } })),"##
+        )), "a number that does not fit its column shows hashes: {source}");
         assert!(source.contains("#pagebreak(weak: true)\n#set page("));
         assert_eq!(source.matches("#table(").count(), 1);
     }
