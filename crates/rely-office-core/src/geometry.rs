@@ -24,6 +24,11 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 
 /// A point of a path, in English Metric Units from the top-left corner of the frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct PathPoint {
     pub x: i64,
     pub y: i64,
@@ -31,6 +36,11 @@ pub struct PathPoint {
 
 /// One step of a path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(into = "PathCommandJson", from = "PathCommandJson")
+)]
 pub enum PathCommand {
     /// Starts a new figure.
     MoveTo(PathPoint),
@@ -41,8 +51,61 @@ pub enum PathCommand {
     Close,
 }
 
+/// The JSON of a path step, tagged by `type` like the rest of the slide model.
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum PathCommandJson {
+    MoveTo {
+        to: PathPoint,
+    },
+    LineTo {
+        to: PathPoint,
+    },
+    CubicTo {
+        controls: [PathPoint; 2],
+        to: PathPoint,
+    },
+    Close,
+}
+
+#[cfg(feature = "serde")]
+impl From<PathCommand> for PathCommandJson {
+    fn from(command: PathCommand) -> Self {
+        match command {
+            PathCommand::MoveTo(to) => Self::MoveTo { to },
+            PathCommand::LineTo(to) => Self::LineTo { to },
+            PathCommand::CubicTo(first, second, to) => Self::CubicTo {
+                controls: [first, second],
+                to,
+            },
+            PathCommand::Close => Self::Close,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<PathCommandJson> for PathCommand {
+    fn from(command: PathCommandJson) -> Self {
+        match command {
+            PathCommandJson::MoveTo { to } => Self::MoveTo(to),
+            PathCommandJson::LineTo { to } => Self::LineTo(to),
+            PathCommandJson::CubicTo {
+                controls: [first, second],
+                to,
+            } => Self::CubicTo(first, second, to),
+            PathCommandJson::Close => Self::Close,
+        }
+    }
+}
+
 /// A path of a shape, with whether it is filled and whether its outline is drawn.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct ShapePath {
     pub commands: Vec<PathCommand>,
     pub filled: bool,
@@ -54,6 +117,11 @@ pub struct ShapePath {
 /// A face drawn darker or lighter than the shape's fill, as `DrawingML` paths and the shading
 /// commands of `OpenDocument` enhanced paths ask.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub enum FillShade {
     #[default]
     Normal,

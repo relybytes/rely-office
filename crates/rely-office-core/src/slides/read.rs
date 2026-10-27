@@ -12,6 +12,7 @@ use crate::geometry::{custom_geometry, flip_paths, preset_geometry};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use super::show::{read_animations, read_transition};
 use super::text::{BulletStyle, LEVELS, LevelStyle, list_styles, number_label};
 use super::{
     Bullet, Frame, Gradient, GradientKind, GradientStop, Paint, Presentation, ShapeContent,
@@ -274,7 +275,9 @@ impl Reader<'_, '_> {
         }
         let mut slide = Slide {
             background,
-            shapes: Vec::new(),
+            hidden: root.attribute(Namespace::None, "show") == Some("0"),
+            transition: read_transition(&root),
+            ..Slide::default()
         };
         let shows = |part: &Element| part.attribute(Namespace::None, "showMasterSp") != Some("0");
         let layout_shows = context
@@ -302,7 +305,42 @@ impl Reader<'_, '_> {
             }
         }
         self.shapes_of(&root, &relationships, &context, true, &mut slide.shapes);
+        slide.animations = read_animations(&root, &slide.shapes);
+        slide.notes = self.notes(&relationships, &context)?;
         Ok(Some(slide))
+    }
+
+    /// The speaker notes of a slide: the text of the body placeholder of its notes page.
+    fn notes(
+        &mut self,
+        relationships: &[Relationship],
+        context: &Context,
+    ) -> Result<Option<TextBody>, OfficeError> {
+        let Some(path) = related(relationships, "notesSlide") else {
+            return Ok(None);
+        };
+        let Some(xml) = read_text_member(self.package, &path, self.limits)? else {
+            return Ok(None);
+        };
+        let root = parse_tree(&xml, keeps_whitespace)?;
+        let body = root
+            .child(P, "cSld")
+            .and_then(|slide| slide.child(P, "spTree"))
+            .and_then(|tree| {
+                tree.elements().find(|shape| {
+                    shape.is(P, "sp")
+                        && Placeholder::of(shape)
+                            .is_some_and(|placeholder| placeholder.kind == "body")
+                })
+            })
+            .and_then(|shape| shape.child(P, "txBody"));
+        Ok(body
+            .map(|body| self.text_body(body, None, &[], None, context))
+            .filter(|body| {
+                body.paragraphs
+                    .iter()
+                    .any(|paragraph| paragraph.runs.iter().any(|run| !run.text.trim().is_empty()))
+            }))
     }
 
     /// The shapes of a part's tree; a layout's or a master's placeholders are templates for the
@@ -350,19 +388,19 @@ impl Reader<'_, '_> {
             match (element.namespace, element.name.as_str()) {
                 (P, "sp" | "cxnSp") => {
                     if let Some(shape) = self.shape(element, relationships, context, transform) {
-                        shapes.push(shape);
+                        shapes.push(placed(shape, element, own));
                     }
                 }
                 (P, "pic") => {
                     if let Some(shape) = self.picture(element, relationships, context, transform) {
-                        shapes.push(shape);
+                        shapes.push(placed(shape, element, own));
                     }
                 }
                 (P, "graphicFrame") => {
                     if let Some(shape) =
                         self.graphic_frame(element, relationships, context, transform)
                     {
-                        shapes.push(shape);
+                        shapes.push(placed(shape, element, own));
                     }
                 }
                 (P, "grpSp") if depth < MAX_GROUP_DEPTH => {
@@ -500,6 +538,8 @@ impl Reader<'_, '_> {
             return None;
         }
         Some(SlideShape {
+            id: None,
+            inherited: false,
             frame,
             rotation,
             geometry,
@@ -528,6 +568,8 @@ impl Reader<'_, '_> {
             .and_then(|blip| blip.attribute(R, "embed"))?;
         let media = self.image(relationships, embed)?;
         Some(SlideShape {
+            id: None,
+            inherited: false,
             frame: transform.apply(frame),
             rotation,
             geometry: ShapeGeometry::Rectangle,
@@ -552,6 +594,8 @@ impl Reader<'_, '_> {
             let bounds = transform.apply(bounds);
             let media = self.chart(chart.attribute(R, "id")?, relationships, context, bounds)?;
             return Some(SlideShape {
+                id: None,
+                inherited: false,
                 frame: bounds,
                 rotation: 0.0,
                 geometry: ShapeGeometry::Rectangle,
@@ -630,6 +674,8 @@ impl Reader<'_, '_> {
             });
         }
         Some(SlideShape {
+            id: None,
+            inherited: false,
             frame: transform.apply(bounds),
             rotation: 0.0,
             geometry: ShapeGeometry::Rectangle,
@@ -1089,6 +1135,23 @@ impl Transform {
 }
 
 /// The frame, rotation and vertical flip of an `a:xfrm` or `p:xfrm`.
+/// A shape with the id its slide gives it, or marked as drawn from the layout or the master.
+fn placed(mut shape: SlideShape, element: &Element, own: bool) -> SlideShape {
+    shape.inherited = !own;
+    shape.id = own
+        .then(|| {
+            element
+                .elements()
+                .find(|child| child.namespace == P && child.name.starts_with("nv"))?
+                .child(P, "cNvPr")?
+                .attribute(Namespace::None, "id")?
+                .parse()
+                .ok()
+        })
+        .flatten();
+    shape
+}
+
 fn read_frame(xfrm: &Element) -> Option<(Frame, f64, bool)> {
     let offset = xfrm.child(A, "off")?;
     let extent = xfrm.child(A, "ext")?;

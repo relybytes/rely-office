@@ -25,8 +25,9 @@ use crate::office_art::{
     properties, records, store_images,
 };
 use crate::slides::{
-    Bullet, Frame, Gradient, GradientKind, GradientStop, Paint, Presentation, ShapeContent,
-    ShapeGeometry, ShapeLine, Slide, SlideParagraph, SlideRun, SlideShape, TextAnchor, TextBody,
+    Animation, AnimationClass, AnimationTrigger, Bullet, Frame, Gradient, GradientKind,
+    GradientStop, Paint, Presentation, ShapeContent, ShapeGeometry, ShapeLine, Slide,
+    SlideParagraph, SlideRun, SlideShape, TextAnchor, TextBody, Transition,
 };
 use crate::{Limits, OfficeError};
 
@@ -36,6 +37,20 @@ const DOCUMENT: u16 = 0x03E8;
 const DOCUMENT_ATOM: u16 = 0x03E9;
 const SLIDE: u16 = 0x03EE;
 const SLIDE_ATOM: u16 = 0x03EF;
+const NOTES: u16 = 0x03F0;
+const SLIDE_SHOW_INFO: u16 = 0x03F9;
+const ANIMATION_INFO: u16 = 0x1014;
+const ANIMATION_INFO_ATOM: u16 = 0x0FF1;
+const PROGRAMMABLE_TAGS: u16 = 0x1388;
+const BINARY_TAG: u16 = 0x138A;
+const BINARY_TAG_DATA: u16 = 0x138B;
+const TIME_NODE: u16 = 0xF144;
+const TIME_NODE_ATOM: u16 = 0xF127;
+const TIME_PROPERTIES: u16 = 0xF13D;
+const TIME_VARIANT: u16 = 0xF142;
+const TIME_CONDITION: u16 = 0xF125;
+const TIME_CONDITION_ATOM: u16 = 0xF128;
+const VISUAL_SHAPE: u16 = 0x2AFB;
 const ENVIRONMENT: u16 = 0x03F2;
 const SLIDE_PERSIST: u16 = 0x03F3;
 const MAIN_MASTER: u16 = 0x03F8;
@@ -196,6 +211,10 @@ struct Reader<'a> {
     /// Each store image's media index once kept, `None` when it could not be.
     kept: HashMap<u32, Option<usize>>,
     masters: HashMap<u32, Master>,
+    /// The persist id of each notes page, by the notes id a slide names.
+    notes_ids: HashMap<u32, u32>,
+    /// The build effects of the shapes of the drawing being read, by shape index.
+    builds: Vec<(usize, Build)>,
     shape_count: usize,
     remaining_chars: usize,
     truncated: bool,
@@ -240,6 +259,8 @@ impl<'a> Reader<'a> {
             media_bytes: 0,
             kept: HashMap::new(),
             masters: HashMap::new(),
+            notes_ids: HashMap::new(),
+            builds: Vec::new(),
             shape_count: 0,
             remaining_chars: limits.max_text_chars,
             truncated: false,
@@ -310,12 +331,16 @@ impl<'a> Reader<'a> {
             .filter(|record| record.kind == SLIDE_LIST)
             .collect();
         let mut master_ids: HashMap<u32, u32> = HashMap::new();
-        for list in lists.iter().filter(|list| list.instance == 1) {
+        for list in lists.iter().filter(|list| matches!(list.instance, 1 | 2)) {
             for persist in records(list.body).filter(|record| record.kind == SLIDE_PERSIST) {
                 if let (Some(persist_id), Some(slide_id)) =
                     (u32_at(persist.body, 0), u32_at(persist.body, 12))
                 {
-                    master_ids.insert(slide_id, persist_id);
+                    if list.instance == 1 {
+                        master_ids.insert(slide_id, persist_id);
+                    } else {
+                        self.notes_ids.insert(slide_id, persist_id);
+                    }
                 }
             }
         }
@@ -418,8 +443,10 @@ impl<'a> Reader<'a> {
         } else {
             colour_scheme(container.body).unwrap_or_else(|| master.scheme.clone())
         };
+        self.builds.clear();
         let (mut shapes, background) =
             self.drawing(container.body, &scheme, texts, &master.styles, false);
+        let mut builds = std::mem::take(&mut self.builds);
         let background = if flags & 0x4 != 0 {
             master.background.clone()
         } else {
@@ -427,10 +454,73 @@ impl<'a> Reader<'a> {
         };
         if flags & 0x1 != 0 {
             let mut all = master.shapes.clone();
+            for shape in &mut all {
+                shape.inherited = true;
+            }
+            for (index, _) in &mut builds {
+                *index += all.len();
+            }
             all.append(&mut shapes);
             shapes = all;
         }
-        Slide { background, shapes }
+        builds.sort_by_key(|(_, build)| build.order);
+        let show = child(container.body, SLIDE_SHOW_INFO);
+        let notes = atom
+            .and_then(|atom| u32_at(atom.body, 16))
+            .filter(|id| *id != 0)
+            .and_then(|id| self.notes(id, &scheme, &master.styles));
+        let mut animations = timeline(container.body, &shapes);
+        if animations.is_empty() {
+            animations = builds
+                .into_iter()
+                .map(|(shape, build)| build.animation(shape))
+                .collect();
+        }
+        Slide {
+            background,
+            shapes,
+            notes,
+            hidden: show
+                .and_then(|show| u16_at(show.body, 10))
+                .is_some_and(|show_flags| show_flags & 0x4 != 0),
+            transition: show.and_then(|show| transition(show.body)),
+            animations,
+        }
+    }
+
+    /// The speaker notes of a slide: the text of the notes page the slide names, its body being
+    /// the shape that holds the most text.
+    fn notes(
+        &mut self,
+        notes_id: u32,
+        scheme: &[String],
+        styles: &HashMap<u16, Vec<(ParagraphStyle, CharacterStyle)>>,
+    ) -> Option<TextBody> {
+        let persist_id = *self.notes_ids.get(&notes_id)?;
+        let container = self
+            .persist
+            .object(self.stream, persist_id)
+            .and_then(|bytes| records(bytes).next())
+            .filter(|record| record.kind == NOTES)?;
+        let (shapes, _) = self.drawing(container.body, scheme, &[], styles, false);
+        shapes
+            .into_iter()
+            .filter_map(|shape| match shape.content {
+                ShapeContent::Text(body) => Some(body),
+                _ => None,
+            })
+            .max_by_key(|body| {
+                body.paragraphs
+                    .iter()
+                    .flat_map(|paragraph| &paragraph.runs)
+                    .map(|run| run.text.trim().len())
+                    .sum::<usize>()
+            })
+            .filter(|body| {
+                body.paragraphs
+                    .iter()
+                    .any(|paragraph| paragraph.runs.iter().any(|run| !run.text.trim().is_empty()))
+            })
     }
 
     /// A master, read the first time a slide names it.
@@ -529,8 +619,18 @@ impl<'a> Reader<'a> {
                     self.group(record.body, context, transform, depth + 1, shapes);
                 }
                 SHAPE_CONTAINER => {
-                    if let Some(shape) = self.shape(record.body, context, transform) {
+                    if let Some(mut shape) = self.shape(record.body, context, transform) {
                         self.shape_count += 1;
+                        if !context.is_master {
+                            shape.id = records(record.body)
+                                .find(|atom| atom.kind == SHAPE)
+                                .and_then(|atom| u32_at(atom.body, 0));
+                        }
+                        if !context.is_master
+                            && let Some(build) = Build::read(record.body)
+                        {
+                            self.builds.push((shapes.len(), build));
+                        }
                         shapes.push(shape);
                     }
                 }
@@ -597,6 +697,8 @@ impl<'a> Reader<'a> {
             return None;
         }
         Some(SlideShape {
+            id: None,
+            inherited: false,
             frame,
             rotation: options.rotation,
             geometry,
@@ -895,6 +997,260 @@ fn character_run_at(
 }
 
 /// The text of a `TextCharsAtom` or a `TextBytesAtom`.
+/// The effects of the timeline `PowerPoint` 2002 keeps in the slide's `___PPT10` binary tag:
+/// each time node whose properties name a preset class, on the shape its visual element names.
+fn timeline(slide: &[u8], shapes: &[SlideShape]) -> Vec<Animation> {
+    let mut animations = Vec::new();
+    for tags in records(slide).filter(|record| record.kind == PROGRAMMABLE_TAGS) {
+        for tag in records(tags.body).filter(|record| record.kind == BINARY_TAG) {
+            if let Some(data) = child(tag.body, BINARY_TAG_DATA) {
+                for root in records(data.body).filter(|record| record.kind == TIME_NODE) {
+                    time_effects(root.body, shapes, &mut animations, 0);
+                }
+            }
+        }
+    }
+    animations
+}
+
+fn time_effects(node: &[u8], shapes: &[SlideShape], animations: &mut Vec<Animation>, depth: usize) {
+    if depth > 32 || animations.len() >= 500 {
+        return;
+    }
+    let property = |id: u16| {
+        child(node, TIME_PROPERTIES).and_then(|list| {
+            records(list.body)
+                .find(|variant| variant.kind == TIME_VARIANT && variant.instance == id)
+                .filter(|variant| variant.body.first() == Some(&1))
+                .and_then(|variant| u32_at(variant.body, 1))
+        })
+    };
+    if let Some(class) = property(0x0B) {
+        if let Some(animation) = time_effect(node, class, &property, shapes) {
+            animations.push(animation);
+        }
+        return;
+    }
+    for inner in records(node).filter(|record| record.kind == TIME_NODE) {
+        time_effects(inner.body, shapes, animations, depth + 1);
+    }
+}
+
+/// One effect node: its preset (`0x09`), variant (`0x0A`), class (`0x0B`) and trigger
+/// (`0x14`) properties, its delay and the longest of the behaviours it holds.
+fn time_effect(
+    node: &[u8],
+    class: u32,
+    property: &dyn Fn(u16) -> Option<u32>,
+    shapes: &[SlideShape],
+) -> Option<Animation> {
+    let class = match class {
+        1 => AnimationClass::Entrance,
+        2 => AnimationClass::Exit,
+        3 => AnimationClass::Emphasis,
+        4 => AnimationClass::Path,
+        _ => return None,
+    };
+    let target = visual_shape(node, 0)?;
+    let shape = shapes
+        .iter()
+        .position(|shape| !shape.inherited && shape.id == Some(target))?;
+    let delay_ms = child(node, TIME_CONDITION)
+        .and_then(|condition| child(condition.body, TIME_CONDITION_ATOM))
+        .and_then(|atom| u32_at(atom.body, 12))
+        .map(|delay| i32::from_le_bytes(delay.to_le_bytes()).clamp(0, 3_600_000))
+        .and_then(|delay| u32::try_from(delay).ok())
+        .unwrap_or(0);
+    Some(Animation {
+        shape,
+        class,
+        preset: property(0x09).unwrap_or(0),
+        preset_subtype: property(0x0A).unwrap_or(0),
+        trigger: match property(0x14) {
+            Some(2) => AnimationTrigger::WithPrevious,
+            Some(3) => AnimationTrigger::AfterPrevious,
+            _ => AnimationTrigger::OnClick,
+        },
+        delay_ms,
+        duration_ms: longest_time(node, 0).unwrap_or(500),
+        motion_path: None,
+    })
+}
+
+/// The shape id the first visual element under a time node names.
+fn visual_shape(node: &[u8], depth: usize) -> Option<u32> {
+    if depth > 16 {
+        return None;
+    }
+    records(node).find_map(|record| {
+        if record.kind == VISUAL_SHAPE {
+            return u32_at(record.body, 8);
+        }
+        record
+            .is_container()
+            .then(|| visual_shape(record.body, depth + 1))
+            .flatten()
+    })
+}
+
+/// The longest duration of the behaviours under a time node, in milliseconds.
+fn longest_time(node: &[u8], depth: usize) -> Option<u32> {
+    if depth > 16 {
+        return None;
+    }
+    records(node)
+        .filter_map(|record| {
+            if record.kind == TIME_NODE_ATOM {
+                return u32_at(record.body, 24)
+                    .map(|duration| i32::from_le_bytes(duration.to_le_bytes()))
+                    .filter(|duration| *duration > 0)
+                    .and_then(|duration| u32::try_from(duration.min(3_600_000)).ok());
+            }
+            record
+                .is_container()
+                .then(|| longest_time(record.body, depth + 1))
+                .flatten()
+        })
+        .max()
+}
+
+/// How a shape is built on its slide, the `AnimationInfoAtom` of `PowerPoint` 97: its effect
+/// and direction, whether it starts by itself and after how long, and its place in the order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Build {
+    order: u16,
+    automatic: bool,
+    delay_ms: u32,
+    effect: u8,
+    direction: u8,
+}
+
+impl Build {
+    /// The build of a shape container, kept in its client data.
+    fn read(shape: &[u8]) -> Option<Self> {
+        let atom = records(shape)
+            .find(|record| record.kind == CLIENT_DATA)
+            .and_then(|data| child(data.body, ANIMATION_INFO))
+            .and_then(|info| child(info.body, ANIMATION_INFO_ATOM))?;
+        let body = atom.body;
+        Some(Self {
+            order: u16_at(body, 16)?,
+            automatic: u16_at(body, 4).is_some_and(|flags| flags & 0x4 != 0),
+            delay_ms: u32_at(body, 12)
+                .map(|delay| i32::from_le_bytes(delay.to_le_bytes()).clamp(0, 3_600_000))
+                .and_then(|delay| u32::try_from(delay).ok())
+                .unwrap_or(0),
+            effect: *body.get(21)?,
+            direction: body.get(22).copied().unwrap_or(0),
+        })
+    }
+
+    /// The entrance effect of the gallery the build looks like, on shape `shape`.
+    fn animation(self, shape: usize) -> Animation {
+        let (preset, preset_subtype) = match self.effect {
+            0x00 => (1, 0),
+            0x02 => (3, if self.direction == 0 { 10 } else { 5 }),
+            0x03 => (5, 0),
+            0x05 => (9, 0),
+            0x08 => (14, 0),
+            0x09 => (18, 0),
+            0x0A => (
+                22,
+                [8, 1, 2, 4]
+                    .get(usize::from(self.direction))
+                    .copied()
+                    .unwrap_or(4),
+            ),
+            0x0B => (53, 0),
+            0x0C => (
+                2,
+                [8, 1, 2, 4]
+                    .get(usize::from(self.direction))
+                    .copied()
+                    .unwrap_or(4),
+            ),
+            0x0D => (16, 0),
+            0x11 => (8, 0),
+            0x12 => (13, 0),
+            0x13 => (20, 0),
+            0x1A => (21, 0),
+            _ => (10, 0),
+        };
+        Animation {
+            shape,
+            class: AnimationClass::Entrance,
+            preset,
+            preset_subtype,
+            trigger: if self.automatic {
+                AnimationTrigger::AfterPrevious
+            } else {
+                AnimationTrigger::OnClick
+            },
+            delay_ms: self.delay_ms,
+            duration_ms: 500,
+            motion_path: None,
+        }
+    }
+}
+
+/// The transition of a `SlideShowSlideInfoAtom`: its effect and direction in the numbering of
+/// [MS-PPT], its speed and how the slide advances. A cut is no transition.
+fn transition(atom: &[u8]) -> Option<Transition> {
+    let time = u32_at(atom, 0).unwrap_or(0);
+    let direction = atom.get(8).copied().unwrap_or(0);
+    let effect = atom.get(9).copied().unwrap_or(0);
+    let flags = u16_at(atom, 10).unwrap_or(0);
+    let speed = atom.get(12).copied().unwrap_or(0);
+    let side = |value: u8| {
+        ["l", "u", "r", "d", "lu", "ru", "ld", "rd"]
+            .get(usize::from(value))
+            .map(|side| (*side).to_owned())
+    };
+    let orientation = |vertical: bool| Some(if vertical { "vert" } else { "horz" }.to_owned());
+    let (name, way) = match effect {
+        0 if flags & 0x80 == 0 && flags & 0x1 != 0 => return None,
+        0 => ("cut", None),
+        1 => ("random", None),
+        2 => ("blinds", orientation(direction == 0)),
+        3 => ("checker", orientation(direction == 1)),
+        4 => ("cover", side(direction)),
+        5 => ("dissolve", None),
+        7 => ("pull", side(direction)),
+        8 => ("randomBar", orientation(direction == 1)),
+        9 => ("strips", side(direction.saturating_add(4).min(7))),
+        10 => ("wipe", side(direction.min(3))),
+        11 => (
+            "zoom",
+            Some(if direction == 0 { "out" } else { "in" }.to_owned()),
+        ),
+        13 => (
+            "split",
+            Some(if direction >= 2 { "vert" } else { "horz" }.to_owned()),
+        ),
+        17 => ("diamond", None),
+        18 => ("plus", None),
+        19 => ("wedge", None),
+        20 => ("push", side(direction.min(3))),
+        21 => ("comb", orientation(direction == 1)),
+        22 => ("newsflash", None),
+        26 => ("wheel", None),
+        27 => ("circle", None),
+        _ => ("fade", None),
+    };
+    let automatic = flags & 0x80 != 0;
+    Some(Transition {
+        effect: name.to_owned(),
+        direction: way,
+        duration_ms: Some(match speed {
+            0 => 1_000,
+            1 => 750,
+            _ => 500,
+        }),
+        advance_on_click: flags & 0x1 != 0 || !automatic,
+        advance_after_ms: automatic.then_some(time.min(3_600_000)),
+    })
+}
+
 fn text_of(record: Record<'_>) -> String {
     if record.kind == TEXT_BYTES {
         return record.body.iter().map(|byte| char::from(*byte)).collect();

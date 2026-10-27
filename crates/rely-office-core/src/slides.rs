@@ -10,6 +10,9 @@
 //! `PowerPoint` resolves it, so every value here is the one the slide shows.
 
 mod read;
+#[cfg(feature = "serde")]
+mod serde_model;
+mod show;
 mod text;
 mod write;
 
@@ -33,15 +36,146 @@ pub struct Presentation {
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase", default)
+)]
 pub struct Slide {
     /// The background; unset is white.
     pub background: Option<Paint>,
     /// The shapes in drawing order, the first one at the back.
     pub shapes: Vec<SlideShape>,
+    /// The speaker notes, shown beside the slide while it is presented, not on it.
+    pub notes: Option<TextBody>,
+    /// The slide is skipped when the show plays.
+    pub hidden: bool,
+    /// How the slide replaces the one before it.
+    pub transition: Option<Transition>,
+    /// The effects that play on its shapes, in the order they start.
+    pub animations: Vec<Animation>,
+}
+
+/// How a slide comes in when the show reaches it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
+pub struct Transition {
+    /// The effect by its `PresentationML` name: `fade`, `push`, `wipe`, `split`, `cover`, `cut`
+    /// and the rest of [`TRANSITION_EFFECTS`].
+    pub effect: String,
+    /// The way the effect moves, as the effect names it: `l`, `r`, `u`, `d`, `horz`, `vert`,
+    /// `in`, `out`.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub direction: Option<String>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub duration_ms: Option<u32>,
+    /// A click moves on to the next slide.
+    pub advance_on_click: bool,
+    /// The show moves on by itself after this long.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub advance_after_ms: Option<u32>,
+}
+
+/// The transition effects of `PresentationML`, each the name of its element.
+pub const TRANSITION_EFFECTS: [&str; 21] = [
+    "blinds",
+    "checker",
+    "circle",
+    "comb",
+    "cover",
+    "cut",
+    "diamond",
+    "dissolve",
+    "fade",
+    "newsflash",
+    "plus",
+    "pull",
+    "push",
+    "random",
+    "randomBar",
+    "split",
+    "strips",
+    "wedge",
+    "wheel",
+    "wipe",
+    "zoom",
+];
+
+/// An effect that plays on one shape of a slide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
+pub struct Animation {
+    /// The index of the shape in [`Slide::shapes`].
+    pub shape: usize,
+    pub class: AnimationClass,
+    /// The effect of `PowerPoint`'s gallery, by its preset number in its class: in an entrance,
+    /// `1` appear, `2` fly in, `10` fade, `22` wipe, `53` zoom.
+    pub preset: u32,
+    /// The variant of the preset, such as the side a fly in comes from.
+    pub preset_subtype: u32,
+    pub trigger: AnimationTrigger,
+    pub delay_ms: u32,
+    pub duration_ms: u32,
+    /// The path a motion follows, in `PowerPoint`'s path language over fractions of the slide.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub motion_path: Option<String>,
+}
+
+/// What an animation does to its shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
+pub enum AnimationClass {
+    Entrance,
+    Emphasis,
+    Exit,
+    /// The shape moves along a path.
+    Path,
+}
+
+/// When an animation starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
+pub enum AnimationTrigger {
+    OnClick,
+    WithPrevious,
+    AfterPrevious,
 }
 
 /// A rectangle on the slide, in English Metric Units from the top-left corner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct Frame {
     pub x: i64,
     pub y: i64,
@@ -51,6 +185,14 @@ pub struct Frame {
 
 /// The outline of a shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(
+        into = "serde_model::ShapeGeometryJson",
+        from = "serde_model::ShapeGeometryJson"
+    )
+)]
 pub enum ShapeGeometry {
     Rectangle,
     RoundedRectangle,
@@ -68,6 +210,11 @@ pub enum ShapeGeometry {
 
 /// A shape's border line.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct ShapeLine {
     pub colour: String,
     /// The width in English Metric Units, 12,700 to the point.
@@ -75,7 +222,21 @@ pub struct ShapeLine {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct SlideShape {
+    /// The shape's id on its slide; unset for a shape written for the first time.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub id: Option<u32>,
+    /// The shape is drawn from the slide's layout or master, not from the slide itself.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub inherited: bool,
     pub frame: Frame,
     /// Clockwise, in degrees.
     pub rotation: f64,
@@ -88,6 +249,11 @@ pub struct SlideShape {
 
 /// What fills a shape or a slide.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(into = "serde_model::PaintJson", from = "serde_model::PaintJson")
+)]
 pub enum Paint {
     /// A colour, `RRGGBB`.
     Solid(String),
@@ -115,6 +281,11 @@ impl Paint {
 
 /// A blend of colours across a frame.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct Gradient {
     /// In order of their offset, at least two.
     pub stops: Vec<GradientStop>,
@@ -122,6 +293,15 @@ pub struct Gradient {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(
+        tag = "type",
+        rename_all = "camelCase",
+        rename_all_fields = "camelCase"
+    )
+)]
 pub enum GradientKind {
     /// Along a line through the frame, clockwise in degrees from left to right.
     Linear { angle: f64 },
@@ -131,6 +311,11 @@ pub enum GradientKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct GradientStop {
     /// From 0.0 at the start to 1.0 at the end.
     pub offset: f64,
@@ -139,6 +324,15 @@ pub struct GradientStop {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(
+        tag = "type",
+        rename_all = "camelCase",
+        rename_all_fields = "camelCase"
+    )
+)]
 pub enum ShapeContent {
     None,
     Text(TextBody),
@@ -151,6 +345,11 @@ pub enum ShapeContent {
 
 /// Where the text of a shape sits in its height.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub enum TextAnchor {
     Top,
     Middle,
@@ -159,6 +358,11 @@ pub enum TextAnchor {
 
 /// The text of a shape or a table cell.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct TextBody {
     pub paragraphs: Vec<SlideParagraph>,
     pub anchor: TextAnchor,
@@ -170,6 +374,11 @@ pub struct TextBody {
 
 /// What a paragraph starts with.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(into = "serde_model::BulletJson", from = "serde_model::BulletJson")
+)]
 pub enum Bullet {
     /// A character, `•` or `–`.
     Character(String),
@@ -178,6 +387,11 @@ pub enum Bullet {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct SlideParagraph {
     /// The outline level, 0 for the first.
     pub level: u8,
@@ -200,6 +414,11 @@ pub struct SlideParagraph {
     clippy::struct_excessive_bools,
     reason = "each flag is an independent mark of the run, as the file stores them"
 )]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct SlideRun {
     pub text: String,
     /// The size in hundredths of a point, the shape's autofit scale applied.
@@ -216,18 +435,33 @@ pub struct SlideRun {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct SlideTable {
     pub column_widths_emu: Vec<i64>,
     pub rows: Vec<SlideTableRow>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct SlideTableRow {
     pub height_emu: i64,
     pub cells: Vec<SlideTableCell>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct SlideTableCell {
     pub body: TextBody,
     pub fill: Option<String>,

@@ -61,6 +61,8 @@ fn paragraph(runs: Vec<SlideRun>, bullet: Option<Bullet>, align: Alignment) -> S
 
 fn shape(geometry: ShapeGeometry, content: ShapeContent, at: Frame) -> SlideShape {
     SlideShape {
+        id: None,
+        inherited: false,
         frame: at,
         rotation: 0.0,
         geometry,
@@ -177,6 +179,7 @@ fn presentation() -> Presentation {
                         frame(3_000_000, 0),
                     ),
                 ],
+                ..Slide::default()
             },
             Slide {
                 background: None,
@@ -220,6 +223,7 @@ fn presentation() -> Presentation {
                         frame(2_000_000, 0),
                     ),
                 ],
+                ..Slide::default()
             },
         ],
         media: vec![
@@ -446,6 +450,7 @@ fn writes_gradients_and_pictures_that_read_back_as_they_were() {
         slides: vec![Slide {
             background: Some(linear.clone()),
             shapes,
+            ..Slide::default()
         }],
         media: vec![
             Media {
@@ -488,4 +493,80 @@ fn writes_gradients_and_pictures_that_read_back_as_they_were() {
     assert_eq!(read.media.len(), 1);
     let relationships = member(&written, "ppt/slides/_rels/slide1.xml.rels");
     assert_eq!(relationships.matches("media/image1.png").count(), 1);
+}
+
+#[test]
+fn writes_notes_ids_and_the_show_and_reads_them_back() {
+    use crate::slides::{Animation, AnimationClass, AnimationTrigger, Transition};
+    let text = |words: &str, id| SlideShape {
+        id,
+        ..shape(
+            ShapeGeometry::Rectangle,
+            ShapeContent::Text(body(vec![paragraph(
+                vec![run(words, false)],
+                None,
+                Alignment::Left,
+            )])),
+            frame(0, 0),
+        )
+    };
+    let presentation = Presentation {
+        width_emu: 9_144_000,
+        height_emu: 6_858_000,
+        slides: vec![
+            Slide {
+                shapes: vec![
+                    text("uno", Some(40)),
+                    text("due", Some(40)),
+                    text("tre", None),
+                ],
+                notes: Some(body(vec![paragraph(
+                    vec![run("Da dire a voce", false)],
+                    None,
+                    Alignment::Left,
+                )])),
+                transition: Some(Transition {
+                    effect: "wipe".to_owned(),
+                    direction: Some("d".to_owned()),
+                    duration_ms: Some(1_000),
+                    advance_on_click: true,
+                    advance_after_ms: None,
+                }),
+                animations: vec![Animation {
+                    shape: 2,
+                    class: AnimationClass::Entrance,
+                    preset: 22,
+                    preset_subtype: 4,
+                    trigger: AnimationTrigger::OnClick,
+                    delay_ms: 0,
+                    duration_ms: 500,
+                    motion_path: None,
+                }],
+                ..Slide::default()
+            },
+            Slide {
+                hidden: true,
+                ..Slide::default()
+            },
+        ],
+        media: Vec::new(),
+        truncated: false,
+    };
+    let written = write_pptx(&presentation).unwrap();
+    let read = read_presentation(&written, &Limits::default()).unwrap();
+    let first = &read.slides[0];
+    let ids: Vec<Option<u32>> = first.shapes.iter().map(|shape| shape.id).collect();
+    assert_eq!(
+        ids,
+        vec![Some(40), Some(2), Some(3)],
+        "a repeated id gives way"
+    );
+    assert_eq!(
+        first.notes.as_ref().unwrap().paragraphs[0].runs[0].text,
+        "Da dire a voce"
+    );
+    assert_eq!(first.transition, presentation.slides[0].transition);
+    assert_eq!(first.animations, presentation.slides[0].animations);
+    assert!(!first.hidden && read.slides[1].hidden);
+    assert!(read.slides[1].notes.is_none());
 }

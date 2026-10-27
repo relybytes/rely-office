@@ -30,3 +30,4 @@ serde = ["dep:serde"]
 
 [dev-dependencies]
 rust_xlsxwriter = "0.101"
+serde_json = "1.0.149"

@@ -18,6 +18,9 @@ const path = require('node:path');
 const packagePath = path.resolve(process.argv[2] ?? path.join(__dirname, '..'));
 const office = require(packagePath);
 
+/** The odp the odp test builds, edited again by the presentation test. */
+let odp = null;
+
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
 
 function crc32(bytes) {
@@ -186,7 +189,7 @@ test('reads an odt as a document tree and draws an odp as slides', () => {
   });
   assert.deepEqual(tree.blocks[1].content, [{ type: 'text', text: 'Presenti tutti.' }]);
 
-  const odp = storedZip([
+  odp = storedZip([
     ['mimetype', 'application/vnd.oasis.opendocument.presentation'],
     [
       'content.xml',
@@ -210,7 +213,7 @@ test('converts a document to docx and a presentation to pptx', () => {
     'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ' +
     'xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" ' +
     'xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"';
-  const odp = storedZip([
+  odp = storedZip([
     ['mimetype', 'application/vnd.oasis.opendocument.presentation'],
     [
       'content.xml',
@@ -224,6 +227,42 @@ test('converts a document to docx and a presentation to pptx', () => {
   assert.equal(office.detectFormat(pptx), 'pptx');
   assert.match(office.extractText(pptx).text, /Ordine del giorno/);
   assert.throws(() => office.convertToPptx(docx), (error) => error.code === 'UNSUPPORTED_FORMAT');
+});
+
+test('edits a presentation and writes it back', () => {
+  const presentation = office.readPresentation(office.convertToPptx(odp));
+  assert.equal(presentation.slides.length, 1);
+  const slide = presentation.slides[0];
+  const box = slide.shapes.find((shape) => shape.content.type === 'text');
+  box.content.paragraphs[0].runs[0].text = 'Ordine del giorno rivisto';
+  slide.notes = {
+    paragraphs: [{ ...box.content.paragraphs[0], runs: [{ ...box.content.paragraphs[0].runs[0], text: 'Note' }] }],
+    anchor: 'top',
+    insetsEmu: [0, 0, 0, 0],
+    wrap: true,
+  };
+  slide.transition = { effect: 'fade', advanceOnClick: true };
+  slide.animations = [
+    {
+      shape: slide.shapes.indexOf(box),
+      class: 'entrance',
+      preset: 10,
+      presetSubtype: 0,
+      trigger: 'onClick',
+      delayMs: 0,
+      durationMs: 500,
+    },
+  ];
+  presentation.slides.push({ shapes: [], hidden: true });
+  const written = office.writePptx(presentation);
+  const read = office.readPresentation(written);
+  assert.equal(read.slides.length, 2);
+  assert.match(office.extractText(written).text, /Ordine del giorno rivisto/);
+  assert.equal(read.slides[0].transition.effect, 'fade');
+  assert.equal(read.slides[0].animations.length, 1);
+  assert.equal(read.slides[0].notes.paragraphs[0].runs[0].text, 'Note');
+  assert.equal(read.slides[1].hidden, true);
+  assert.throws(() => office.writePptx({ slides: [] }), (error) => error.code === 'INVALID_PRESENTATION');
 });
 
 test('throws coded errors', () => {

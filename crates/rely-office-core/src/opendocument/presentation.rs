@@ -94,6 +94,7 @@ pub(crate) fn read_odp(bytes: &[u8], limits: &Limits) -> Result<Presentation, Of
         media_bytes: 0,
         remaining_chars: limits.max_text_chars,
         truncated: false,
+        shape_ids: Vec::new(),
     };
     let mut slides = Vec::new();
     for (index, page) in pages
@@ -138,6 +139,8 @@ struct Reader<'a, 'p> {
     media_bytes: u64,
     remaining_chars: usize,
     truncated: bool,
+    /// The `xml:id` of each shape of the page being read, by its index, for its animations.
+    shape_ids: Vec<(usize, String)>,
 }
 
 /// What a page shows of its master's placeholders.
@@ -177,8 +180,47 @@ impl Reader<'_, '_> {
         if background_objects && let Some(master) = master {
             self.group(master, Scope::Master, Some(shown), number, 0, &mut shapes);
         }
+        for shape in &mut shapes {
+            shape.inherited = true;
+        }
+        self.shape_ids.clear();
         self.group(page, Scope::Body, None, number, 0, &mut shapes);
-        Slide { background, shapes }
+        let properties = self.styles.properties(
+            Scope::Body,
+            "drawing-page",
+            page_style,
+            "drawing-page-properties",
+        );
+        let hidden = properties
+            .iter()
+            .find_map(|properties| properties.attribute(PRESENTATION, "visibility"))
+            == Some("hidden");
+        let transition = show::read_transition(&properties);
+        let animations = show::read_animations(page, &self.shape_ids);
+        let notes = self.notes(page, number);
+        Slide {
+            background,
+            shapes,
+            notes,
+            hidden,
+            transition,
+            animations,
+        }
+    }
+
+    /// The speaker notes of a page: the text of the notes frame of its notes page.
+    fn notes(&mut self, page: &Element, number: usize) -> Option<TextBody> {
+        let frame = page
+            .child(PRESENTATION, "notes")?
+            .elements()
+            .find(|frame| frame.attribute(PRESENTATION, "class") == Some("notes"))?;
+        let ShapeContent::Text(body) = self.shape(frame, Scope::Body, number)?.content else {
+            return None;
+        };
+        body.paragraphs
+            .iter()
+            .any(|paragraph| paragraph.runs.iter().any(|run| !run.text.trim().is_empty()))
+            .then_some(body)
     }
 
     /// The fill of a drawing-page style.
@@ -276,6 +318,13 @@ impl Reader<'_, '_> {
                 }
                 _ => {
                     if let Some(shape) = self.shape(element, scope, number) {
+                        if scope == Scope::Body
+                            && let Some(id) = element
+                                .attribute(Namespace::Xml, "id")
+                                .or_else(|| element.attribute(DRAW, "id"))
+                        {
+                            self.shape_ids.push((shapes.len(), id.to_owned()));
+                        }
                         shapes.push(shape);
                     }
                 }
@@ -407,6 +456,8 @@ impl Reader<'_, '_> {
             return None;
         }
         Some(SlideShape {
+            id: None,
+            inherited: false,
             frame,
             rotation,
             geometry,
@@ -1282,5 +1333,6 @@ fn emu(length: &str) -> Option<i64> {
     Some(emu)
 }
 
+mod show;
 #[cfg(test)]
 mod tests;

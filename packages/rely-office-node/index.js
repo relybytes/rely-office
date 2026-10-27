@@ -101,6 +101,38 @@ function convertToPptx(bytes, limits) {
   return call(() => wasm.convertToPptx(toBytes(bytes), toLimitsJson(limits)));
 }
 
+/** A pptx, an odp or a ppt as slides for an editor, with the bytes of its images. */
+function readPresentation(bytes, limits) {
+  const handle = call(() => wasm.readPresentationHandle(toBytes(bytes), toLimitsJson(limits)));
+  try {
+    const presentation = JSON.parse(handle.json);
+    presentation.media = presentation.media.map((item) => ({
+      index: item.index,
+      contentType: item.contentType,
+      bytes: handle.takeMediaBytes(item.index) ?? new Uint8Array(0),
+    }));
+    return presentation;
+  } finally {
+    handle.free();
+  }
+}
+
+/** Slides as a pptx, with the images they name by index. */
+function writePptx(presentation) {
+  const { widthEmu, heightEmu, slides, media } = presentation ?? {};
+  const writer = new wasm.PptxWriter();
+  try {
+    for (const item of media ?? []) {
+      writer.addMedia(toBytes(item instanceof Uint8Array ? item : item.bytes));
+    }
+    return call(() =>
+      writer.write(JSON.stringify({ widthEmu, heightEmu, slides: slides ?? [] })),
+    );
+  } finally {
+    writer.free();
+  }
+}
+
 let bundledRenderer = null;
 
 /** The typesetter with the fonts of the package, set up on the first render only. */
@@ -329,6 +361,8 @@ module.exports = {
   writeDocx,
   convertToDocx,
   convertToPptx,
+  readPresentation,
+  writePptx,
   createSheet,
   openSheet,
   version: wasm.version(),

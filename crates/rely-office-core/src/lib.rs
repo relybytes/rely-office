@@ -70,8 +70,9 @@ pub use sheet_layout::{
 };
 pub use sheet_styles::{CellBorders, CellFont, CellStyle, HorizontalAlignment};
 pub use slides::{
-    Bullet, Frame, Gradient, GradientKind, GradientStop, Paint, Presentation, ShapeContent,
-    ShapeGeometry, ShapeLine, Slide, SlideParagraph, SlideRun, SlideShape, SlideTable,
-    SlideTableCell, SlideTableRow, TextAnchor, TextBody, read_presentation, write_pptx,
+    Animation, AnimationClass, AnimationTrigger, Bullet, Frame, Gradient, GradientKind,
+    GradientStop, Paint, Presentation, ShapeContent, ShapeGeometry, ShapeLine, Slide,
+    SlideParagraph, SlideRun, SlideShape, SlideTable, SlideTableCell, SlideTableRow,
+    TRANSITION_EFFECTS, TextAnchor, TextBody, Transition, read_presentation, write_pptx,
 };
 pub use text::{ExtractedText, extract_text};

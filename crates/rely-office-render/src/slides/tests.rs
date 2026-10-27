@@ -58,6 +58,8 @@ fn body(paragraphs: Vec<SlideParagraph>) -> TextBody {
 
 fn shape(geometry: ShapeGeometry, content: ShapeContent) -> SlideShape {
     SlideShape {
+        id: None,
+        inherited: false,
         frame: frame(127_000, 254_000, 1_270_000, 635_000),
         rotation: 0.0,
         geometry,
@@ -87,10 +89,12 @@ fn sets_one_page_per_slide_at_the_slide_size() {
         Slide {
             background: Some(Paint::Solid("1F3864".to_owned())),
             shapes: Vec::new(),
+            ..Slide::default()
         },
         Slide {
             background: None,
             shapes: Vec::new(),
+            ..Slide::default()
         },
     ];
     let (markup, files) = source(&presentation(slides, Vec::new()), true);
@@ -127,6 +131,7 @@ fn draws_shapes_with_their_fill_outline_geometry_and_rotation() {
     let slide = Slide {
         background: None,
         shapes: vec![rounded, ellipse, line, coloured_line],
+        ..Slide::default()
     };
     let (markup, _) = source(&presentation(vec![slide], Vec::new()), true);
     assert!(markup.contains("#place(top + left, dx: 10pt, dy: 20pt, rotate(45.5deg, origin: center + horizon, block(width: 100pt, height: 50pt, fill: rgb(\"#ED7D31\"), stroke: 2pt + rgb(\"#FFFFFF\"), radius: 8.33pt"), "{markup}");
@@ -177,6 +182,7 @@ fn sets_paragraphs_with_their_bullets_alignment_spacing_and_runs() {
     let slide = Slide {
         background: None,
         shapes: vec![shape(ShapeGeometry::Rectangle, ShapeContent::Text(text))],
+        ..Slide::default()
     };
     let (markup, _) = source(&presentation(vec![slide], Vec::new()), true);
     assert!(
@@ -229,6 +235,7 @@ fn places_pictures_only_when_their_images_can_be_drawn() {
             shape(ShapeGeometry::Rectangle, ShapeContent::Picture { media: 1 }),
             shape(ShapeGeometry::Rectangle, ShapeContent::Picture { media: 7 }),
         ],
+        ..Slide::default()
     };
     let deck = presentation(vec![slide], media);
     let (markup, files) = source(&deck, true);
@@ -289,6 +296,7 @@ fn draws_tables_with_their_grid_spans_and_fills() {
     let slide = Slide {
         background: None,
         shapes: vec![shape(ShapeGeometry::Rectangle, ShapeContent::Table(table))],
+        ..Slide::default()
     };
     let (markup, _) = source(&presentation(vec![slide], Vec::new()), true);
     assert!(markup.contains("block(width: 100pt, table(columns: (100pt, 50pt, ), rows: (30pt, auto, ), stroke: 0.5pt + luma(160), inset: 0pt,"), "{markup}");
@@ -317,6 +325,7 @@ fn draws_tables_with_their_grid_spans_and_fills() {
             shape(ShapeGeometry::Rectangle, ShapeContent::Table(ragged)),
             shape(ShapeGeometry::Rectangle, ShapeContent::Table(empty)),
         ],
+        ..Slide::default()
     };
     let (markup, _) = source(&presentation(vec![slide], Vec::new()), true);
     assert!(markup.contains("columns: (1fr, 1fr, )"));
@@ -379,6 +388,7 @@ fn draws_a_path_geometry_as_curves_under_its_text_its_faces_before_its_outlines(
     let slides = vec![Slide {
         background: None,
         shapes: vec![arrow, empty],
+        ..Slide::default()
     }];
     let (markup, _) = source(&presentation(slides, Vec::new()), true);
     assert!(markup.contains(
@@ -443,6 +453,7 @@ fn fills_shapes_and_pages_with_gradients_and_pictures() {
     let slides = vec![Slide {
         background: Some(linear),
         shapes,
+        ..Slide::default()
     }];
     let media = vec![
         Media {
@@ -485,6 +496,7 @@ fn fills_shapes_and_pages_with_gradients_and_pictures() {
                     tile_emu: None,
                 }),
                 shapes: Vec::new(),
+                ..Slide::default()
             }],
             media,
         ),

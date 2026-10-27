@@ -666,3 +666,158 @@ fn reads_pictures_textures_and_shaded_blends_as_fills() {
         "no focus starts from the back colour, here the scheme's fill"
     );
 }
+
+#[test]
+fn reads_the_transition_of_a_slide_show_info() {
+    let info = |time: u32, direction: u8, effect: u8, flags: u16, speed: u8| {
+        let mut body = vec![0_u8; 16];
+        body[0..4].copy_from_slice(&time.to_le_bytes());
+        body[8] = direction;
+        body[9] = effect;
+        body[10..12].copy_from_slice(&flags.to_le_bytes());
+        body[12] = speed;
+        body
+    };
+    let push = transition(&info(0, 1, 20, 0x1, 0)).unwrap();
+    assert_eq!(
+        (
+            push.effect.as_str(),
+            push.direction.as_deref(),
+            push.duration_ms
+        ),
+        ("push", Some("u"), Some(1_000))
+    );
+    assert!(push.advance_on_click && push.advance_after_ms.is_none());
+    let automatic = transition(&info(4_000, 0, 2, 0x80, 2)).unwrap();
+    assert_eq!(automatic.effect, "blinds");
+    assert_eq!(automatic.direction.as_deref(), Some("vert"));
+    assert!(!automatic.advance_on_click);
+    assert_eq!(automatic.advance_after_ms, Some(4_000));
+    assert_eq!(
+        transition(&info(0, 0, 0, 0x1, 0)),
+        None,
+        "a cut on a click is no transition"
+    );
+    assert_eq!(transition(&info(0, 0, 99, 0x1, 1)).unwrap().effect, "fade");
+}
+
+fn own_shape(id: u32) -> SlideShape {
+    SlideShape {
+        id: Some(id),
+        inherited: false,
+        frame: Frame::default(),
+        rotation: 0.0,
+        geometry: ShapeGeometry::Rectangle,
+        fill: None,
+        line: None,
+        content: ShapeContent::None,
+    }
+}
+
+#[test]
+fn reads_the_builds_of_powerpoint_97() {
+    let mut body = vec![0_u8; 28];
+    body[4..6].copy_from_slice(&0x4_u16.to_le_bytes());
+    body[12..16].copy_from_slice(&750_u32.to_le_bytes());
+    body[16..18].copy_from_slice(&3_u16.to_le_bytes());
+    body[21] = 0x0C;
+    body[22] = 2;
+    let data = container(
+        CLIENT_DATA,
+        0,
+        &[container(
+            ANIMATION_INFO,
+            0,
+            &[atom(ANIMATION_INFO_ATOM, 0, &body)],
+        )],
+    );
+    let build = Build::read(&data).unwrap();
+    assert_eq!(build.order, 3);
+    let animation = build.animation(4);
+    assert_eq!(
+        (animation.shape, animation.preset, animation.preset_subtype),
+        (4, 2, 2),
+        "a fly in from the right"
+    );
+    assert_eq!(animation.trigger, AnimationTrigger::AfterPrevious);
+    assert_eq!(animation.delay_ms, 750);
+    assert_eq!(Build::read(&container(CLIENT_DATA, 0, &[])), None);
+}
+
+#[test]
+fn reads_the_timeline_of_powerpoint_2002() {
+    let variant = |id: u16, value: u32| {
+        let mut body = vec![1_u8];
+        body.extend_from_slice(&value.to_le_bytes());
+        atom(TIME_VARIANT, id, &body)
+    };
+    let node_atom = |duration: i32| {
+        let mut body = vec![0_u8; 32];
+        body[24..28].copy_from_slice(&duration.to_le_bytes());
+        atom(TIME_NODE_ATOM, 0, &body)
+    };
+    let mut condition = vec![0_u8; 16];
+    condition[12..16].copy_from_slice(&250_u32.to_le_bytes());
+    let mut visual = vec![0_u8; 20];
+    visual[8..12].copy_from_slice(&42_u32.to_le_bytes());
+    let effect = container(
+        TIME_NODE,
+        0,
+        &[
+            node_atom(-1),
+            container(
+                TIME_PROPERTIES,
+                0,
+                &[
+                    variant(0x14, 2),
+                    variant(0x09, 22),
+                    variant(0x0A, 4),
+                    variant(0x0B, 2),
+                ],
+            ),
+            container(
+                TIME_CONDITION,
+                0,
+                &[atom(TIME_CONDITION_ATOM, 0, &condition)],
+            ),
+            container(
+                TIME_NODE,
+                0,
+                &[
+                    node_atom(1_200),
+                    container(0xF12D, 0, &[atom(VISUAL_SHAPE, 0, &visual)]),
+                ],
+            ),
+        ],
+    );
+    let root = container(
+        TIME_NODE,
+        0,
+        &[node_atom(-1), container(TIME_NODE, 0, &[effect])],
+    );
+    let mut blob = atom(0x2EEB, 0, &[0; 4]);
+    blob.extend(root);
+    let slide = container(
+        PROGRAMMABLE_TAGS,
+        0,
+        &[container(BINARY_TAG, 0, &[atom(BINARY_TAG_DATA, 0, &blob)])],
+    );
+    let animations = timeline(&slide, &[own_shape(7), own_shape(42)]);
+    assert_eq!(
+        animations,
+        vec![Animation {
+            shape: 1,
+            class: AnimationClass::Exit,
+            preset: 22,
+            preset_subtype: 4,
+            trigger: AnimationTrigger::WithPrevious,
+            delay_ms: 250,
+            duration_ms: 1_200,
+            motion_path: None,
+        }]
+    );
+    assert!(
+        timeline(&slide, &[own_shape(7)]).is_empty(),
+        "no shape with that id"
+    );
+}

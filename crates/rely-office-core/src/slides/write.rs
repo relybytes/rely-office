@@ -8,8 +8,10 @@
 //! outline, fill, text, picture or table set on the slide itself, over a blank layout and
 //! master, so the file shows what the presentation held whatever it was read from.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write;
+
+use super::show::{timing_xml, transition_xml};
 
 use super::{
     Bullet, Frame, Gradient, GradientKind, Paint, Presentation, ShapeContent, ShapeGeometry,
@@ -47,6 +49,7 @@ pub fn write_pptx(presentation: &Presentation) -> Result<Vec<u8>, OfficeError> {
     let mut members: Vec<(String, Vec<u8>)> = Vec::new();
     let slide_count = presentation.slides.len().max(1);
     let blank = Slide::default();
+    let mut noted: Vec<usize> = Vec::new();
     for index in 0..slide_count {
         let slide = presentation.slides.get(index).unwrap_or(&blank);
         let mut writer = SlideWriter {
@@ -57,9 +60,19 @@ pub fn write_pptx(presentation: &Presentation) -> Result<Vec<u8>, OfficeError> {
                 "../slideLayouts/slideLayout1.xml".to_owned(),
             )],
             media_parts: &mut media_parts,
-            next_id: 2,
         };
         let xml = writer.slide(slide);
+        if let Some(notes) = slide.notes.as_ref() {
+            let number = index + 1;
+            noted.push(number);
+            let relationship = format!("rId{}", writer.relationships.len() + 1);
+            writer.relationships.push((
+                relationship,
+                "notesSlide",
+                format!("../notesSlides/notesSlide{number}.xml"),
+            ));
+            members.extend(notes_parts(number, notes));
+        }
         let relationships = relationships_xml(&writer.relationships);
         members.push((
             format!("ppt/slides/slide{}.xml", index + 1),
@@ -90,10 +103,27 @@ pub fn write_pptx(presentation: &Presentation) -> Result<Vec<u8>, OfficeError> {
         let _ = write!(slide_ids, r#"<p:sldId id="{}" r:id="{id}"/>"#, 256 + index);
         presentation_relationships.push((id, "slide", format!("slides/slide{}.xml", index + 1)));
     }
+    let notes_master = if noted.is_empty() {
+        String::new()
+    } else {
+        let id = format!("rId{}", slide_count + 3);
+        presentation_relationships.push((
+            id.clone(),
+            "notesMaster",
+            "notesMasters/notesMaster1.xml".to_owned(),
+        ));
+        members.extend(notes_master_parts());
+        format!(r#"<p:notesMasterIdLst><p:notesMasterId r:id="{id}"/></p:notesMasterIdLst>"#)
+    };
     let presentation_xml = format!(
-        r#"{XML_HEADER}<p:presentation {PRESENTATION_NAMESPACES}><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>{slide_ids}</p:sldIdLst><p:sldSz cx="{width}" cy="{height}"/><p:notesSz cx="{height}" cy="{width}"/><p:defaultTextStyle/></p:presentation>"#
+        r#"{XML_HEADER}<p:presentation {PRESENTATION_NAMESPACES}><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>{notes_master}<p:sldIdLst>{slide_ids}</p:sldIdLst><p:sldSz cx="{width}" cy="{height}"/><p:notesSz cx="{height}" cy="{width}"/><p:defaultTextStyle/></p:presentation>"#
     );
-    let mut parts = package_parts(slide_count, presentation_xml, &presentation_relationships);
+    let mut parts = package_parts(
+        slide_count,
+        &noted,
+        presentation_xml,
+        &presentation_relationships,
+    );
     parts.append(&mut members);
     zip_members(&parts)
 }
@@ -101,13 +131,14 @@ pub fn write_pptx(presentation: &Presentation) -> Result<Vec<u8>, OfficeError> {
 /// The parts every written pptx has besides its slides and media.
 fn package_parts(
     slide_count: usize,
+    noted: &[usize],
     presentation_xml: String,
     presentation_relationships: &[(String, &'static str, String)],
 ) -> Vec<(String, Vec<u8>)> {
     vec![
         (
             "[Content_Types].xml".to_owned(),
-            content_types(slide_count).into_bytes(),
+            content_types(slide_count, noted).into_bytes(),
         ),
         (
             "_rels/.rels".to_owned(),
@@ -159,6 +190,85 @@ fn package_parts(
     ]
 }
 
+/// The id of each shape on its slide: the one it was read with when it is unique, the next
+/// free one otherwise. Id 1 is the shape tree's.
+fn shape_ids(shapes: &[SlideShape]) -> Vec<u32> {
+    let mut used: HashSet<u32> = HashSet::from([1]);
+    let kept: Vec<Option<u32>> = shapes
+        .iter()
+        .map(|shape| shape.id.filter(|id| *id > 1 && used.insert(*id)))
+        .collect();
+    let mut next = 2;
+    kept.into_iter()
+        .map(|id| {
+            id.unwrap_or_else(|| {
+                while used.contains(&next) {
+                    next += 1;
+                }
+                used.insert(next);
+                next
+            })
+        })
+        .collect()
+}
+
+/// The notes page of a slide: the slide's picture and the notes in the body placeholder.
+fn notes_xml(notes: &TextBody) -> String {
+    let mut body = String::new();
+    text_body(notes, &mut body);
+    format!(
+        concat!(
+            r#"{}<p:notes {}><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>"#,
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image"/><p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp>"#,
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody>{}</p:txBody></p:sp>"#,
+            r#"</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>"#
+        ),
+        XML_HEADER, PRESENTATION_NAMESPACES, body
+    )
+}
+
+/// The notes page of slide `number` and its relationships.
+fn notes_parts(number: usize, notes: &TextBody) -> [(String, Vec<u8>); 2] {
+    [
+        (
+            format!("ppt/notesSlides/notesSlide{number}.xml"),
+            notes_xml(notes).into_bytes(),
+        ),
+        (
+            format!("ppt/notesSlides/_rels/notesSlide{number}.xml.rels"),
+            relationships_xml(&[
+                (
+                    "rId1".to_owned(),
+                    "notesMaster",
+                    "../notesMasters/notesMaster1.xml".to_owned(),
+                ),
+                (
+                    "rId2".to_owned(),
+                    "slide",
+                    format!("../slides/slide{number}.xml"),
+                ),
+            ])
+            .into_bytes(),
+        ),
+    ]
+}
+
+/// The notes master every notes page is drawn over, and its theme.
+fn notes_master_parts() -> Vec<(String, Vec<u8>)> {
+    vec![
+        (
+            "ppt/notesMasters/notesMaster1.xml".to_owned(),
+            NOTES_MASTER.as_bytes().to_vec(),
+        ),
+        (
+            "ppt/notesMasters/_rels/notesMaster1.xml.rels".to_owned(),
+            relationships_xml(&[("rId1".to_owned(), "theme", "../theme/theme2.xml".to_owned())])
+                .into_bytes(),
+        ),
+        ("ppt/theme/theme2.xml".to_owned(), THEME.as_bytes().to_vec()),
+    ]
+}
+
 fn relationships_xml(relationships: &[(String, &str, String)]) -> String {
     let mut xml = format!(
         r#"{XML_HEADER}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#
@@ -174,7 +284,7 @@ fn relationships_xml(relationships: &[(String, &str, String)]) -> String {
     xml
 }
 
-fn content_types(slides: usize) -> String {
+fn content_types(slides: usize, noted: &[usize]) -> String {
     let mut xml = format!(
         r#"{XML_HEADER}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>"#
     );
@@ -205,6 +315,18 @@ fn content_types(slides: usize) -> String {
             r#"<Override PartName="/ppt/slides/slide{index}.xml" ContentType="{main}.slide+xml"/>"#
         );
     }
+    if !noted.is_empty() {
+        let _ = write!(
+            xml,
+            r#"<Override PartName="/ppt/notesMasters/notesMaster1.xml" ContentType="{main}.notesMaster+xml"/><Override PartName="/ppt/theme/theme2.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>"#
+        );
+    }
+    for index in noted {
+        let _ = write!(
+            xml,
+            r#"<Override PartName="/ppt/notesSlides/notesSlide{index}.xml" ContentType="{main}.notesSlide+xml"/>"#
+        );
+    }
     xml.push_str("</Types>");
     xml
 }
@@ -213,7 +335,6 @@ struct SlideWriter<'a> {
     presentation: &'a Presentation,
     relationships: Vec<(String, &'static str, String)>,
     media_parts: &'a mut BTreeMap<usize, String>,
-    next_id: u32,
 }
 
 impl SlideWriter<'_> {
@@ -229,23 +350,25 @@ impl SlideWriter<'_> {
             }
             None => String::new(),
         };
+        let ids = shape_ids(&slide.shapes);
         let mut shapes = String::new();
-        for shape in &slide.shapes {
-            self.shape(shape, &mut shapes);
+        for (shape, id) in slide.shapes.iter().zip(&ids) {
+            self.shape(shape, *id, &mut shapes);
         }
+        let hidden = if slide.hidden { r#" show="0""# } else { "" };
+        let transition = slide
+            .transition
+            .as_ref()
+            .map(transition_xml)
+            .unwrap_or_default();
+        let written: Vec<Option<u32>> = ids.iter().copied().map(Some).collect();
+        let timing = timing_xml(&slide.animations, &written);
         format!(
-            r#"{XML_HEADER}<p:sld {PRESENTATION_NAMESPACES}><p:cSld>{background}<p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>{shapes}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"#
+            r#"{XML_HEADER}<p:sld {PRESENTATION_NAMESPACES}{hidden}><p:cSld>{background}<p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>{shapes}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>{transition}{timing}</p:sld>"#
         )
     }
 
-    fn id(&mut self) -> u32 {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
-    }
-
-    fn shape(&mut self, shape: &SlideShape, xml: &mut String) {
-        let id = self.id();
+    fn shape(&mut self, shape: &SlideShape, id: u32, xml: &mut String) {
         match &shape.content {
             ShapeContent::Picture { media } => self.picture(shape, *media, id, xml),
             ShapeContent::Table(table) => table_frame(shape, table, id, xml),
@@ -339,6 +462,8 @@ impl SlideWriter<'_> {
     fn picture(&mut self, shape: &SlideShape, media: usize, id: u32, xml: &mut String) {
         let Some(relationship) = self.image_relationship(media) else {
             let empty = SlideShape {
+                id: None,
+                inherited: false,
                 content: ShapeContent::None,
                 line: shape.line.clone().or(Some(ShapeLine {
                     colour: "BFBFBF".to_owned(),
@@ -346,8 +471,7 @@ impl SlideWriter<'_> {
                 })),
                 ..shape.clone()
             };
-            self.next_id -= 1;
-            self.shape(&empty, xml);
+            self.shape(&empty, id, xml);
             return;
         };
         let _ = write!(
@@ -431,10 +555,20 @@ fn custom_geometry(paths: &[ShapePath], width: i64, height: i64) -> String {
     xml
 }
 
+/// A colour as `DrawingML` takes it, six hexadecimal digits; black for anything else, which a
+/// model edited outside this library may hold.
+fn rgb(colour: &str) -> &str {
+    if colour.len() == 6 && colour.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        colour
+    } else {
+        "000000"
+    }
+}
+
 fn solid_fill(colour: &str) -> String {
     format!(
         r#"<a:solidFill><a:srgbClr val="{}"/></a:solidFill>"#,
-        escape(colour)
+        rgb(colour)
     )
 }
 
@@ -449,7 +583,7 @@ fn gradient_fill(gradient: &Gradient) -> String {
             xml,
             r#"<a:gs pos="{}"><a:srgbClr val="{}"/></a:gs>"#,
             (stop.offset.clamp(0.0, 1.0) * 100_000.0).round() as i64,
-            escape(&stop.colour)
+            rgb(&stop.colour)
         );
     }
     xml.push_str("</a:gsLst>");
@@ -482,7 +616,7 @@ fn line(line: Option<&ShapeLine>, is_line: bool) -> String {
         Some(line) => format!(
             r#"<a:ln w="{}"><a:solidFill><a:srgbClr val="{}"/></a:solidFill></a:ln>"#,
             line.width_emu.max(0),
-            escape(&line.colour)
+            rgb(&line.colour)
         ),
         None if is_line => String::new(),
         None => "<a:ln><a:noFill/></a:ln>".to_owned(),
@@ -558,7 +692,7 @@ fn run_xml(run: &SlideRun, xml: &mut String) {
     );
     let look = format!(
         r#"<a:solidFill><a:srgbClr val="{}"/></a:solidFill><a:latin typeface="{}"/>"#,
-        escape(&run.colour),
+        rgb(&run.colour),
         escape(&run.family)
     );
     if run.line_break {
@@ -613,6 +747,22 @@ fn table_frame(shape: &SlideShape, table: &SlideTable, id: u32, xml: &mut String
     }
     xml.push_str("</a:tbl></a:graphicData></a:graphic></p:graphicFrame>");
 }
+
+const NOTES_MASTER: &str = concat!(
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+    r#"<p:notesMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,
+    r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" "#,
+    r#"xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">"#,
+    r#"<p:cSld><p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>"#,
+    r#"<p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image"/><p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr><p:nvPr><p:ph type="sldImg" idx="2"/></p:nvPr></p:nvSpPr>"#,
+    r#"<p:spPr><a:xfrm><a:off x="1143000" y="685800"/><a:ext cx="4572000" cy="3429000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln w="12700"><a:solidFill><a:prstClr val="black"/></a:solidFill></a:ln></p:spPr></p:sp>"#,
+    r#"<p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" sz="quarter" idx="3"/></p:nvPr></p:nvSpPr>"#,
+    r#"<p:spPr><a:xfrm><a:off x="685800" y="4343400"/><a:ext cx="5486400" cy="4114800"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>"#,
+    r#"<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr/></a:p></p:txBody></p:sp></p:spTree></p:cSld>"#,
+    r#"<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>"#,
+    r#"<p:notesStyle><a:lvl1pPr marL="0" algn="l"><a:defRPr sz="1200"><a:solidFill><a:schemeClr val="tx1"/></a:solidFill><a:latin typeface="+mn-lt"/></a:defRPr></a:lvl1pPr></p:notesStyle>"#,
+    "</p:notesMaster>"
+);
 
 const MASTER: &str = concat!(
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,

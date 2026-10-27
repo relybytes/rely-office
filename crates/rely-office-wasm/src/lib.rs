@@ -20,6 +20,9 @@ use rely_office_core::{
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+mod presentation;
+pub use presentation::{PptxWriter, PresentationHandle, pptx_from_json, presentation};
+
 /// Why a call failed: the stable code and the message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {

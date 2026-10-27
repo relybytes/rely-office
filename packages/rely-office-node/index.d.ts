@@ -272,8 +272,8 @@ export interface RenderOptions {
 export interface Rendered {
   format: DocumentFormat;
   /**
-   * `layout`: the document's own structure and page (docx, spreadsheets); `text`: its text on
-   * A4, for the formats with no layout reader yet (pptx, odt, odp, doc, ppt).
+   * `layout`: the document's own structure and page; `text`: its extracted text on A4, for a
+   * doc or a ppt that cannot be read.
    */
   fidelity: 'layout' | 'text';
   pageCount: number;
@@ -319,6 +319,197 @@ export function convertToDocx(bytes: DocumentBytes, limits?: Limits): Uint8Array
  * the slide itself, over a blank layout.
  */
 export function convertToPptx(bytes: DocumentBytes, limits?: Limits): Uint8Array;
+
+/** A point of a path, in EMU from the top-left corner of its frame. */
+export interface PathPoint {
+  x: number;
+  y: number;
+}
+
+export type PathCommand =
+  | { type: 'moveTo'; to: PathPoint }
+  | { type: 'lineTo'; to: PathPoint }
+  | { type: 'cubicTo'; controls: [PathPoint, PathPoint]; to: PathPoint }
+  | { type: 'close' };
+
+/** One path of a shape's outline. */
+export interface ShapePath {
+  commands: PathCommand[];
+  filled: boolean;
+  stroked: boolean;
+  /** How the fill is shaded against the shape's colour, as a face of a cube. */
+  shade: 'normal' | 'darken' | 'darkenLess' | 'lighten' | 'lightenLess';
+}
+
+export type ShapeGeometry =
+  | { type: 'rectangle' }
+  | { type: 'roundedRectangle' }
+  | { type: 'ellipse' }
+  /** From the top-left to the bottom-right corner of the frame, or the other diagonal. */
+  | { type: 'line'; flipped: boolean }
+  | { type: 'path'; paths: ShapePath[] }
+  /** A preset the library does not know, drawn as its rectangle. */
+  | { type: 'other' };
+
+export interface Gradient {
+  /** In order of their offset, from 0 to 1. */
+  stops: { offset: number; colour: string }[];
+  kind:
+    | { type: 'linear'; angle: number }
+    /** The centre as fractions of the frame's width and height. */
+    | { type: 'radial'; centre: [number, number] };
+}
+
+/** What fills a shape or a slide; colours are `RRGGBB`. */
+export type Paint =
+  | { type: 'solid'; colour: string }
+  | { type: 'gradient'; gradient: Gradient }
+  /** An image of the presentation's `media`, stretched, or tiled at `tileEmu`. */
+  | { type: 'picture'; media: number; tileEmu?: [number, number] };
+
+/** A rectangle in EMU (914,400 to the inch) from the top-left corner of the slide. */
+export interface Frame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface SlideRun {
+  text: string;
+  /** Hundredths of a point. */
+  size: number;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strike: boolean;
+  colour: string;
+  family: string;
+  /** A line break inside the paragraph instead of text. */
+  lineBreak: boolean;
+}
+
+export interface SlideParagraph {
+  level: number;
+  align: 'left' | 'center' | 'right' | 'justify';
+  bullet: { type: 'character'; text: string } | { type: 'number'; text: string } | null;
+  marginLeftEmu: number;
+  /** A negative indent hangs the bullet. */
+  indentEmu: number;
+  lineSpacingPercent: number;
+  /** Hundredths of a point. */
+  spaceBefore: number;
+  spaceAfter: number;
+  runs: SlideRun[];
+}
+
+export interface TextBody {
+  paragraphs: SlideParagraph[];
+  anchor: 'top' | 'middle' | 'bottom';
+  /** Left, top, right, bottom, in EMU. */
+  insetsEmu: [number, number, number, number];
+  wrap: boolean;
+}
+
+export interface SlideTable {
+  columnWidthsEmu: number[];
+  rows: {
+    heightEmu: number;
+    cells: {
+      body: TextBody;
+      fill: string | null;
+      colSpan: number;
+      rowSpan: number;
+      /** Covered by a merge from a cell before it, and not drawn. */
+      covered: boolean;
+    }[];
+  }[];
+}
+
+export type ShapeContent =
+  | { type: 'none' }
+  | ({ type: 'text' } & TextBody)
+  | { type: 'picture'; media: number }
+  | ({ type: 'table' } & SlideTable);
+
+export interface SlideShape {
+  /** The shape's id on its slide, kept when the slide is written; leave it out on a new shape. */
+  id?: number;
+  /** Drawn from the slide's layout or master: an editor shows it locked. */
+  inherited?: boolean;
+  frame: Frame;
+  /** Clockwise, in degrees. */
+  rotation: number;
+  geometry: ShapeGeometry;
+  fill: Paint | null;
+  line: { colour: string; widthEmu: number } | null;
+  content: ShapeContent;
+}
+
+/** How a slide comes in. `effect` is a PresentationML name: `fade`, `push`, `wipe`, `split`, ... */
+export interface Transition {
+  effect: string;
+  /** `l`, `r`, `u`, `d`, `horz`, `vert`, `in`, `out`, as the effect takes it. */
+  direction?: string;
+  durationMs?: number;
+  advanceOnClick: boolean;
+  advanceAfterMs?: number;
+}
+
+/** An effect on one shape, by the preset number of PowerPoint's gallery. */
+export interface Animation {
+  /** The index of the shape in `shapes`. */
+  shape: number;
+  class: 'entrance' | 'emphasis' | 'exit' | 'path';
+  /** Entrance and exit: 1 appear, 2 fly, 10 fade, 22 wipe, 53 zoom; emphasis: 6 grow, 8 spin. */
+  preset: number;
+  presetSubtype: number;
+  trigger: 'onClick' | 'withPrevious' | 'afterPrevious';
+  delayMs: number;
+  durationMs: number;
+  /** For a path: PowerPoint's path language over fractions of the slide, `M 0 0 L 0.25 0 E`. */
+  motionPath?: string;
+}
+
+export interface Slide {
+  background?: Paint | null;
+  /** In drawing order, the first at the back. */
+  shapes?: SlideShape[];
+  /** The speaker notes. */
+  notes?: TextBody | null;
+  /** Skipped when the show plays. */
+  hidden?: boolean;
+  transition?: Transition | null;
+  animations?: Animation[];
+}
+
+export interface Presentation {
+  /** The slide size in EMU. */
+  widthEmu: number;
+  heightEmu: number;
+  slides: Slide[];
+  /** The images the shapes and fills name by index. */
+  media: MediaItem[];
+  /** The file held more than the limits let through. */
+  truncated: boolean;
+}
+
+/**
+ * A pptx, an odp or a ppt as slides for an editor: what each slide draws from its layout and
+ * master is resolved onto the slide and marked `inherited`. Written back with `writePptx`.
+ */
+export function readPresentation(bytes: DocumentBytes, limits?: Limits): Presentation;
+
+/** Slides to write as a pptx; `media` holds the bytes, or the items `readPresentation` gave. */
+export interface PptxInput {
+  widthEmu: number;
+  heightEmu: number;
+  slides: Slide[];
+  media?: (DocumentBytes | MediaItem)[];
+}
+
+/** A pptx PowerPoint opens and `readPresentation` reads back to the same slides. */
+export function writePptx(presentation: PptxInput): Uint8Array;
 
 /** How a cell's number is shown. */
 export type CellFormat =
