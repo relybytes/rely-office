@@ -42,7 +42,10 @@ pub(crate) enum Namespace {
     OdfDraw,
     OdfSvg,
     OdfPresentation,
+    OdfChart,
     XLink,
+    /// `LibreOffice`'s extensions, `loext:graphic-properties` among them.
+    LoExt,
     Other,
 }
 
@@ -80,7 +83,9 @@ impl Namespace {
             "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" => Self::OdfDraw,
             "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" => Self::OdfSvg,
             "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" => Self::OdfPresentation,
+            "urn:oasis:names:tc:opendocument:xmlns:chart:1.0" => Self::OdfChart,
             "http://www.w3.org/1999/xlink" => Self::XLink,
+            "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0" => Self::LoExt,
             _ => Self::Other,
         }
     }

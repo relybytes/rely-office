@@ -21,6 +21,7 @@ pub(super) const FO: Namespace = Namespace::OdfFo;
 pub(super) const TEXT: Namespace = Namespace::OdfText;
 const SVG: Namespace = Namespace::OdfSvg;
 const OFFICE: Namespace = Namespace::OdfOffice;
+const DRAW: Namespace = Namespace::OdfDraw;
 /// A style chain stops here, so a style that names itself as its parent cannot loop.
 const MAX_CHAIN: usize = 16;
 const TWIPS_PER_POINT: f64 = 20.0;
@@ -68,6 +69,8 @@ pub(super) struct Styles {
     pub outline: Option<Element>,
     pub page_layouts: HashMap<String, Element>,
     pub master_pages: Vec<Element>,
+    /// The first colour of each named gradient.
+    gradients: HashMap<String, String>,
 }
 
 impl Styles {
@@ -98,6 +101,14 @@ impl Styles {
                         }
                         (TEXT, "list-style") => insert_list(&mut read.named_lists, style),
                         (TEXT, "outline-style") => read.outline = Some(style.clone()),
+                        (DRAW, "gradient") => {
+                            if let (Some(name), Some(start)) = (
+                                style.attribute(DRAW, "name"),
+                                style.attribute(DRAW, "start-color").and_then(colour),
+                            ) {
+                                read.gradients.insert(name.to_owned(), start);
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -170,6 +181,11 @@ impl Styles {
         chain
     }
 
+    /// The colour a named gradient starts with.
+    pub(super) fn gradient_start(&self, name: &str) -> Option<String> {
+        self.gradients.get(name).cloned()
+    }
+
     /// The list style of a name, the part's own first.
     pub(super) fn list_style(&self, scope: Scope, name: &str) -> Option<&Element> {
         let automatic = match scope {
@@ -207,7 +223,7 @@ impl Styles {
         let mut align = None;
         for style in self.chain(scope, "paragraph", name) {
             if let Some(properties) = style.child(STYLE, "paragraph-properties") {
-                let (own, own_align) = paragraph_properties(properties);
+                let (own, own_align) = paragraph_look_of(properties);
                 look = look.or(own);
                 align = align.or(own_align);
             }
@@ -245,7 +261,11 @@ impl Styles {
     ) -> Vec<&'s Element> {
         self.chain(scope, family, name)
             .into_iter()
-            .filter_map(|style| style.child(STYLE, kind))
+            .filter_map(|style| {
+                style
+                    .child(STYLE, kind)
+                    .or_else(|| style.child(Namespace::LoExt, kind))
+            })
             .collect()
     }
 
@@ -333,7 +353,7 @@ fn unquote(family: &str) -> String {
 }
 
 /// The look and alignment of a `style:paragraph-properties`.
-fn paragraph_properties(properties: &Element) -> (ParagraphLook, Option<Alignment>) {
+pub(super) fn paragraph_look_of(properties: &Element) -> (ParagraphLook, Option<Alignment>) {
     let attribute = |namespace: Namespace, name: &str| properties.attribute(namespace, name);
     let unsigned = |name: &str| {
         attribute(FO, name)

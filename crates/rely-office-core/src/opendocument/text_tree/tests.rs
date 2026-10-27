@@ -528,3 +528,43 @@ fn collapses_whitespace_as_opendocument_lays_it_out() {
     trim_end(&mut content);
     assert_eq!(texts(&content), "fine");
 }
+
+#[test]
+fn draws_a_chart_object_as_an_image() {
+    const CHART: &str = concat!(
+        r#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" "#,
+        r#"xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" "#,
+        r#"xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:chart><chart:chart chart:class="chart:line">"#,
+        r#"<chart:title><text:p>Andamento</text:p></chart:title><chart:plot-area><chart:series chart:values-cell-range-address="local-table.$A$1:.$A$1"/></chart:plot-area>"#,
+        r#"<table:table table:name="local-table"><table:table-rows><table:table-row><table:table-cell office:value-type="float" office:value="3"/>"#,
+        "</table:table-row></table:table-rows></table:table></chart:chart></office:chart></office:body></office:document-content>"
+    );
+    let read = read_document_tree(
+        &odt(
+            concat!(
+                r#"<text:p><draw:frame svg:width="8cm" svg:height="6cm"><draw:object xlink:href="./Object 1"/></draw:frame>"#,
+                r#"<draw:frame svg:width="8cm" svg:height="6cm"><draw:object xlink:href="./Object 2"/></draw:frame>"#,
+                r#"<draw:frame><draw:object xlink:href="./Object 1"/></draw:frame></text:p>"#
+            ),
+            &[("Object 1/content.xml", CHART.as_bytes())],
+        ),
+        &Limits::default(),
+    )
+    .unwrap();
+    let (content, _, _) = paragraph(&read.blocks[0]);
+    assert_eq!(
+        content,
+        &[Inline::Image {
+            media: 0,
+            alt: Some("Andamento".to_owned()),
+            width: Some(302),
+            height: Some(227),
+        }]
+    );
+    assert_eq!(read.media[0].content_type, "image/svg+xml");
+    assert_eq!(
+        (read.report.charts, read.report.embedded_objects),
+        (1, 2),
+        "an object that is no chart, and one without a size"
+    );
+}

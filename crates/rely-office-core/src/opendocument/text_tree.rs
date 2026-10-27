@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 use super::styles::{FO, STYLE, Scope, Styles, TEXT, TextFlags, border, colour, points, twips};
 use crate::archive::{ZipPackage, open_package, read_member_bytes, read_text_member};
+use crate::chart::{odf_chart_picture, odf_object_part};
 use crate::document::{
     Block, Borders, CellLook, DocumentTree, HeadersFooters, ImportReport, Inline, LabelSuffix,
     ListLabel, Mark, Media, Note, NoteKind, PageField, PageLayout, ParagraphLook, RunLook,
@@ -681,9 +682,11 @@ impl Converter<'_, '_> {
                 } else if let Some(text_box) = element.child(DRAW, "text-box") {
                     self.report.text_boxes += 1;
                     self.text_box(text_box, scope);
-                } else if element.child(DRAW, "object").is_some()
-                    || element.child(DRAW, "object-ole").is_some()
-                {
+                } else if let Some(object) = element.child(DRAW, "object") {
+                    if !self.chart(element, object, content) {
+                        self.report.embedded_objects += 1;
+                    }
+                } else if element.child(DRAW, "object-ole").is_some() {
                     self.report.embedded_objects += 1;
                 }
             }
@@ -701,6 +704,63 @@ impl Converter<'_, '_> {
                 }
             }
         }
+    }
+
+    /// A chart object drawn as an SVG image the size of its frame; `false` when the object is
+    /// not a chart this reader draws.
+    fn chart(&mut self, frame: &Element, object: &Element, content: &mut Vec<Inline>) -> bool {
+        let size = |name: &str| {
+            frame
+                .attribute(SVG, name)
+                .and_then(points)
+                .filter(|points| *points > 0.0)
+        };
+        let (Some(width), Some(height)) = (size("width"), size("height")) else {
+            return false;
+        };
+        let Some(xml) = object
+            .attribute(XLINK, "href")
+            .and_then(odf_object_part)
+            .and_then(|part| {
+                read_text_member(self.package, &part, self.limits)
+                    .ok()
+                    .flatten()
+            })
+        else {
+            return false;
+        };
+        #[expect(clippy::cast_possible_truncation, reason = "frame sizes are a page's")]
+        let emu = |points: f64| (points * 12_700.0).round() as i64;
+        let Some((bytes, title)) = odf_chart_picture(&xml, emu(width), emu(height)) else {
+            return false;
+        };
+        self.report.charts += 1;
+        let size = bytes.len() as u64;
+        if self.media.len() >= self.limits.max_images
+            || self.media_bytes.saturating_add(size) > self.limits.max_total_image_bytes
+        {
+            self.report.images_over_limit += 1;
+            return true;
+        }
+        self.media_bytes += size;
+        self.media.push(Media {
+            content_type: "image/svg+xml",
+            bytes,
+        });
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "the size is a page's"
+        )]
+        let pixels =
+            |points: f64| Some((points * PIXELS_PER_POINT).round().clamp(1.0, 20_000.0) as u32);
+        content.push(Inline::Image {
+            media: self.media.len() - 1,
+            alt: title.or_else(|| Some("Grafico".to_owned())),
+            width: pixels(width),
+            height: pixels(height),
+        });
+        true
     }
 
     fn text_box(&mut self, container: &Element, scope: Scope) {

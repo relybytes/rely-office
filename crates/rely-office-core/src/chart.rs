@@ -8,6 +8,7 @@
 //! drawn as SVG: a chart in a docx, an xlsx or a pptx shows what the application last computed,
 //! with no workbook to evaluate.
 
+mod odf;
 mod svg;
 
 use crate::number_format::{NumberLocale, general_number};
@@ -174,6 +175,28 @@ pub(crate) fn chart_picture(
     );
     let svg = chart_svg(&chart, width, height);
     Some((svg.into_bytes(), chart.title))
+}
+
+/// An `OpenDocument` chart object drawn into a frame: the SVG and the chart's title.
+pub(crate) fn odf_chart_picture(
+    xml: &str,
+    width_emu: i64,
+    height_emu: i64,
+) -> Option<(Vec<u8>, Option<String>)> {
+    let chart = odf::read_odf_chart(xml, NumberLocale::default())?;
+    #[expect(clippy::cast_precision_loss, reason = "frame sizes fit in f64")]
+    let (width, height) = (
+        width_emu as f64 / EMU_PER_POINT,
+        height_emu as f64 / EMU_PER_POINT,
+    );
+    Some((chart_svg(&chart, width, height).into_bytes(), chart.title))
+}
+
+/// The content part of an `OpenDocument` object, `./Object 1` becoming `Object 1/content.xml`.
+pub(crate) fn odf_object_part(href: &str) -> Option<String> {
+    let name = href.trim_start_matches("./").trim_end_matches('/');
+    (!name.is_empty() && !name.contains("://") && !name.contains(".."))
+        .then(|| format!("{name}/content.xml"))
 }
 
 /// A chart part, `c:chartSpace`; `None` when it holds nothing this reader draws.

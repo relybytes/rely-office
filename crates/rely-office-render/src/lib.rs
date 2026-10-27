@@ -14,9 +14,9 @@
 //!   font of the document ([`Fidelity::Layout`]);
 //! - xlsx, xls, ods, csv and tsv are laid out as tables, one sheet after the other, the columns
 //!   split across pages when they do not fit ([`Fidelity::Layout`]);
-//! - pptx is drawn slide by slide, one page each at the slide's size, its shapes placed where
-//!   the slide, its layout and its master put them ([`Fidelity::Layout`]);
-//! - odp, doc and ppt are set as their text, on A4 ([`Fidelity::Text`]).
+//! - pptx and odp are drawn slide by slide, one page each at the slide's size, its shapes placed
+//!   where the slide, its layout and its master put them ([`Fidelity::Layout`]);
+//! - doc and ppt are set as their text, on A4 ([`Fidelity::Text`]).
 
 mod docx;
 mod fonts;
@@ -193,7 +193,7 @@ fn source_with(
                 truncated,
             })
         }
-        DocumentFormat::Pptx => {
+        DocumentFormat::Pptx | DocumentFormat::Odp => {
             let presentation = read_presentation(bytes, limits)?;
             let truncated = presentation.truncated;
             let (source, files) = slides::presentation_source(&presentation, with_images, lines);
@@ -205,7 +205,7 @@ fn source_with(
                 truncated,
             })
         }
-        DocumentFormat::Odp | DocumentFormat::Doc | DocumentFormat::Ppt => {
+        DocumentFormat::Doc | DocumentFormat::Ppt => {
             let extracted = extract_text(bytes, file_name, limits)?;
             Ok(TypstSource {
                 format,

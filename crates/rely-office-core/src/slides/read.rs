@@ -105,6 +105,9 @@ pub fn read_presentation(bytes: &[u8], limits: &Limits) -> Result<Presentation, 
         });
     }
     let format = detect_format(bytes, None);
+    if format == DocumentFormat::Odp {
+        return crate::opendocument::read_odp(bytes, limits);
+    }
     if format != DocumentFormat::Pptx {
         return Err(OfficeError::UnsupportedFormat(format));
     }

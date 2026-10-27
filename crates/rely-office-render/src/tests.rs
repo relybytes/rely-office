@@ -523,3 +523,37 @@ fn draws_the_slides_of_a_presentation() {
         "a 16:9 slide"
     );
 }
+
+#[test]
+fn draws_the_pages_of_an_odp() {
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    writer.start_file("mimetype", stored).unwrap();
+    writer
+        .write_all(b"application/vnd.oasis.opendocument.presentation")
+        .unwrap();
+    writer
+        .start_file("content.xml", SimpleFileOptions::default())
+        .unwrap();
+    writer
+        .write_all(concat!(
+            r#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" "#,
+            r#"xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" "#,
+            r#"xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"><office:body><office:presentation>"#,
+            r#"<draw:page><draw:frame svg:x="1cm" svg:y="1cm" svg:width="10cm" svg:height="2cm"><draw:text-box><text:p>Pagina uno</text:p></draw:text-box></draw:frame></draw:page>"#,
+            r#"<draw:page/></office:presentation></office:body></office:document-content>"#
+        ).as_bytes())
+        .unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+    let rendered = RENDERER
+        .render(&bytes, Some("riunione.odp"), &thumbnail_request(280))
+        .unwrap();
+    assert_eq!(rendered.format, DocumentFormat::Odp);
+    assert_eq!(rendered.fidelity, Fidelity::Layout);
+    assert_eq!(rendered.page_count, 2);
+    assert_eq!(
+        png_size(&rendered.thumbnail.unwrap()),
+        (280, 210),
+        "a 4:3 page without a master"
+    );
+}

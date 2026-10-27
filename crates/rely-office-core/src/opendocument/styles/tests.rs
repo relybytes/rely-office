@@ -159,8 +159,8 @@ fn reads_text_properties() {
 }
 
 #[test]
-fn reads_paragraph_properties() {
-    let (look, align) = paragraph_properties(&properties(concat!(
+fn reads_paragraph_look_of() {
+    let (look, align) = paragraph_look_of(&properties(concat!(
         r#"<style:paragraph-properties fo:text-align="center" fo:margin-top="-1cm" fo:line-height="0.5cm" "#,
         r#"fo:border-left="1pt dashed #0000ff" fo:border-bottom="2pt dotted"><style:tab-stops>"#,
         r#"<style:tab-stop style:position="3cm" style:type="char"/><style:tab-stop style:position="1cm" style:type="center" style:leader-style="dotted"/>"#,
@@ -201,7 +201,7 @@ fn reads_paragraph_properties() {
             (1_701, TabKind::Decimal, TabLeader::None)
         ]
     );
-    let (look, align) = paragraph_properties(&properties(
+    let (look, align) = paragraph_look_of(&properties(
         r#"<style:paragraph-properties fo:text-align="left" style:line-height-at-least="0.4cm" fo:break-before="column"/>"#,
     ));
     assert_eq!(
@@ -219,12 +219,12 @@ fn reads_paragraph_properties() {
         ("start", Some(Alignment::Left)),
         ("inherit", None),
     ] {
-        let (_, align) = paragraph_properties(&properties(&format!(
+        let (_, align) = paragraph_look_of(&properties(&format!(
             r#"<style:paragraph-properties fo:text-align="{value}"/>"#
         )));
         assert_eq!(align, expected, "{value}");
     }
-    let (look, _) = paragraph_properties(&properties(
+    let (look, _) = paragraph_look_of(&properties(
         r#"<style:paragraph-properties fo:line-height="normal"/>"#,
     ));
     assert_eq!(look.line_spacing, None);
