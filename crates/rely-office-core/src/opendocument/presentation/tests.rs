@@ -5,6 +5,7 @@
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
 use super::*;
+use crate::geometry::{PathCommand, PathPoint};
 use crate::read_presentation;
 use crate::test_support::build_zip;
 
@@ -269,7 +270,10 @@ fn places_shapes_lines_groups_rotations_tables_pictures_and_charts() {
         11,
         "no master shapes on this page: {shapes:#?}"
     );
-    assert_eq!(shapes[0].geometry, ShapeGeometry::RoundedRectangle);
+    assert!(
+        matches!(shapes[0].geometry, ShapeGeometry::Path(_)),
+        "a DrawingML rounded rectangle drawn as its preset"
+    );
     let body = text(&shapes[0]);
     assert_eq!(
         (body.anchor, body.wrap, body.insets_emu),
@@ -313,7 +317,7 @@ fn places_shapes_lines_groups_rotations_tables_pictures_and_charts() {
         }
     );
     assert_eq!(
-        (shapes[5].geometry, shapes[6].geometry),
+        (shapes[5].geometry.clone(), shapes[6].geometry.clone()),
         (ShapeGeometry::RoundedRectangle, ShapeGeometry::Ellipse)
     );
     let ShapeContent::Table(table) = &shapes[7].content else {
@@ -435,4 +439,53 @@ fn reads_transforms_and_lengths() {
         odf_object_part("./Object 1"),
         Some("Object 1/content.xml".to_owned())
     );
+}
+
+#[test]
+fn draws_enhanced_geometries_polygons_and_paths_as_their_outline() {
+    let page = concat!(
+        r#"<draw:page draw:master-page-name="Default">"#,
+        r#"<draw:custom-shape draw:style-name="gr1" svg:x="0cm" svg:y="0cm" svg:width="2cm" svg:height="2cm">"#,
+        r#"<draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:enhanced-path="M 0 0 L 21600 0 10800 21600 Z N"/></draw:custom-shape>"#,
+        r#"<draw:custom-shape draw:style-name="gr1" svg:x="0cm" svg:y="0cm" svg:width="2cm" svg:height="1cm">"#,
+        r#"<draw:enhanced-geometry draw:type="ooxml-rightArrow"/></draw:custom-shape>"#,
+        r#"<draw:custom-shape draw:style-name="gr1" svg:x="0cm" svg:y="0cm" svg:width="2cm" svg:height="1cm">"#,
+        r#"<draw:enhanced-geometry draw:type="mso-spt100"/></draw:custom-shape>"#,
+        r#"<draw:polygon draw:style-name="gr1" svg:x="0cm" svg:y="0cm" svg:width="1cm" svg:height="1cm" svg:viewBox="0 0 10 10" draw:points="0,0 10,0 0,10"/>"#,
+        r#"<draw:path draw:style-name="gr1" svg:x="0cm" svg:y="0cm" svg:width="1cm" svg:height="1cm" svg:viewBox="0 0 10 10" svg:d="M 0 0 L 10 10 Z"/>"#,
+        r#"<draw:polyline draw:style-name="gr1" svg:x="0cm" svg:y="0cm" svg:width="1cm" svg:height="1cm" draw:points=""/>"#,
+        "</draw:page>"
+    );
+    let presentation = read(page);
+    let shapes = &presentation.slides[0].shapes;
+    let shapes = &shapes[shapes.len() - 6..];
+    let outline = |index: usize| match &shapes[index].geometry {
+        ShapeGeometry::Path(paths) => paths[0].commands.clone(),
+        other => panic!("{index}: {other:?}"),
+    };
+    assert_eq!(
+        outline(0)[..3],
+        [
+            PathCommand::MoveTo(PathPoint { x: 0, y: 0 }),
+            PathCommand::LineTo(PathPoint { x: 720_000, y: 0 }),
+            PathCommand::LineTo(PathPoint {
+                x: 360_000,
+                y: 720_000
+            }),
+        ]
+    );
+    assert_eq!(outline(1).len(), 8, "the arrow of its DrawingML preset");
+    assert_eq!(shapes[2].geometry, ShapeGeometry::Other);
+    assert_eq!(
+        outline(3)[1],
+        PathCommand::LineTo(PathPoint { x: 360_000, y: 0 })
+    );
+    assert_eq!(
+        outline(4)[1],
+        PathCommand::LineTo(PathPoint {
+            x: 360_000,
+            y: 360_000
+        })
+    );
+    assert_eq!(shapes[5].geometry, ShapeGeometry::Rectangle);
 }

@@ -12,8 +12,9 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use rely_office_core::{
-    Alignment, Bullet, Frame, Media, Presentation, ShapeContent, ShapeGeometry, Slide,
-    SlideParagraph, SlideRun, SlideShape, SlideTable, TextAnchor, TextBody,
+    Alignment, Bullet, Frame, Media, PathCommand, PathPoint, Presentation, ShapeContent,
+    ShapeGeometry, ShapePath, Slide, SlideParagraph, SlideRun, SlideShape, SlideTable, TextAnchor,
+    TextBody,
 };
 
 use crate::fonts::body_fonts;
@@ -134,6 +135,29 @@ impl Writer<'_> {
             }
             (_, ShapeContent::Picture { media }) => self.picture(*media, &width, &height, &stroke),
             (_, ShapeContent::Table(table)) => self.table(table, &width),
+            (ShapeGeometry::Path(paths), content) => {
+                let (inset, body) = match content {
+                    ShapeContent::Text(text) => (insets(text), self.text(text)),
+                    _ => ("0pt".to_owned(), "[]".to_owned()),
+                };
+                let mut layers = String::new();
+                for path in paths {
+                    let path_fill = if path.filled { fill.as_str() } else { "none" };
+                    let path_stroke = if path.stroked {
+                        stroke.as_str()
+                    } else {
+                        "none"
+                    };
+                    let _ = write!(
+                        layers,
+                        "#place(top + left, {})",
+                        curve_of(path, path_fill, path_stroke)
+                    );
+                }
+                format!(
+                    "block(width: {width}, height: {height})[{layers}#block(width: 100%, height: 100%, inset: {inset}, {body})]"
+                )
+            }
             (geometry, content) => {
                 let (inset, body) = match content {
                     ShapeContent::Text(text) => (insets(text), self.text(text)),
@@ -378,6 +402,28 @@ fn run_markup(run: &SlideRun) -> String {
         expression = format!("strike({expression})");
     }
     expression
+}
+
+/// A path as a Typst curve, in points from the frame's top-left corner.
+fn curve_of(path: &ShapePath, fill: &str, stroke: &str) -> String {
+    let at = |point: &PathPoint| format!("({}, {})", points(emu(point.x)), points(emu(point.y)));
+    let mut curve = format!("curve(fill: {fill}, fill-rule: \"even-odd\", stroke: {stroke}");
+    for command in &path.commands {
+        let _ = match command {
+            PathCommand::MoveTo(point) => write!(curve, ", curve.move({})", at(point)),
+            PathCommand::LineTo(point) => write!(curve, ", curve.line({})", at(point)),
+            PathCommand::CubicTo(first, second, end) => write!(
+                curve,
+                ", curve.cubic({}, {}, {})",
+                at(first),
+                at(second),
+                at(end)
+            ),
+            PathCommand::Close => write!(curve, ", curve.close(mode: \"straight\")"),
+        };
+    }
+    curve.push(')');
+    curve
 }
 
 fn insets(body: &TextBody) -> String {

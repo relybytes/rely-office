@@ -7,6 +7,7 @@
 use std::fmt::Write as _;
 
 use super::*;
+use crate::geometry::{PathCommand, PathPoint};
 use crate::test_support::{build_docx, build_zip};
 
 const NS: &str = concat!(
@@ -401,7 +402,11 @@ fn reads_shapes_pictures_groups_tables_and_fields() {
     let shapes = &slide.shapes[1..];
 
     let boxed = &shapes[0];
-    assert_eq!(boxed.geometry, ShapeGeometry::RoundedRectangle);
+    let ShapeGeometry::Path(paths) = &boxed.geometry else {
+        panic!("a rounded rectangle drawn as its preset");
+    };
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0].commands.len(), 9);
     assert!((boxed.rotation - 90.0).abs() < f64::EPSILON);
     assert_eq!(
         boxed.fill.as_deref(),
@@ -453,7 +458,7 @@ fn reads_shapes_pictures_groups_tables_and_fields() {
         }
     );
     assert_eq!(
-        (grouped.geometry, grouped.fill.as_deref()),
+        (grouped.geometry.clone(), grouped.fill.as_deref()),
         (ShapeGeometry::Ellipse, Some("123456"))
     );
 
@@ -622,4 +627,54 @@ fn draws_the_charts_of_a_slide_in_the_theme_of_its_master() {
         svg.contains("fill=\"#2F5597\""),
         "the master theme's first accent: {svg}"
     );
+}
+
+#[test]
+fn draws_presets_and_custom_geometries_as_paths_mirrored_as_their_frame_says() {
+    let shape = |geometry: &str, flips: &str| {
+        format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="2" name="s"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm {flips}><a:off x="0" y="0"/><a:ext cx="200" cy="100"/></a:xfrm>{geometry}<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></p:spPr></p:sp>"#
+        )
+    };
+    let slide = format!("<p:cSld>{}</p:cSld>", tree(&[
+        shape(r#"<a:prstGeom prst="rightArrow"><a:avLst/></a:prstGeom>"#, r#"flipH="1""#),
+        shape(
+            r#"<a:custGeom><a:pathLst><a:path w="2" h="2"><a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:lnTo><a:pt x="2" y="2"/></a:lnTo><a:close/></a:path></a:pathLst></a:custGeom>"#,
+            r#"flipV="true""#,
+        ),
+        shape(r#"<a:prstGeom prst="noSuchPreset"/>"#, ""),
+        shape(r#"<a:prstGeom prst="ellipse"/>"#, ""),
+        shape("<a:prstGeom/>", ""),
+        shape("", ""),
+        shape("<a:custGeom/>", ""),
+        shape(r#"<a:prstGeom prst="bentConnector3"/>"#, r#"flipH="1""#),
+    ]
+    .concat()));
+    let presentation = read(&[&slide]);
+    let shapes = &presentation.slides[0].shapes;
+    let shapes = &shapes[shapes.len() - 8..];
+    let ShapeGeometry::Path(arrow) = &shapes[0].geometry else {
+        panic!("an arrow drawn as its path");
+    };
+    assert_eq!(
+        arrow[0].commands[0],
+        PathCommand::MoveTo(PathPoint { x: 200, y: 25 }),
+        "mirrored left to right"
+    );
+    let ShapeGeometry::Path(custom) = &shapes[1].geometry else {
+        panic!("a custom geometry drawn as its path");
+    };
+    assert_eq!(
+        custom[0].commands[..2],
+        [
+            PathCommand::MoveTo(PathPoint { x: 0, y: 100 }),
+            PathCommand::LineTo(PathPoint { x: 200, y: 0 }),
+        ]
+    );
+    assert_eq!(shapes[2].geometry, ShapeGeometry::Other);
+    assert_eq!(shapes[3].geometry, ShapeGeometry::Ellipse);
+    assert_eq!(shapes[4].geometry, ShapeGeometry::Rectangle);
+    assert_eq!(shapes[5].geometry, ShapeGeometry::Rectangle);
+    assert_eq!(shapes[6].geometry, ShapeGeometry::Other);
+    assert_eq!(shapes[7].geometry, ShapeGeometry::Line { flipped: true });
 }

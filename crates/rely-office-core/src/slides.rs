@@ -15,6 +15,7 @@ mod text;
 pub use read::read_presentation;
 
 use crate::document::{Alignment, Media};
+use crate::geometry::ShapePath;
 
 /// A presentation's slides, in show order.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,7 +48,7 @@ pub struct Frame {
 }
 
 /// The outline of a shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShapeGeometry {
     Rectangle,
     RoundedRectangle,
@@ -57,7 +58,9 @@ pub enum ShapeGeometry {
     Line {
         flipped: bool,
     },
-    /// A preset `PowerPoint` draws that is drawn here as its rectangle.
+    /// The paths of a preset, a custom geometry or a drawn outline, in the frame.
+    Path(Vec<ShapePath>),
+    /// A preset this library does not know, drawn as its rectangle.
     Other,
 }
 

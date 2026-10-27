@@ -8,6 +8,7 @@
 //! the layout and master drawn behind the slide's own, placeholders placed and styled as their
 //! layout and master place and style them.
 
+use crate::geometry::{custom_geometry, flip_paths, preset_geometry};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -437,16 +438,7 @@ impl Reader<'_, '_> {
             .flatten()
             .find_map(|properties| properties.child(A, "xfrm").and_then(read_frame))?;
         let frame = transform.apply(frame);
-        let geometry = properties
-            .and_then(|properties| properties.child(A, "prstGeom"))
-            .and_then(|geometry| geometry.attribute(Namespace::None, "prst"))
-            .map_or(ShapeGeometry::Rectangle, |preset| match preset {
-                "rect" => ShapeGeometry::Rectangle,
-                "roundRect" | "snipRoundRect" | "round2SameRect" => ShapeGeometry::RoundedRectangle,
-                "ellipse" => ShapeGeometry::Ellipse,
-                "line" | "straightConnector1" | "bentConnector2" => ShapeGeometry::Line { flipped },
-                _ => ShapeGeometry::Other,
-            });
+        let geometry = shape_geometry(properties, frame, flipped);
         let style = shape.child(P, "style");
         let theme = &context.theme;
         let fill = match properties.map_or(Fill::Unset, |properties| fill_of(properties, theme)) {
@@ -1027,6 +1019,47 @@ fn read_frame(xfrm: &Element) -> Option<(Frame, f64, bool)> {
             .attribute(Namespace::None, "flipH")
             .is_some_and(|value| matches!(value, "1" | "true"));
     Some((frame, rotation, flipped))
+}
+
+/// The outline a shape's properties name: a preset or a custom geometry, mirrored as its
+/// frame says.
+fn shape_geometry(properties: Option<&Element>, frame: Frame, flipped: bool) -> ShapeGeometry {
+    let flips = properties
+        .and_then(|properties| properties.child(A, "xfrm"))
+        .map_or((false, false), |xfrm| {
+            let flip = |name: &str| {
+                xfrm.attribute(Namespace::None, name)
+                    .is_some_and(|value| matches!(value, "1" | "true"))
+            };
+            (flip("flipH"), flip("flipV"))
+        });
+    let paths = if let Some(custom) =
+        properties.and_then(|properties| properties.child(A, "custGeom"))
+    {
+        custom_geometry(custom, frame.width, frame.height)
+    } else {
+        let Some(preset) = properties.and_then(|properties| properties.child(A, "prstGeom")) else {
+            return ShapeGeometry::Rectangle;
+        };
+        match preset.attribute(Namespace::None, "prst") {
+            None | Some("rect") => return ShapeGeometry::Rectangle,
+            Some("ellipse") => return ShapeGeometry::Ellipse,
+            Some(
+                "line" | "straightConnector1" | "bentConnector2" | "bentConnector3"
+                | "curvedConnector3",
+            ) => return ShapeGeometry::Line { flipped },
+            Some(name) => {
+                preset_geometry(name, preset.child(A, "avLst"), frame.width, frame.height)
+            }
+        }
+    };
+    match paths {
+        Some(mut paths) => {
+            flip_paths(&mut paths, frame.width, frame.height, flips.0, flips.1);
+            ShapeGeometry::Path(paths)
+        }
+        None => ShapeGeometry::Other,
+    }
 }
 
 fn emu(value: Option<&str>) -> Option<i64> {

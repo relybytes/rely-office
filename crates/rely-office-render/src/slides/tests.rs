@@ -334,3 +334,49 @@ fn rounds_angles_and_names_image_types() {
     assert_eq!(image_extension("image/svg+xml"), Some("svg"));
     assert_eq!(image_extension("image/tiff"), None);
 }
+
+#[test]
+fn draws_a_path_geometry_as_curves_under_its_text() {
+    let at = |x: i64, y: i64| PathPoint { x, y };
+    let paths = vec![
+        ShapePath {
+            commands: vec![
+                PathCommand::MoveTo(at(0, 0)),
+                PathCommand::LineTo(at(127_000, 0)),
+                PathCommand::CubicTo(at(127_000, 12_700), at(0, 12_700), at(0, 25_400)),
+                PathCommand::Close,
+            ],
+            filled: true,
+            stroked: true,
+        },
+        ShapePath {
+            commands: vec![
+                PathCommand::MoveTo(at(0, 0)),
+                PathCommand::LineTo(at(12_700, 12_700)),
+            ],
+            filled: false,
+            stroked: false,
+        },
+    ];
+    let mut arrow = shape(
+        ShapeGeometry::Path(paths.clone()),
+        ShapeContent::Text(body(vec![paragraph(vec![run("Avanti")])])),
+    );
+    arrow.fill = Some("4472C4".to_owned());
+    arrow.line = Some(ShapeLine {
+        colour: "1F3864".to_owned(),
+        width_emu: 12_700,
+    });
+    let empty = shape(ShapeGeometry::Path(paths), ShapeContent::None);
+    let slides = vec![Slide {
+        background: None,
+        shapes: vec![arrow, empty],
+    }];
+    let (markup, _) = source(&presentation(slides, Vec::new()), true);
+    assert!(markup.contains(
+        "block(width: 100pt, height: 50pt)[#place(top + left, curve(fill: rgb(\"#4472C4\"), fill-rule: \"even-odd\", stroke: 1pt + rgb(\"#1F3864\"), curve.move((0pt, 0pt)), curve.line((10pt, 0pt)), curve.cubic((10pt, 1pt), (0pt, 1pt), (0pt, 2pt)), curve.close(mode: \"straight\")))#place(top + left, curve(fill: none, fill-rule: \"even-odd\", stroke: none, curve.move((0pt, 0pt)), curve.line((1pt, 1pt))))#block(width: 100%, height: 100%, inset: "
+    ));
+    assert!(markup.contains("Avanti"));
+    assert!(markup.contains("#place(top + left, curve(fill: none, fill-rule: \"even-odd\", stroke: none, curve.move((0pt, 0pt)), curve.line((10pt, 0pt))"));
+    assert!(markup.contains(", inset: 0pt, [])]"));
+}

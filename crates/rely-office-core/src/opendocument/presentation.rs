@@ -8,6 +8,7 @@
 //! frames, shapes, pictures and tables placed where they stand, the text styled through its
 //! paragraph, text, presentation and graphic styles.
 
+use crate::geometry::{enhanced_geometry, svg_path_geometry};
 use std::collections::HashMap;
 
 use super::styles::{FO, STYLE, Scope, Styles, TEXT, colour, points};
@@ -262,7 +263,17 @@ impl Reader<'_, '_> {
                 .iter()
                 .find_map(|properties| properties.attribute(namespace, key))
         };
+        let drawn = match element.name.as_str() {
+            "polygon" | "polyline" | "path" => {
+                svg_path_geometry(element, frame.width, frame.height)
+            }
+            "custom-shape" => element
+                .child(DRAW, "enhanced-geometry")
+                .and_then(|geometry| enhanced_geometry(geometry, frame.width, frame.height)),
+            _ => None,
+        };
         let geometry = match element.name.as_str() {
+            _ if drawn.is_some() => ShapeGeometry::Path(drawn.unwrap_or_default()),
             "rect" if element.attribute(DRAW, "corner-radius").is_some() => {
                 ShapeGeometry::RoundedRectangle
             }
