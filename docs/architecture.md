@@ -43,11 +43,14 @@ spreadsheet features past values, formulas, number formats and column widths.
 | `relationships` | the `_rels/*.rels` parts of OOXML: targets resolved like OPC, the main part from `_rels/.rels` |
 | `xml_text` | a streaming walk from XML to search text, configured per format by a `TextRules` |
 | `xml_tree` | a small element tree with resolved namespaces, depth-capped, for structural reads |
-| `word`, `presentation`, `opendocument` | the text of docx, pptx, odt and odp |
+| `word`, `presentation`, `opendocument` | the text of docx, pptx, odt and odp; `opendocument` also reads an odt into the document tree and an odp into slides, through its style resolver |
 | `doc`, `ppt` | the text of the binary formats |
 | `sheet` | spreadsheets as tables, through calamine, and delimited text |
-| `sheet_layout` | the print settings of xlsx sheets, read as a stream that skips the cells |
-| `document` | the docx document tree: styles, numbering, conversion, looks, media sniffing, and the writer |
+| `sheet_layout`, `sheet_styles`, `number_format` | the print settings, cell styles and merges of xlsx sheets, read as a stream that skips the cells, and Excel's number format codes |
+| `sheet_drawings` | the pictures and charts a sheet's drawing anchors to its cells, and the drawing parts an editor writes back unchanged |
+| `document` | the docx document tree: styles, table styles, numbering, notes, headers and footers, conversion, looks, media sniffing, and the writer |
+| `slides`, `theme` | a pptx as slides over its layouts and masters, and the colours and fonts of a `DrawingML` theme |
+| `chart` | `DrawingML` and `OpenDocument` charts, read from their cached values or cells and drawn as SVG |
 
 ## Decisions
 

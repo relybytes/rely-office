@@ -10,10 +10,11 @@ WebAssembly included.
 
 | Format | Fidelity | How |
 | --- | --- | --- |
-| docx | `layout` | the document tree with its looks: page size and margins of the last section, body font, paragraph spacing, line spacing, indents, alignment, page breaks, run fonts, sizes and colours, list indents from the numbering part, table grids, cell margins and borders, images |
-| xlsx | `layout` | every sheet with its print settings: orientation, margins, column widths, hidden columns, header and footer, grid lines, default font |
+| docx, odt | `layout` | the document tree with its looks: page size, margins and columns, headers and footers with their first and even variants, page numbers, body font, paragraph spacing, line spacing, indents, tabs with their leaders, alignment, borders and shading, page breaks, run fonts, sizes, colours and highlights, list labels in the numbering's own formats, tables with their style's regions, per-cell borders, fills and vertical alignment, footnotes and endnotes, text boxes, images and charts |
+| xlsx | `layout` | every sheet with its print settings and its cells' formats: orientation, margins, column widths and row heights, hidden rows and columns, header and footer, grid lines, number formats, fonts, fills, borders, alignment and wrapping, merged cells; its pictures and charts after the cells |
 | xls, ods, csv, tsv | `layout` | the sheets with Excel's print defaults (portrait A4, 0.7 and 0.75 inch margins, 8.43 character columns, no grid) |
-| pptx, odt, odp, doc, ppt | `text` | the extracted text, one paragraph per line, on A4 |
+| pptx, odp | `layout` | one page per slide at the slide's size: background, the shapes of the master and layout behind the slide's own, placeholders placed and styled as their layout and master say, text frames, custom shapes, lines, groups, rotations, tables, pictures and charts |
+| doc, ppt | `text` | the extracted text, one paragraph per line, on A4 |
 
 `Rendered::fidelity` says which of the two a render had, so a viewer can tell a laid-out preview
 from a text one.
@@ -52,6 +53,31 @@ across the page continue on the next pages, all rows of one group of columns fir
 page order does. Cells never wrap: text longer than its column runs over the next one. Values that
 read as numbers are aligned right. The header and footer codes `&L &C &R`, `&A` (sheet name), `&P`
 (page), `&N` (pages), `&&`, `&"font,style"` and a font size are drawn; other codes are dropped.
+
+## How a slide is drawn
+
+A pptx and an odp are read into one slide model (`read_presentation`): the page size, and for
+each slide its background and its shapes in drawing order. A pptx slide is drawn over its layout
+and master, a placeholder taking the frame and the text styles the layout's and master's
+placeholder of the same index or kind give it, then the master's text styles and the theme; theme
+colours keep their luminance, tint and shade changes, and `normAutofit` scales the text as
+PowerPoint does. An odp page is drawn over its master page: the master's title and outline frames
+stay templates, its footer, date and page number show when the page asks for them, and each
+outline level takes its own presentation style (`Default-outline2` one level down). Text frames
+keep their insets, anchor, bullets and numbering, and every shape is placed absolutely on a Typst
+page of the slide's size.
+
+## How a chart is drawn
+
+A chart is read from the values the file stores beside each formula (`c:numCache`), from the
+workbook's own cells when it stores none, or, in an `OpenDocument` file, from the table the chart
+object carries. It is drawn as SVG in the look of Office's default chart style: columns and bars
+clustered, stacked or to a whole, lines with or without markers, areas, pies, doughnuts and
+scatter charts, with the title, legend, axis titles, gridlines, data labels and a secondary value
+axis. Axis steps are round numbers (1, 2 or 5 times a power of ten) unless the file fixes them.
+The SVG becomes an image of the document tree in a docx or an odt, a picture of the slide in a
+pptx or an odp, and a drawing after the cells of an xlsx sheet. Radar, stock, bubble and surface
+charts are left out, and so are the newer `chartex` charts (waterfall, treemap).
 
 ## Fonts
 
@@ -112,11 +138,13 @@ SOFFICE=soffice node scripts/corpus.mjs                 # the corpus comparison
 
 ## Known gaps
 
-- Headers, footers, footnotes, text boxes and floating images of a docx are not drawn; the import
-  report counts them.
-- Table cell shading, per-cell borders and vertical alignment are not read; a table draws all its
-  borders or none.
-- Tab stops are drawn as a space; numbered list labels are decimal, letters and roman numerals by
-  level, not the numbering part's own formats.
-- Sheets print values only: no cell formats, fonts, fills, merged cells or charts.
-- pptx and the binary formats print their text, not their layout.
+- A docx is laid out with the page of its last section: a document that turns one section
+  landscape prints every page portrait.
+- Floating images and text boxes are set after the paragraph that anchors them, not where they
+  float.
+- The pictures and charts of a sheet print after its cells, at their size, not over the cells
+  they are anchored to; an ods sheet prints no drawings.
+- Shapes PowerPoint and Impress draw from a preset other than rectangles, rounded rectangles,
+  ellipses and lines (arrows, stars, callouts) are drawn as their rectangle; gradients show their
+  first colour, pictures as fills are not drawn.
+- doc and ppt print their text, not their layout.

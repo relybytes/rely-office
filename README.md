@@ -14,11 +14,12 @@ files a team stores, and is published under the Mozilla Public License 2.0 so th
 
 | Format | Detect | Text for search | Sheets as tables | Document tree | Render | Write | Edit |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| docx | yes | body, headers, footers, notes | - | yes | layout | yes | through the tree |
-| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings | yes | yes |
+| docx | yes | body, headers, footers, notes | - | yes | layout, with headers, footers, notes and charts | yes | through the tree |
+| odt | yes | body with headers and footers | - | yes | layout, as a docx | as docx | through the tree |
+| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings, cell formats, merges, pictures and charts | yes | yes, its styles, merges, pictures and charts kept |
 | xls, ods | yes | every sheet | yes | - | layout | as xlsx | yes |
 | csv, tsv | by name, text only | yes | yes, UTF-8 or Windows-1252, `;` or `,` | - | layout | as xlsx | yes |
-| pptx, odt, odp | yes | slides with notes, body with headers and footers, pages with notes | - | - | text | - | - |
+| pptx, odp | yes | slides and pages with their notes | - | - | slides, with their masters, shapes, tables, pictures and charts | - | - |
 | doc, ppt (97-2003) | yes | every story, every text atom outside the masters | - | - | text | - | - |
 
 The format comes from the bytes, never from the file name alone. Every input is bounded by
@@ -31,9 +32,9 @@ length and nesting.
 
 ```toml
 [dependencies]
-rely-office-core = "0.3"    # reading, the document tree, writing docx
-rely-office-render = "0.3"  # PDF and PNG through Typst
-rely-office-sheet = "0.3"   # the editable spreadsheet
+rely-office-core = "0.4"    # reading, the document tree, writing docx
+rely-office-render = "0.4"  # PDF and PNG through Typst
+rely-office-sheet = "0.4"   # the editable spreadsheet
 ```
 
 ```rust

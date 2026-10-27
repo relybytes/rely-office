@@ -246,7 +246,7 @@ impl DocumentTreeHandle {
     }
 }
 
-/// Read a docx as a [`DocumentTreeHandle`].
+/// Read a docx or an odt as a [`DocumentTreeHandle`].
 ///
 /// # Errors
 ///

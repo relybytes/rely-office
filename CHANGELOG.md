@@ -3,6 +3,47 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## 0.4.0
+
+### Added
+
+- docx: headers and footers with their first-page and even-page variants and page numbers,
+  footnotes and endnotes, text boxes, tab stops with their leaders, list labels in the
+  numbering's own formats, table styles with their conditional regions, per-cell borders, fills
+  and vertical alignment, paragraph borders and shading, highlights and the run fonts, sizes and
+  colours as `textStyle` marks. All of it is read into the tree (`notes`, `headersFooters`,
+  `page`, the `noteReference` inline, the `textStyle` and `highlight` marks), drawn, and written
+  back by `write_docx`.
+- odt: read into the same document tree, laid out like a docx and imported into an editor the
+  same way; the tree is written back as a docx.
+- pptx and odp: drawn as slides, one page each at the slide's size, over their layouts and
+  masters, with backgrounds, text frames, bullets and numbering, custom shapes, lines, groups,
+  rotations, tables and pictures (`read_presentation`).
+- Charts: the charts of docx, xlsx, pptx, odt and odp are drawn as SVG from the values they
+  store, or from the workbook's cells when they store none: columns, bars, lines, areas, pies,
+  doughnuts and scatter charts with titles, legends, axis titles, gridlines, data labels and a
+  secondary axis.
+- xlsx rendering: number formats in Italian and English notation, fonts, fills, borders,
+  alignment, wrapping, merged cells, row heights, hidden rows, and the sheet's pictures and charts
+  after its cells (`SheetLayout::drawings`).
+- `rely-office-sheet`: cell styles (`set_style` with a `StylePatch`, `set_borders`,
+  `clear_styles`), `merge_cells` and `unmerge_cells`, `set_row_height`, number format codes, and
+  102 more functions, 155 in all. Saving keeps the styles, merges and row heights, and writes the
+  pictures, charts and theme of the file back unchanged (`read_xlsx_drawing_parts`,
+  `read_xlsx_theme_part`).
+- npm: `setStyle`, `setBorders`, `clearStyles`, `stylesJson`, `mergesJson`, `mergeCells`,
+  `unmergeCells`, `setRowHeight` and the `INVALID_STYLE` code; the tree's `notes`,
+  `headersFooters` and `page`; `readDocumentTree` and `render` accept odt, and `render` lays out
+  pptx and odp.
+
+### Changed
+
+- `read_document_tree` accepts an odt besides a docx; `Rendered::fidelity` is `layout` for docx,
+  odt, xlsx, xls, ods, csv, tsv, pptx and odp, `text` only for doc and ppt.
+- A chart of a docx is an image of the tree instead of a count in the report.
+- `read_workbook` reads numbers in English notation and `read_workbook_in` in the locale it is
+  given; the renderer reads sheets in Italian.
+
 ## 0.3.0
 
 ### Added

@@ -1,15 +1,27 @@
-# The docx document tree
+# The document tree
 
-`read_document_tree` (Rust) and `readDocumentTree` (Node) read a `.docx` as a neutral tree for
-import into a rich-text editor. It is not HTML and not any editor's schema: the caller maps each
-block and mark onto its own. The JSON names below are those of the `serde` feature and of the npm
-package; the Rust names are the same in snake case.
+`read_document_tree` (Rust) and `readDocumentTree` (Node) read a `.docx` or an `.odt` as a
+neutral tree for import into a rich-text editor. It is not HTML and not any editor's schema: the
+caller maps each block and mark onto its own. The JSON names below are those of the `serde`
+feature and of the npm package; the Rust names are the same in snake case. The sections below
+describe the docx; [the odt](#the-odt) gives the same tree from its own elements and styles.
 
 ## Result
 
 ```text
-{ blocks: Block[], media: MediaItem[], report: ImportReport }
+{
+  blocks: Block[], media: MediaItem[], report: ImportReport,
+  notes: Note[], headersFooters: HeadersFooters, page: PageSize
+}
 ```
+
+- `notes`: the footnotes and endnotes, `{ kind: "footnote" | "endnote", blocks }`, in the order
+  the text refers to them; a `noteReference` inline points at one by index.
+- `headersFooters`: `{ header, footer, firstHeader?, firstFooter?, evenHeader?, evenFooter? }`,
+  each a list of blocks, of the last section. The first-page pair is present only when the
+  section has a different first page, the even pair only when odd and even pages differ.
+- `page`: `{ widthTwips, heightTwips, marginsTwips }`, the margins top, right, bottom, left, in
+  twentieths of a point.
 
 ## Blocks
 
@@ -55,12 +67,17 @@ The style chain (`w:basedOn`) is followed for up to 16 steps.
 | `text` | `text`, `marks` (left out when empty) |
 | `hardBreak` | a line break inside the block (`w:br` without a type, `w:cr`) |
 | `image` | `media` (index into `media`), `alt`, `width`, `height` in CSS pixels (each left out when unknown) |
+| `noteReference` | `note`, the index of the note in `notes`; the number it shows is its position among the notes of its kind |
 
-Adjacent runs with the same marks are merged. Tabs are `\t` in the text.
+Adjacent runs with the same marks are merged. Tabs are `\t` in the text. A page number or a page
+count field is text whose look says which (`PAGE`, `NUMPAGES`, `text:page-number`), so a
+renderer can draw the page it lands on.
 
 Marks, in this order: `bold`, `italic`, `underline`, `strike` (single or double), `code` (a
-monospace font or a character style named like code or verbatim), `superscript`, `subscript`, and
-`link` with `href`. A run's character style applies first and its own properties over it; the old
+monospace font or a character style named like code or verbatim), `superscript`, `subscript`,
+`textStyle` with the `fontFamily`, `fontSize` (`"14pt"`) and `color` (`"#1F3864"`) the run sets
+itself (the paragraph's own font is not repeated), `highlight` with its `color`, and `link` with
+`href`. A run's character style applies first and its own properties over it; the old
 formatting a tracked change keeps is ignored. A link's underline is not repeated as a mark, nor is
 the underline of a link that was dropped.
 
@@ -81,8 +98,10 @@ sniffed from the bytes: PNG, JPEG, GIF, BMP, TIFF, WebP, WMF, EMF, SVG, else
 returned as it is and must be sanitized before a browser shows it.
 
 Images come from DrawingML pictures (`a:blip r:embed`) and from VML (`v:imagedata r:id`, sized by
-the shape's `width` and `height` in `pt` or `px`). An image is returned only within
-`maxImageBytes` each, `maxImages` in number and `maxTotalImageBytes` together.
+the shape's `width` and `height` in `pt` or `px`). A chart becomes an `image/svg+xml` image drawn
+from the values the chart stores, with its title as `alt`; written back, it stays a picture. An
+image is returned only within `maxImageBytes` each, `maxImages` in number and
+`maxTotalImageBytes` together.
 
 ## Report
 
@@ -91,12 +110,13 @@ Counts of what the tree leaves out or changes:
 | Field | Counts |
 | --- | --- |
 | `truncated` | `true` when `maxTextChars` cut the document; the rest is left out |
-| `textBoxes` | DrawingML and VML text boxes, left out |
-| `footnotes`, `endnotes` | note references; the notes are left out |
+| `textBoxes` | DrawingML and VML text boxes; their content follows the paragraph that anchors them |
+| `footnotes`, `endnotes` | note references; the notes are in `notes` |
 | `comments` | comment references; comments are left out, the commented text stays |
-| `headersAndFooters` | header and footer parts, left out |
+| `headersAndFooters` | header and footer parts; their content is in `headersFooters` |
 | `fieldsKeptAsText` | fields kept as their result |
-| `charts`, `smartArt`, `equations` | left out |
+| `charts` | charts, drawn as SVG images when their values can be read |
+| `smartArt`, `equations` | left out |
 | `shapes` | shapes and groups without a picture, left out |
 | `embeddedObjects` | OLE objects, left out |
 | `unsupportedLinks` | links dropped by the target rule |
@@ -153,10 +173,31 @@ Counts of what the tree leaves out or changes:
 }
 ```
 
+## The odt
+
+An odt gives the same tree. Its styles are resolved through their parents to the family's
+default style, the automatic styles of `content.xml` applying to the body and those of
+`styles.xml` to the headers and footers.
+
+| Block | From |
+| --- | --- |
+| `heading` | `text:h`, its `text:outline-level` (past 6 becomes 6), labelled by the outline numbering when it numbers |
+| `paragraph` | `text:p`, its text collapsed as `OpenDocument` lays it out: a run of spaces is one, `text:s` keeps its count |
+| `listItem` | a paragraph of `text:list`, numbered by the list style of the list or of its paragraph's style, each level in its own format; `text:continue-numbering` carries the count on, `text:list-header` has no label |
+| `table` | `table:table` with its header rows, spans, column widths, the padding of its first cell as the cell margins, and each cell's fill, borders and vertical alignment; repeated rows and cells are repeated, a run of empty repeated rows is kept once |
+| `blockquote`, `codeBlock` | the `Quotations` and `Preformatted Text` styles and their Italian names |
+
+Notes are `text:note`; images `draw:image` in a `draw:frame`; a text box's paragraphs follow the
+one that anchors it; a chart object (`draw:object`) is drawn as an SVG image from the table it
+carries; sections and indexes are read through. The page, columns, headers and footers come from
+the master page of the first paragraph's style, else `Standard`: a header's height and spacing
+are added to the top margin, as the page lays it out.
+
 ## Trying it
 
 ```sh
 cargo run -p rely-office-cli -- tree contract.docx
+cargo run -p rely-office-cli -- tree verbale.odt
 ```
 
 prints the blocks, the media list and the report in Rust's debug form.

@@ -54,8 +54,8 @@ A document is a `Uint8Array` (a Node `Buffer` is one), an `ArrayBuffer` or any t
 | `detectFormat(bytes, fileName?)` | anything | `'docx' \| 'xlsx' \| 'pptx' \| 'odt' \| 'ods' \| 'odp' \| 'doc' \| 'xls' \| 'ppt' \| 'csv' \| 'tsv' \| 'unknown'` |
 | `extractText(bytes, fileName?, limits?)` | every format above | `{ format, text, truncated }` |
 | `readSheets(bytes, fileName?, limits?)` | xlsx, xls, ods, csv, tsv | `{ format, sheets: [{ name, rows, totalRows, totalColumns }] }` |
-| `readDocumentTree(bytes, limits?)` | docx | `{ blocks, media, report }` |
-| `render(bytes, fileName?, options?)` | docx, xlsx, xls, ods, csv, tsv (layout); pptx, odt, odp, doc, ppt (text) | `{ format, fidelity, pageCount, truncated, pdf, thumbnail, pageImages }` |
+| `readDocumentTree(bytes, limits?)` | docx, odt | `{ blocks, media, report, notes, headersFooters, page }` |
+| `render(bytes, fileName?, options?)` | docx, odt, xlsx, xls, ods, csv, tsv, pptx, odp (layout); doc, ppt (text) | `{ format, fidelity, pageCount, truncated, pdf, thumbnail, pageImages }` |
 | `writeDocx({ blocks, media?, page? })` | a document tree | the docx bytes |
 | `createSheet(options?)`, `openSheet(bytes, fileName?, options?)` | xlsx, xls, ods, csv, tsv | a `SheetDocument` |
 | `version` | | the library version |
@@ -133,6 +133,10 @@ try {
   sheet.setInput(0, 9, 1, '=SOMMA(B1:B9)');          // stored as =SUM(B1:B9)
   sheet.setFormat(0, 9, 1, { type: 'decimals', decimals: 2 });
   sheet.insertRows(0, 0, 1);                         // formulas follow the cells
+  const header = { top: 0, left: 0, bottom: 0, right: 3 };
+  sheet.setStyle(0, header, { bold: true, fill: 'D9E2F3', horizontal: 'center' });
+  sheet.setBorders(0, header, 'outline', { style: 'single', widthEighths: 4 });
+  sheet.mergeCells(0, { top: 12, left: 0, bottom: 12, right: 3 });
   sheet.cells(0, { top: 0, left: 0, bottom: 40, right: 10 });
   // [{ row, column, input: '=SUM(B2:B10)', display: '1.234,50', kind: 'number', format }, ...]
   writeFileSync('conti.xlsx', sheet.save());
@@ -144,7 +148,10 @@ try {
 Rows, columns and sheets are zero-based. The locale (`it`, the default, or `en`) decides how
 numbers are typed and shown. `TODAY()` and `NOW()` read the date set with `setToday`. Failures
 throw `INVALID_FORMULA`, `NO_SUCH_SHEET`, `DUPLICATE_SHEET_NAME`, `INVALID_SHEET_NAME`,
-`LAST_SHEET`, `OUT_OF_BOUNDS`, `INVALID_INPUT` or `INVALID_LOCALE`. The formulas, functions and
+`LAST_SHEET`, `OUT_OF_BOUNDS`, `INVALID_INPUT`, `INVALID_LOCALE` or `INVALID_STYLE`. Each cell of
+`cells` carries its `style`; `stylesJson` and `mergesJson` give the styles and merged ranges a grid
+draws, `clearStyles`, `unmergeCells` and `setRowHeight` complete the set. Saving keeps the styles,
+merges and row heights, and writes the pictures and charts of the file back as they were. The formulas, functions and
 edits are described in [docs/editing.md](https://github.com/relybytes/rely-office/blob/main/docs/editing.md).
 
 ### In the browser
@@ -161,7 +168,8 @@ The browser entry is an ES module with the same `SheetDocument`, built with `was
 
 ## The document tree
 
-`readDocumentTree` returns blocks, not HTML, so the caller maps them onto its editor's schema.
+`readDocumentTree` returns blocks, not HTML, so the caller maps them onto its editor's schema. A
+docx and an odt give the same tree; `writeDocx` writes it back as a docx.
 
 - **Blocks**: `heading` (`level` 1 to 6, `align`), `paragraph` (`align`: `left`, `center`, `right`,
   `justify`, absent when unset), `listItem` (`ordered`, `level` from 0,
@@ -169,8 +177,12 @@ The browser entry is an ES module with the same `SheetDocument`, built with `was
   with `colSpan`, `rowSpan` and their own blocks), `blockquote` (consecutive quote paragraphs),
   `codeBlock` (consecutive code paragraphs as lines of `text`), `horizontalRule`.
 - **Inline content**: `text` with optional `marks` (`bold`, `italic`, `underline`, `strike`,
-  `code`, `superscript`, `subscript`, `link` with `href`), `hardBreak`, and `image` with the
-  `media` index, `alt`, `width` and `height` in CSS pixels.
+  `code`, `superscript`, `subscript`, `textStyle` with `fontFamily`, `fontSize` and `color`,
+  `highlight` with `color`, `link` with `href`), `hardBreak`, `image` with the `media` index,
+  `alt`, `width` and `height` in CSS pixels (a chart is an SVG image), and `noteReference` with
+  the index of its note in `notes`.
+- **Around the body**: `notes` (footnotes and endnotes), `headersFooters` (with the first-page
+  and even-page variants) and `page` (size and margins in twentieths of a point).
 - **Links** keep only `http:`, `https:` and `mailto:` targets; any other target is dropped (its
   text stays) and counted in the report.
 - **Media** holds each embedded image once, with the type sniffed from its bytes. An SVG is

@@ -234,7 +234,10 @@ export function extractText(
 /** The sheets of a spreadsheet (xlsx, xls, ods, csv, tsv) as tables of displayed values. */
 export function readSheets(bytes: DocumentBytes, fileName?: string, limits?: Limits): Workbook;
 
-/** A docx as a neutral tree of blocks for a rich-text editor, with its images and a report. */
+/**
+ * A docx or an odt as a neutral tree of blocks for a rich-text editor, with its images and a
+ * report. Charts come as SVG images; the tree is written back with `writeDocx`.
+ */
 export function readDocumentTree(bytes: DocumentBytes, limits?: Limits): DocumentTree;
 
 /** What to produce from one render. */

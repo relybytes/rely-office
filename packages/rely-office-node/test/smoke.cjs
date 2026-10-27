@@ -163,6 +163,44 @@ test('reads a document tree with its images', () => {
   assert.equal(tree.report.truncated, false);
 });
 
+test('reads an odt as a document tree and draws an odp as slides', () => {
+  const namespaces =
+    'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ' +
+    'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ' +
+    'xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" ' +
+    'xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"';
+  const odt = storedZip([
+    ['mimetype', 'application/vnd.oasis.opendocument.text'],
+    [
+      'content.xml',
+      `<office:document-content ${namespaces}><office:body><office:text>` +
+        '<text:h text:outline-level="1">Verbale</text:h><text:p>Presenti tutti.</text:p>' +
+        '</office:text></office:body></office:document-content>',
+    ],
+  ]);
+  const tree = office.readDocumentTree(odt);
+  assert.deepEqual(tree.blocks[0], {
+    type: 'heading',
+    level: 1,
+    content: [{ type: 'text', text: 'Verbale' }],
+  });
+  assert.deepEqual(tree.blocks[1].content, [{ type: 'text', text: 'Presenti tutti.' }]);
+
+  const odp = storedZip([
+    ['mimetype', 'application/vnd.oasis.opendocument.presentation'],
+    [
+      'content.xml',
+      `<office:document-content ${namespaces}><office:body><office:presentation>` +
+        '<draw:page><draw:frame svg:x="1cm" svg:y="1cm" svg:width="10cm" svg:height="2cm">' +
+        '<draw:text-box><text:p>Ordine del giorno</text:p></draw:text-box></draw:frame></draw:page>' +
+        '</office:presentation></office:body></office:document-content>',
+    ],
+  ]);
+  const rendered = office.render(odp, 'riunione.odp', { pdf: false, thumbnailWidth: 200 });
+  assert.equal(rendered.fidelity, 'layout');
+  assert.equal(rendered.pageCount, 1);
+});
+
 test('throws coded errors', () => {
   assert.throws(
     () => office.extractText(Buffer.from('testo'), 'nota.txt'),

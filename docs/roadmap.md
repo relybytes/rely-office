@@ -41,14 +41,25 @@ follows Word. [rendering.md](rendering.md) has the method and the figures.
 The editors themselves are the platform's: the Documento's rich-text editor maps the document
 tree, and the Foglio's grid drives a `SheetDocument`.
 
+## Phase 3: fidelity (0.4.0)
+
+| Step | Content | Status |
+| --- | --- | --- |
+| 3.1 | docx headers, footers with their first and even variants, page numbers, footnotes and endnotes, text boxes, tab stops with leaders, the numbering's own label formats, table styles, per-cell borders, fills and vertical alignment, paragraph borders and shading, highlights; read, drawn and written back | done (0.4.0) |
+| 3.2 | xlsx cells with their number formats, fonts, fills, borders, alignment, wrapping, merges and row heights, drawn and edited (`set_style`, `set_borders`, `merge_cells`, `set_row_height`); 155 functions | done (0.4.0) |
+| 3.3 | pptx and odp drawn as slides over their layouts and masters | done (0.4.0) |
+| 3.4 | Charts of docx, xlsx, pptx, odt and odp drawn as SVG; the pictures and charts of an edited xlsx written back | done (0.4.0) |
+| 3.5 | odt read into the document tree: laid out, and imported into the editor like a docx | done (0.4.0) |
+
 ## Next
 
-- Headers, footers, footnotes and floating images in the renderer; cell shading and per-cell
-  borders in tables.
-- pptx laid out as slides instead of text.
-- Cell styles in the spreadsheet (fonts, fills, borders, alignment), merged cells, more functions.
-- A larger corpus with documents made by Word, and the corpus figure as a CI gate once it is
-  stable.
+- docx sections of their own page: a landscape section among portrait ones.
+- Floating images and text boxes where they float; sheet drawings over the cells they are
+  anchored to.
+- The remaining DrawingML presets (arrows, stars, callouts) and picture fills.
+- doc and ppt laid out instead of their text.
+- A larger corpus with documents made by Word and pptx and odp pages, and the corpus figure as a
+  CI gate once it is stable.
 - Publishing to the public npm registry (issue #1).
 
 ## Known risks
