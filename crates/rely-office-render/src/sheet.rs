@@ -12,7 +12,7 @@
 //! A cell wraps only when its format says so: other text longer than its column runs over into
 //! the next one, as on screen.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use rely_office_core::{
@@ -38,6 +38,8 @@ const ROW_HEIGHT_PER_FONT_POINT: f64 = 1.28;
 const CELL_INSET_X_POINTS: f64 = 2.0;
 const GRID_STROKE: &str = "0.4pt + luma(190)";
 const EMU_PER_POINT: f64 = 12_700.0;
+/// The table reaches as far as a drawing's anchor cell, but never past this row or column.
+const MAX_DRAWING_REACH: usize = 10_000;
 
 /// The source of a workbook and the image files of its drawings. With `with_images` false the
 /// drawings are left out, for a workbook whose images Typst cannot decode.
@@ -51,44 +53,104 @@ pub(crate) fn workbook_source(
         if index > 0 {
             source.push_str("#pagebreak(weak: true)\n");
         }
-        let text_width = write_sheet(&mut source, sheet);
-        if with_images {
-            write_drawings(&mut source, &mut files, index, sheet, text_width);
-        }
+        let drawings = if with_images {
+            placed_drawings(&mut files, index, sheet)
+        } else {
+            Vec::new()
+        };
+        let (text_width, anchored) = write_sheet(&mut source, sheet, &drawings);
+        write_loose_drawings(&mut source, &drawings, &anchored, text_width);
     }
     (source, files)
 }
 
-/// The pictures and charts of a sheet, after its cells, each at its anchor's size and never
-/// wider than the page.
-fn write_drawings(
-    source: &mut String,
+/// A picture or chart of a sheet, its image handed to Typst at `path`, and the label of the
+/// marker its anchor cell carries.
+struct PlacedDrawing {
+    label: String,
+    path: String,
+    row: usize,
+    column: usize,
+    /// In points, across and down from the corner of the anchor cell.
+    offset: (f64, f64),
+    width: f64,
+    height: f64,
+}
+
+/// The drawings of a sheet Typst can show, in the order of their anchors, their images added to
+/// `files`.
+fn placed_drawings(
     files: &mut Vec<(String, Vec<u8>)>,
     sheet_index: usize,
     sheet: &Sheet,
-    text_width: f64,
-) {
+) -> Vec<PlacedDrawing> {
     let mut drawings: Vec<&SheetDrawing> = sheet.layout.drawings.iter().collect();
     drawings.sort_by_key(|drawing| (drawing.row, drawing.column));
+    let mut placed = Vec::new();
     for (index, drawing) in drawings.into_iter().enumerate() {
         let Some(extension) = image_extension(drawing.content_type) else {
             continue;
         };
         #[expect(clippy::cast_precision_loss, reason = "drawing sizes fit in f64")]
-        let (width, height) = (
-            drawing.width_emu as f64 / EMU_PER_POINT,
-            drawing.height_emu as f64 / EMU_PER_POINT,
-        );
-        let scale = (text_width / width).min(1.0);
+        let point = |emu: i64| emu as f64 / EMU_PER_POINT;
         let path = format!("/media/sheets/{sheet_index}-{index}.{extension}");
+        files.push((path.clone(), drawing.bytes.clone()));
+        placed.push(PlacedDrawing {
+            label: format!("rely-drawing-{sheet_index}-{index}"),
+            path,
+            row: usize::try_from(drawing.row).unwrap_or(usize::MAX),
+            column: usize::try_from(drawing.column).unwrap_or(usize::MAX),
+            offset: (point(drawing.offset_emu.0), point(drawing.offset_emu.1)),
+            width: point(drawing.width_emu),
+            height: point(drawing.height_emu),
+        });
+    }
+    placed
+}
+
+/// The page foreground that draws each drawing over the cells, where the marker of its anchor
+/// cell landed; `None` for a sheet without drawings.
+fn drawings_foreground(drawings: &[PlacedDrawing]) -> Option<String> {
+    if drawings.is_empty() {
+        return None;
+    }
+    let mut markup = String::from("context { let page = here().page(); ");
+    for drawing in drawings {
+        let _ = write!(
+            markup,
+            "{{ let found = query(<{}>); if found.len() > 0 {{ let at = found.first().location().position(); if at.page == page {{ place(top + left, dx: at.x + {}, dy: at.y + {}, image({}, width: {}, height: {}, fit: \"stretch\")) }} }} }}; ",
+            drawing.label,
+            points(drawing.offset.0),
+            points(drawing.offset.1),
+            string_literal(&drawing.path),
+            points(drawing.width),
+            points(drawing.height)
+        );
+    }
+    markup.push('}');
+    Some(markup)
+}
+
+/// The drawings whose anchor cell is not printed (a hidden row or column, a covered part of a
+/// merge) after the cells, each at its size and never wider than the page.
+fn write_loose_drawings(
+    source: &mut String,
+    drawings: &[PlacedDrawing],
+    anchored: &HashSet<usize>,
+    text_width: f64,
+) {
+    for (index, drawing) in drawings.iter().enumerate() {
+        if anchored.contains(&index) {
+            continue;
+        }
+        let scale = (text_width / drawing.width).min(1.0);
         let _ = writeln!(
             source,
             "#block(above: 12pt, breakable: false, image({}, width: {}, height: {}, fit: \"stretch\"))",
-            string_literal(&path),
-            points(width * scale),
-            points(height * scale)
+            string_literal(&drawing.path),
+            points(drawing.width * scale),
+            points(drawing.height * scale)
         );
-        files.push((path, drawing.bytes.clone()));
     }
 }
 
@@ -103,8 +165,13 @@ fn image_extension(content_type: &str) -> Option<&'static str> {
     }
 }
 
-/// Write a sheet's page and its cells, and give back the width of the text area.
-fn write_sheet(source: &mut String, sheet: &Sheet) -> f64 {
+/// Write a sheet's page and its cells, and give back the width of the text area and the
+/// drawings whose anchor cell carries a marker.
+fn write_sheet(
+    source: &mut String,
+    sheet: &Sheet,
+    drawings: &[PlacedDrawing],
+) -> (f64, HashSet<usize>) {
     let layout = &sheet.layout;
     let (width, height) = if layout.landscape {
         (A4_POINTS.1, A4_POINTS.0)
@@ -160,6 +227,9 @@ fn write_sheet(source: &mut String, sheet: &Sheet) -> f64 {
         }
         _ => source.push_str(", footer: none"),
     }
+    if let Some(foreground) = drawings_foreground(drawings) {
+        let _ = write!(source, ", foreground: {foreground}");
+    }
     source.push_str(")\n");
     let _ = writeln!(
         source,
@@ -169,8 +239,8 @@ fn write_sheet(source: &mut String, sheet: &Sheet) -> f64 {
     // The lines of a wrapped cell sit as close as a spreadsheet sets them.
     source.push_str("#set par(leading: 0.1em)\n");
 
-    write_tables(source, sheet, width - left - right, font_size);
-    width - left - right
+    let anchored = write_tables(source, sheet, width - left - right, font_size, drawings);
+    (width - left - right, anchored)
 }
 
 /// What a cell of a printed group of columns is: drawn alone, the first cell of the part of a
@@ -187,18 +257,34 @@ enum Placement {
     Covered,
 }
 
-/// The cells of a sheet as tables, one group of columns that fits the page after the other;
-/// hidden rows are left out.
-fn write_tables(source: &mut String, sheet: &Sheet, text_width: f64, font_size: f64) {
+/// The cells of a sheet as tables, one group of columns that fits the page after the other,
+/// reaching as far as the cells its drawings are anchored in; hidden rows are left out. The
+/// cell a drawing is anchored in carries its marker; the drawings marked are given back.
+fn write_tables(
+    source: &mut String,
+    sheet: &Sheet,
+    text_width: f64,
+    font_size: f64,
+    drawings: &[PlacedDrawing],
+) -> HashSet<usize> {
     let layout = &sheet.layout;
-    let widths = column_widths(sheet);
+    let (row_count, column_count) = table_extent(sheet, drawings);
+    let widths = column_widths(sheet, column_count);
     let inset_y = (font_size * (ROW_HEIGHT_PER_FONT_POINT - 1.15) / 2.0).max(0.0);
+    let mut markers: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    for (index, drawing) in drawings.iter().enumerate() {
+        markers
+            .entry((drawing.row, drawing.column))
+            .or_default()
+            .push(index);
+    }
+    let mut anchored = HashSet::new();
     let stroke = if layout.grid_lines {
         GRID_STROKE
     } else {
         "none"
     };
-    let visible_rows: Vec<usize> = (0..sheet.rows.len())
+    let visible_rows: Vec<usize> = (0..row_count)
         .filter(|row| {
             u32::try_from(*row)
                 .ok()
@@ -206,7 +292,7 @@ fn write_tables(source: &mut String, sheet: &Sheet, text_width: f64, font_size: 
                 != Some(&0)
         })
         .collect();
-    let merges = merged_cells(layout, sheet.rows.len(), widths.len());
+    let merges = merged_cells(layout, row_count, widths.len());
     for (chunk_index, columns) in column_chunks(&widths, text_width).into_iter().enumerate() {
         if chunk_index > 0 {
             source.push_str("#pagebreak()\n");
@@ -261,13 +347,46 @@ fn write_tables(source: &mut String, sheet: &Sheet, text_width: f64, font_size: 
                     .zip(u32::try_from(origin.1).ok())
                     .and_then(|(row, column)| layout.style_of(row, column));
                 let colour = sheet.value_colours.get(&origin).copied();
+                let marker = markers.get(&(row, column)).map(|marked| {
+                    let mut labels = String::new();
+                    for index in marked {
+                        anchored.insert(*index);
+                        let _ = write!(labels, "#metadata(none) <{}>", drawings[*index].label);
+                    }
+                    format!(
+                        "place(top + left, dx: -{}, dy: -{})[{labels}]",
+                        points(CELL_INSET_X_POINTS),
+                        points(inset_y)
+                    )
+                });
                 source.push(' ');
-                source.push_str(&cell_markup(value, style, colour, spans));
+                source.push_str(&cell_markup(value, style, colour, spans, marker.as_deref()));
                 source.push(',');
             }
         }
         source.push_str(")\n");
     }
+    anchored
+}
+
+/// The rows and columns a sheet's table prints: its cells, and as far as the cells its
+/// drawings are anchored in.
+fn table_extent(sheet: &Sheet, drawings: &[PlacedDrawing]) -> (usize, usize) {
+    let reach = |cell: fn(&PlacedDrawing) -> usize, from: usize| {
+        drawings
+            .iter()
+            .map(cell)
+            .filter(|index| *index < MAX_DRAWING_REACH)
+            .map(|index| index + 1)
+            .fold(from, usize::max)
+    };
+    (
+        reach(|drawing| drawing.row, sheet.rows.len()),
+        reach(
+            |drawing| drawing.column,
+            sheet.rows.first().map_or(0, Vec::len),
+        ),
+    )
 }
 
 /// The merged range each shown cell belongs to, by row and column.
@@ -356,6 +475,7 @@ fn cell_markup(
     style: Option<&CellStyle>,
     value_colour: Option<&str>,
     spans: Option<(usize, usize)>,
+    marker: Option<&str>,
 ) -> String {
     let mut arguments = Vec::new();
     if let Some((columns, rows)) = spans {
@@ -366,28 +486,7 @@ fn cell_markup(
             arguments.push(format!("rowspan: {rows}"));
         }
     }
-    let horizontal = style.and_then(|style| style.horizontal).or_else(|| {
-        (!value.is_empty() && looks_numeric(value)).then_some(HorizontalAlignment::Right)
-    });
-    let vertical = style.and_then(|style| style.vertical);
-    let horizontal = horizontal.map(|alignment| match alignment {
-        HorizontalAlignment::Left | HorizontalAlignment::Justify => "left",
-        HorizontalAlignment::Center => "center",
-        HorizontalAlignment::Right => "right",
-    });
-    let vertical = vertical.map(|alignment| match alignment {
-        VerticalAlignment::Top => "top",
-        VerticalAlignment::Center => "horizon",
-        VerticalAlignment::Bottom => "bottom",
-    });
-    match (horizontal, vertical) {
-        (Some(horizontal), Some(vertical)) => {
-            arguments.push(format!("align: {horizontal} + {vertical}"));
-        }
-        (Some(horizontal), None) => arguments.push(format!("align: {horizontal} + bottom")),
-        (None, Some(vertical)) => arguments.push(format!("align: {vertical}")),
-        (None, None) => {}
-    }
+    arguments.extend(alignment_argument(value, style));
     if let Some(style) = style {
         if let Some(fill) = &style.fill {
             arguments.push(format!("fill: rgb(\"#{fill}\")"));
@@ -453,10 +552,38 @@ fn cell_markup(
             format!("box({text})")
         }
     };
+    let content = match marker {
+        Some(marker) => format!("[#{marker}#{{{content}}}]"),
+        None => content,
+    };
     if arguments.is_empty() {
         content
     } else {
         format!("table.cell({}, {content})", arguments.join(", "))
+    }
+}
+
+/// The `align` of a cell: its style's, else right for a value that reads as a number.
+fn alignment_argument(value: &str, style: Option<&CellStyle>) -> Option<String> {
+    let horizontal = style.and_then(|style| style.horizontal).or_else(|| {
+        (!value.is_empty() && looks_numeric(value)).then_some(HorizontalAlignment::Right)
+    });
+    let vertical = style.and_then(|style| style.vertical);
+    let horizontal = horizontal.map(|alignment| match alignment {
+        HorizontalAlignment::Left | HorizontalAlignment::Justify => "left",
+        HorizontalAlignment::Center => "center",
+        HorizontalAlignment::Right => "right",
+    });
+    let vertical = vertical.map(|alignment| match alignment {
+        VerticalAlignment::Top => "top",
+        VerticalAlignment::Center => "horizon",
+        VerticalAlignment::Bottom => "bottom",
+    });
+    match (horizontal, vertical) {
+        (Some(horizontal), Some(vertical)) => Some(format!("align: {horizontal} + {vertical}")),
+        (Some(horizontal), None) => Some(format!("align: {horizontal} + bottom")),
+        (None, Some(vertical)) => Some(format!("align: {vertical}")),
+        (None, None) => None,
     }
 }
 
@@ -484,10 +611,10 @@ fn border_stroke(border: &Border) -> String {
     format!("(paint: {paint}, thickness: {}{dash})", points(width))
 }
 
-/// The width of each column in points, from the sheet's layout; a hidden column is 0.
-fn column_widths(sheet: &Sheet) -> Vec<f64> {
+/// The width of each of the first `columns` columns in points, from the sheet's layout; a
+/// hidden column is 0.
+fn column_widths(sheet: &Sheet, columns: usize) -> Vec<f64> {
     let layout: &SheetLayout = &sheet.layout;
-    let columns = sheet.rows.first().map_or(0, Vec::len);
     let default = layout.default_column_width.unwrap_or(DEFAULT_COLUMN_WIDTH);
     (0..columns)
         .map(|column| {
@@ -688,10 +815,11 @@ mod tests {
     }
 
     #[test]
-    fn places_the_drawings_of_a_sheet_after_its_cells_within_the_page() {
+    fn places_the_drawings_of_a_sheet_over_the_cells_they_are_anchored_in() {
         let drawing = |row: u32, width_emu: i64, content_type: &'static str| SheetDrawing {
             row,
-            column: 0,
+            column: 3,
+            offset_emu: (12_700, 25_400),
             width_emu,
             height_emu: 1_270_000,
             content_type,
@@ -699,6 +827,7 @@ mod tests {
             description: None,
         };
         let mut drawn = sheet("Vendite", &[&["a"]]);
+        drawn.layout.row_heights.insert(9, 0);
         drawn.layout.drawings = vec![
             drawing(9, 12_700_000, "image/svg+xml"),
             drawing(2, 127_000_000, "image/png"),
@@ -717,16 +846,32 @@ mod tests {
             ],
             "in the order of their anchors, an image Typst cannot read left out"
         );
-        let first = source.find("0-0.png").unwrap();
-        let second = source.find("0-2.svg").unwrap();
-        assert!(source.find("\"a\"").unwrap() < first && first < second);
+        assert!(
+            source.contains("columns: (48pt, 48pt, 48pt, 48pt, )"),
+            "the table reaches the column of the drawing: {source}"
+        );
+        assert!(source.contains("[#place(top + left, dx: -2pt, dy: -"));
+        assert!(source.contains("[#metadata(none) <rely-drawing-0-0>]#{hide[0]}]"));
+        assert!(source.contains(concat!(
+            "query(<rely-drawing-0-0>); if found.len() > 0 { let at = found.first().location().position(); ",
+            "if at.page == page { place(top + left, dx: at.x + 1pt, dy: at.y + 2pt, ",
+            "image(\"/media/sheets/0-0.png\", width: 10000pt, height: 100pt, fit: \"stretch\"))"
+        )));
+        assert!(
+            !source.contains("#metadata(none) <rely-drawing-0-2>"),
+            "a hidden row prints no anchor"
+        );
+        let table = source.find("#table(").unwrap();
+        let loose = source.find("#block(above: 12pt").unwrap();
+        assert!(table < loose);
         assert!(
             source.contains("0-2.svg\", width: 494.48pt, height: 49.45pt"),
-            "never wider than the page: {source}"
+            "a drawing with no printed anchor follows the cells, never wider than the page"
         );
         let (without, files) = workbook_source(&workbook, false);
         assert_eq!(files, Vec::<(String, Vec<u8>)>::new());
         assert!(!without.contains("/media/"));
+        assert!(!without.contains("foreground"));
     }
 
     #[test]

@@ -159,17 +159,41 @@ fn sizes_a_drawing_by_its_anchor() {
     let height = (400 + 600) * EMU_PER_TWIP + 635;
     assert_eq!(
         anchor_frame(&two_cell, &layout),
-        Some((0, 0, width, height))
+        Some(AnchorFrame {
+            row: 0,
+            column: 0,
+            offset_emu: (9_525, 0),
+            width_emu: width,
+            height_emu: height
+        })
     );
     let one_cell = anchor(concat!(
-        "<xdr:oneCellAnchor><xdr:from><xdr:col>4</xdr:col><xdr:row>7</xdr:row></xdr:from>",
+        "<xdr:oneCellAnchor><xdr:from><xdr:col>4</xdr:col><xdr:row>7</xdr:row><xdr:rowOff>12700</xdr:rowOff></xdr:from>",
         r#"<xdr:ext cx="1000" cy="2000"/></xdr:oneCellAnchor>"#
     ));
-    assert_eq!(anchor_frame(&one_cell, &layout), Some((7, 4, 1_000, 2_000)));
-    let absolute = anchor(
-        r#"<xdr:absoluteAnchor><xdr:pos x="0" y="0"/><xdr:ext cx="10" cy="20"/></xdr:absoluteAnchor>"#,
+    assert_eq!(
+        anchor_frame(&one_cell, &layout),
+        Some(AnchorFrame {
+            row: 7,
+            column: 4,
+            offset_emu: (0, 12_700),
+            width_emu: 1_000,
+            height_emu: 2_000
+        })
     );
-    assert_eq!(anchor_frame(&absolute, &layout), Some((0, 0, 10, 20)));
+    let absolute = anchor(
+        r#"<xdr:absoluteAnchor><xdr:pos x="300" y="-5"/><xdr:ext cx="10" cy="20"/></xdr:absoluteAnchor>"#,
+    );
+    assert_eq!(
+        anchor_frame(&absolute, &layout),
+        Some(AnchorFrame {
+            row: 0,
+            column: 0,
+            offset_emu: (300, 0),
+            width_emu: 10,
+            height_emu: 20
+        })
+    );
     assert_eq!(anchor_frame(&anchor("<xdr:clientData/>"), &layout), None);
     assert_eq!(
         anchor_frame(

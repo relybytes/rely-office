@@ -41,6 +41,8 @@ pub struct SheetDrawing {
     /// The cell its top-left corner is anchored in, from 0.
     pub row: u32,
     pub column: u32,
+    /// How far into that cell the corner sits, across and down.
+    pub offset_emu: (i64, i64),
     pub width_emu: i64,
     pub height_emu: i64,
     pub content_type: &'static str,
@@ -332,7 +334,14 @@ pub(crate) fn sheet_drawings(
         if drawings.len() >= MAX_DRAWINGS {
             break;
         }
-        let Some((row, column, width_emu, height_emu)) = anchor_frame(anchor, layout) else {
+        let Some(AnchorFrame {
+            row,
+            column,
+            offset_emu,
+            width_emu,
+            height_emu,
+        }) = anchor_frame(anchor, layout)
+        else {
             continue;
         };
         if width_emu <= 0 || height_emu <= 0 {
@@ -362,6 +371,7 @@ pub(crate) fn sheet_drawings(
             drawings.push(SheetDrawing {
                 row,
                 column,
+                offset_emu,
                 width_emu,
                 height_emu,
                 content_type,
@@ -373,8 +383,18 @@ pub(crate) fn sheet_drawings(
     Ok(drawings)
 }
 
-/// The cell an anchor starts in and the size it gives its drawing.
-fn anchor_frame(anchor: &Element, layout: &SheetLayout) -> Option<(u32, u32, i64, i64)> {
+/// Where an anchor puts its drawing: the cell it starts in, how far into it, and the size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AnchorFrame {
+    row: u32,
+    column: u32,
+    offset_emu: (i64, i64),
+    width_emu: i64,
+    height_emu: i64,
+}
+
+/// The cell an anchor starts in, how far into it, and the size it gives its drawing.
+fn anchor_frame(anchor: &Element, layout: &SheetLayout) -> Option<AnchorFrame> {
     let marker = |name: &str| {
         let marker = anchor.child(XDR, name)?;
         let number = |name: &str| {
@@ -415,17 +435,42 @@ fn anchor_frame(anchor: &Element, layout: &SheetLayout) -> Option<(u32, u32, i64
                 columns_emu(layout, from_column, to_column) - from_column_offset + to_column_offset;
             let height = rows_emu(layout, from_row, to_row) - from_row_offset + to_row_offset;
             let (row, column) = cell(from_row, from_column);
-            Some((row, column, width.min(MAX_EMU), height.min(MAX_EMU)))
+            Some(AnchorFrame {
+                row,
+                column,
+                offset_emu: (from_column_offset, from_row_offset),
+                width_emu: width.min(MAX_EMU),
+                height_emu: height.min(MAX_EMU),
+            })
         }
         "oneCellAnchor" => {
-            let (column, _, row, _) = marker("from")?;
+            let (column, column_offset, row, row_offset) = marker("from")?;
             let (width, height) = extent()?;
             let (row, column) = cell(row, column);
-            Some((row, column, width, height))
+            Some(AnchorFrame {
+                row,
+                column,
+                offset_emu: (column_offset, row_offset),
+                width_emu: width,
+                height_emu: height,
+            })
         }
         "absoluteAnchor" => {
             let (width, height) = extent()?;
-            Some((0, 0, width, height))
+            let position = anchor.child(XDR, "pos");
+            let coordinate = |name: &str| {
+                position
+                    .and_then(|position| position.attribute(Namespace::None, name))
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .map_or(0, |value| value.clamp(0, MAX_EMU))
+            };
+            Some(AnchorFrame {
+                row: 0,
+                column: 0,
+                offset_emu: (coordinate("x"), coordinate("y")),
+                width_emu: width,
+                height_emu: height,
+            })
         }
         _ => None,
     }
