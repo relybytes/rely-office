@@ -142,3 +142,70 @@ fn reads_store_entries_and_property_tables() {
     assert_eq!(flag(1 << 20, 4), Some(false));
     assert_eq!(flag(1 << 4, 4), None);
 }
+
+#[test]
+fn turns_the_adjust_values_of_a_shape_type_into_its_presets() {
+    let set = |values: &[i64]| {
+        let mut adjust = [None; 10];
+        for (index, value) in values.iter().enumerate() {
+            adjust[index] = Some(*value);
+        }
+        adjust
+    };
+    let close = |found: Option<Vec<f64>>, wanted: &[f64]| {
+        let found = found.unwrap();
+        assert_eq!(found.len(), wanted.len(), "{found:?}");
+        for (found, wanted) in found.iter().zip(wanted) {
+            assert!((found - wanted).abs() < 1.0, "{found} for {wanted}");
+        }
+    };
+    assert_eq!(
+        drawingml_adjustments(2, &[None; 10], 100, 100),
+        None,
+        "nothing set"
+    );
+    // The binary defaults give the preset's own defaults where the two agree.
+    close(
+        drawingml_adjustments(2, &set(&[3_600]), 100, 100),
+        &[16_667.0],
+    );
+    close(
+        drawingml_adjustments(10, &set(&[6_326]), 100, 100),
+        &[29_287.0],
+    );
+    close(
+        drawingml_adjustments(9, &set(&[10_800]), 100, 100),
+        &[50_000.0],
+    );
+    // A callout's tip, from the corner to the centre's offset.
+    close(
+        drawingml_adjustments(61, &set(&[1_350]), 100, 100),
+        &[-43_750.0, 70_000.0],
+    );
+    // An arrow's head in a frame twice as wide as high is measured by the height.
+    close(
+        drawingml_adjustments(13, &set(&[16_200, 5_400]), 200, 100),
+        &[50_000.0, 50_000.0],
+    );
+    close(
+        drawingml_adjustments(66, &set(&[10_800, 2_700]), 100, 100),
+        &[75_000.0, 50_000.0],
+    );
+    close(
+        drawingml_adjustments(67, &set(&[16_200, 5_400]), 100, 200),
+        &[50_000.0, 50_000.0],
+    );
+    close(
+        drawingml_adjustments(68, &set(&[5_400]), 100, 100),
+        &[50_000.0, 25_000.0],
+    );
+    close(
+        drawingml_adjustments(55, &set(&[10_800]), 100, 100),
+        &[50_000.0],
+    );
+    assert_eq!(
+        drawingml_adjustments(12, &set(&[1]), 100, 100),
+        None,
+        "a star keeps its own"
+    );
+}

@@ -17,12 +17,12 @@ use super::text_style::{
 };
 use crate::compound::{open_compound_file, read_stream, u16_at, u32_at};
 use crate::document::{Alignment, Media, bullet_character, image_pixel_size, sniff_image_type};
-use crate::geometry::{flip_paths, preset_geometry};
+use crate::geometry::{flip_paths, preset_geometry, preset_geometry_with_values};
 use crate::office_art::{
     CHILD_ANCHOR, CLIENT_ANCHOR, CLIENT_DATA, CLIENT_TEXTBOX, DRAWING_CONTAINER, GROUP_CONTAINER,
     GROUP_SHAPE, PROPERTIES, Record, SHAPE, SHAPE_CONTAINER, SHAPE_GROUP_CONTAINER,
-    STORE_CONTAINER, TERTIARY_PROPERTIES, child, complex_properties, flag, preset_of_shape_type,
-    properties, records, store_images,
+    STORE_CONTAINER, TERTIARY_PROPERTIES, child, complex_properties, drawingml_adjustments, flag,
+    preset_of_shape_type, properties, records, store_images,
 };
 use crate::slides::{
     Animation, AnimationClass, AnimationTrigger, Bullet, Frame, Gradient, GradientKind,
@@ -665,6 +665,7 @@ impl<'a> Reader<'a> {
         let geometry = options.custom_geometry(frame).unwrap_or_else(|| {
             geometry(
                 options.kind,
+                &options.adjustments,
                 frame,
                 options.flip_horizontal,
                 options.flip_vertical,
@@ -1327,8 +1328,15 @@ fn shaded_fill(options: &Options, colour: &str, back: &str) -> Paint {
     Paint::Gradient(Gradient { stops, kind })
 }
 
-/// The outline of a shape type (`MSOSPT`), drawn from the `DrawingML` preset of the same shape.
-fn geometry(kind: u16, frame: Frame, flip_horizontal: bool, flip_vertical: bool) -> ShapeGeometry {
+/// The outline of a shape type (`MSOSPT`), drawn from the `DrawingML` preset of the same shape
+/// with the adjust values the shape sets.
+fn geometry(
+    kind: u16,
+    adjustments: &[Option<i64>; 10],
+    frame: Frame,
+    flip_horizontal: bool,
+    flip_vertical: bool,
+) -> ShapeGeometry {
     let preset = match kind {
         3 | 120 => return ShapeGeometry::Ellipse,
         20 | 32 => {
@@ -1341,7 +1349,11 @@ fn geometry(kind: u16, frame: Frame, flip_horizontal: bool, flip_vertical: bool)
             None => return ShapeGeometry::Rectangle,
         },
     };
-    match preset_geometry(preset, None, frame.width, frame.height) {
+    let paths = match drawingml_adjustments(kind, adjustments, frame.width, frame.height) {
+        Some(values) => preset_geometry_with_values(preset, &values, frame.width, frame.height),
+        None => preset_geometry(preset, None, frame.width, frame.height),
+    };
+    match paths {
         Some(mut paths) => {
             flip_paths(
                 &mut paths,
@@ -1390,6 +1402,8 @@ struct Options {
     anchor_text: Option<TextAnchor>,
     wrap: bool,
     freeform: Freeform,
+    /// The adjust values the shape sets, unset ones `None`.
+    adjustments: [Option<i64>; 10],
 }
 
 impl Options {
@@ -1516,7 +1530,11 @@ impl Options {
                 }
                 0x0104 => self.picture = Some(value),
                 0x0140..=0x0143 => self.freeform.bounds[usize::from(identifier - 0x0140)] = length,
-                0x0147..=0x0150 => self.freeform.adjust[usize::from(identifier - 0x0147)] = length,
+                0x0147..=0x0150 => {
+                    let index = usize::from(identifier - 0x0147);
+                    self.freeform.adjust[index] = length;
+                    self.adjustments[index] = Some(length);
+                }
                 0x0180 => self.fill_type = value,
                 0x0181 => self.fill = Some(value),
                 0x0183 => self.fill_back = Some(value),

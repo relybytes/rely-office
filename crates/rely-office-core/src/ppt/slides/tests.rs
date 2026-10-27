@@ -594,17 +594,38 @@ fn reads_colour_references_and_shape_types() {
         (2..=200).filter(|kind| !matches!(kind, 3 | 20 | 24..=32 | 109 | 120 | 136..=175));
     for kind in every_mapped_kind {
         assert!(
-            matches!(geometry(kind, frame, false, false), ShapeGeometry::Path(_)),
+            matches!(
+                geometry(kind, &[None; 10], frame, false, false),
+                ShapeGeometry::Path(_)
+            ),
             "{kind}"
         );
     }
-    assert_eq!(geometry(1, frame, false, false), ShapeGeometry::Rectangle);
-    assert_eq!(geometry(120, frame, false, false), ShapeGeometry::Ellipse);
     assert_eq!(
-        geometry(20, frame, true, false),
+        geometry(1, &[None; 10], frame, false, false),
+        ShapeGeometry::Rectangle
+    );
+    assert_eq!(
+        geometry(120, &[None; 10], frame, false, false),
+        ShapeGeometry::Ellipse
+    );
+    assert_eq!(
+        geometry(20, &[None; 10], frame, true, false),
         ShapeGeometry::Line { flipped: true }
     );
-    assert_eq!(geometry(999, frame, false, false), ShapeGeometry::Rectangle);
+    assert_eq!(
+        geometry(999, &[None; 10], frame, false, false),
+        ShapeGeometry::Rectangle
+    );
+    let mut round = [None; 10];
+    round[0] = Some(10_800);
+    let (ShapeGeometry::Path(rounder), ShapeGeometry::Path(plain)) = (
+        geometry(2, &round, frame, false, false),
+        geometry(2, &[None; 10], frame, false, false),
+    ) else {
+        panic!("a rounded rectangle is a path");
+    };
+    assert_ne!(rounder, plain, "the shape's own corner radius");
     assert_eq!(master_style_of(6), 0);
     assert_eq!(master_style_of(8), 1);
     assert_eq!(master_style_of(2), 2);

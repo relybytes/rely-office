@@ -203,6 +203,57 @@ pub(crate) fn flag(value: u32, bit: u32) -> Option<bool> {
     (value & (1 << (bit + 16)) != 0).then_some(value & (1 << bit) != 0)
 }
 
+/// The adjust values of the `DrawingML` preset of a shape type from the ones a binary file
+/// sets (`adjustValue` to `adjust10Value`, in the type's 21,600 units): `None` when it sets
+/// none, or for a type whose handles do not map onto its preset's, which then keeps the
+/// preset's defaults. A value left unset takes the type's own default.
+#[must_use]
+pub(crate) fn drawingml_adjustments(
+    kind: u16,
+    adjust: &[Option<i64>; 10],
+    width: i64,
+    height: i64,
+) -> Option<Vec<f64>> {
+    if adjust.iter().all(Option::is_none) {
+        return None;
+    }
+    let defaults: &[i64] = match kind {
+        2 | 21 => &[3_600],
+        5 | 184 => &[10_800],
+        7 | 9 | 11 | 16 | 22 | 23 => &[5_400],
+        10 => &[6_326],
+        84 => &[2_700],
+        61..=63 | 17 => &[1_350, 25_920],
+        13 | 14 | 67 => &[16_200, 5_400],
+        66 | 68 => &[5_400, 5_400],
+        15 | 55 => &[16_200],
+        _ => return None,
+    };
+    #[expect(clippy::cast_precision_loss, reason = "adjust values are small")]
+    let value = |index: usize| adjust[index].unwrap_or(defaults[index]) as f64;
+    let share = |units: f64| units * 100_000.0 / 21_600.0;
+    #[expect(clippy::cast_precision_loss, reason = "frame sizes fit in f64")]
+    let (width, height) = (width.max(1) as f64, height.max(1) as f64);
+    let shortest = width.min(height);
+    // A length along one side, as a share of the shorter side the preset measures it by.
+    let along = |units: f64, side: f64| share(units) * side / shortest;
+    Some(match kind {
+        61..=63 | 17 => vec![share(value(0) - 10_800.0), share(value(1) - 10_800.0)],
+        13 | 14 => vec![
+            share(21_600.0 - 2.0 * value(1)),
+            along(21_600.0 - value(0), width),
+        ],
+        66 => vec![share(21_600.0 - 2.0 * value(1)), along(value(0), width)],
+        67 => vec![
+            share(21_600.0 - 2.0 * value(1)),
+            along(21_600.0 - value(0), height),
+        ],
+        68 => vec![share(21_600.0 - 2.0 * value(1)), along(value(0), height)],
+        15 | 55 => vec![along(21_600.0 - value(0), width)],
+        _ => vec![share(value(0))],
+    })
+}
+
 /// The `DrawingML` preset that draws a shape type (`MSOSPT`) the same; `None` for a rectangle
 /// and for the types with no outline of their own.
 #[expect(

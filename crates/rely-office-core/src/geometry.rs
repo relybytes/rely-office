@@ -15,7 +15,7 @@ mod picture;
 mod presets;
 mod svg;
 
-pub(crate) use drawingml::{custom_geometry, preset_geometry};
+pub(crate) use drawingml::{custom_geometry, preset_geometry, preset_geometry_with_values};
 pub(crate) use enhanced::enhanced_geometry;
 pub(crate) use picture::{DrawnShape, TextLine, rectangle_paths, shapes_svg};
 pub(crate) use svg::svg_path_geometry;
