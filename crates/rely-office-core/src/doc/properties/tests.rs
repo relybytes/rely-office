@@ -55,6 +55,10 @@ fn applies_each_character_modifier() {
         0x00, 0x08, 0x01, // deleted
         0x01, 0x08, 0x01, // inserted
         0x30, 0x4A, 0x0C, 0x00, // character style 12
+        0x04, 0x48, 0x02, 0x00, // inserted by reviewer 2
+        0x05, 0x68, 0x01, 0x02, 0x03, 0x04, // on this date
+        0x63, 0x48, 0x01, 0x00, // deleted by reviewer 1
+        0x64, 0x68, 0x05, 0x06, 0x07, 0x08, // on this date
     ];
     let character = applied(&grpprl, &Character::default());
     assert_eq!(
@@ -78,6 +82,8 @@ fn applies_each_character_modifier() {
             object: true,
             deleted: true,
             inserted: true,
+            insertion: (2, 0x0403_0201),
+            deletion: (1, 0x0807_0605),
             style: Some(12),
         }
     );

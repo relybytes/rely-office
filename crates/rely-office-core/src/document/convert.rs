@@ -6,19 +6,20 @@
 
 //! From the element tree of `word/document.xml` to the neutral document tree.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::anchor::{Anchor, TextFrame, css_emu, set_frame};
 use super::edges::CellLook;
 use super::look::{PageField, ParagraphLook, RunLook, TableLook};
-use super::notes::NoteParts;
+use super::notes::{CommentParts, NoteParts};
 use super::numbering::{ListCounters, Numbering};
 use super::styles::{
     NumberingReference, ParagraphRole, RunFormat, Styles, TableFormat, TableRegion, alignment,
     numbering_reference, on_off, outline_level,
 };
 use super::{
-    Block, ImportReport, Inline, Mark, Media, Note, NoteKind, TableCell, TableRow, sniff_image_type,
+    Block, Comment, ImportReport, Inline, Mark, Media, Note, NoteKind, TableCell, TableRow,
+    TrackedChanges, sniff_image_type,
 };
 use crate::archive::{ZipPackage, read_member_bytes, read_text_member};
 use crate::chart::{chart_picture, no_cells};
@@ -158,15 +159,34 @@ pub(super) struct Converter<'a, 'p> {
     next_frame: u32,
     /// The description of each chart image, by media index, taken as it is placed.
     media_titles: HashMap<usize, String>,
+    comment_parts: &'a CommentParts,
+    comments: Vec<Comment>,
+    /// The `w14:paraId` of the last paragraph of each comment, which threads name.
+    comment_paragraphs: Vec<Option<String>>,
+    comments_by_id: HashMap<String, usize>,
+    /// The comments whose range the text being read is in.
+    open_comments: Vec<usize>,
+    /// The comments some text has been marked with.
+    marked_comments: HashSet<usize>,
+    reading_comment: bool,
+    tracked_changes: TrackedChanges,
+    /// The insertion or deletion the text being read is in, when changes are kept.
+    revisions: Vec<Mark>,
 }
 
 impl<'a, 'p> Converter<'a, 'p> {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the converter borrows every part of the package it reads from"
+    )]
     pub(super) fn new(
         package: &'a mut ZipPackage<'p>,
         relationships: &'a [Relationship],
         styles: &'a Styles,
         numbering: &'a Numbering,
         note_parts: &'a NoteParts,
+        comment_parts: &'a CommentParts,
+        tracked_changes: TrackedChanges,
         limits: &'a Limits,
         report: &'a mut ImportReport,
     ) -> Self {
@@ -198,12 +218,107 @@ impl<'a, 'p> Converter<'a, 'p> {
             theme: None,
             media_titles: HashMap::new(),
             next_frame: 0,
+            comment_parts,
+            comments: Vec::new(),
+            comment_paragraphs: Vec::new(),
+            comments_by_id: HashMap::new(),
+            open_comments: Vec::new(),
+            marked_comments: HashSet::new(),
+            reading_comment: false,
+            tracked_changes,
+            revisions: Vec::new(),
         }
     }
 
-    /// The images and the notes read, in the order the tree refers to them.
-    pub(super) fn finish(self) -> (Vec<Media>, Vec<Note>) {
-        (self.media, self.notes)
+    /// The images, the notes and the comments read, in the order the tree refers to them, each
+    /// reply pointing at the comment it answers.
+    pub(super) fn finish(mut self) -> (Vec<Media>, Vec<Note>, Vec<Comment>) {
+        for index in 0..self.comments.len() {
+            let Some(paragraph) = self.comment_paragraphs[index].as_ref() else {
+                continue;
+            };
+            let Some((parent, done)) = self.comment_parts.threads.get(paragraph) else {
+                continue;
+            };
+            self.comments[index].resolved = *done;
+            self.comments[index].parent = parent.as_ref().and_then(|parent| {
+                self.comment_paragraphs
+                    .iter()
+                    .position(|known| known.as_ref() == Some(parent))
+                    .filter(|position| *position != index)
+            });
+        }
+        (self.media, self.notes, self.comments)
+    }
+
+    /// The index of a comment in the tree, read the first time the text names it; the text of
+    /// a comment marks no comment.
+    fn comment(&mut self, id: &str) -> Option<usize> {
+        if let Some(index) = self.comments_by_id.get(id) {
+            return Some(*index);
+        }
+        if self.reading_comment || self.reading_note {
+            return None;
+        }
+        let (element, relationships) = self.comment_parts.find(id)?;
+        self.reading_comment = true;
+        let open = std::mem::take(&mut self.open_comments);
+        let revisions = std::mem::take(&mut self.revisions);
+        let blocks = self.convert_part(element, relationships);
+        self.open_comments = open;
+        self.revisions = revisions;
+        self.reading_comment = false;
+        let text = |name: &str| element.attribute(W, name).map(str::to_owned);
+        self.comments.push(Comment {
+            author: text("author").unwrap_or_default(),
+            initials: text("initials").filter(|initials| !initials.is_empty()),
+            date: text("date"),
+            blocks,
+            parent: None,
+            resolved: false,
+        });
+        self.comment_paragraphs.push(
+            element
+                .elements()
+                .filter(|paragraph| paragraph.is(W, "p"))
+                .last()
+                .and_then(|paragraph| paragraph.attribute(Namespace::Other, "paraId"))
+                .map(str::to_owned),
+        );
+        let index = self.comments.len() - 1;
+        self.comments_by_id.insert(id.to_owned(), index);
+        Some(index)
+    }
+
+    /// Follow `w:commentRangeStart` and `w:commentRangeEnd`: the text between them is marked.
+    fn comment_range(&mut self, element: &Element, start: bool) {
+        let Some(index) = element.attribute(W, "id").and_then(|id| self.comment(id)) else {
+            return;
+        };
+        if start {
+            if !self.open_comments.contains(&index) {
+                self.open_comments.push(index);
+            }
+        } else {
+            self.open_comments.retain(|open| *open != index);
+        }
+    }
+
+    /// The change a `w:ins` or `w:del` tracks, as the mark its runs take when changes are kept.
+    fn revision(&self, element: &Element, inserted: bool) -> Option<Mark> {
+        if self.tracked_changes != TrackedChanges::Keep || self.reading_comment {
+            return None;
+        }
+        let author = element
+            .attribute(W, "author")
+            .unwrap_or_default()
+            .to_owned();
+        let date = element.attribute(W, "date").map(str::to_owned);
+        Some(if inserted {
+            Mark::Insertion { author, date }
+        } else {
+            Mark::Deletion { author, date }
+        })
     }
 
     /// The blocks of another part, a header, a footer or a note, with its own relationships and
@@ -310,11 +425,24 @@ impl<'a, 'p> Converter<'a, 'p> {
                         self.append_blocks(content, blocks);
                     }
                 }
-                (W, "ins" | "moveTo") => {
-                    self.report.tracked_insertions += 1;
-                    self.append_blocks(element, blocks);
+                (W, name @ ("ins" | "moveTo" | "del" | "moveFrom")) => {
+                    let inserted = matches!(name, "ins" | "moveTo");
+                    if inserted {
+                        self.report.tracked_insertions += 1;
+                    } else {
+                        self.report.tracked_deletions += 1;
+                    }
+                    let revision = self.revision(element, inserted);
+                    if inserted || revision.is_some() {
+                        self.revisions.extend(revision.clone());
+                        self.append_blocks(element, blocks);
+                        if revision.is_some() {
+                            self.revisions.pop();
+                        }
+                    }
                 }
-                (W, "del" | "moveFrom") => self.report.tracked_deletions += 1,
+                (W, "commentRangeStart") => self.comment_range(element, true),
+                (W, "commentRangeEnd") => self.comment_range(element, false),
                 (W, "customXml" | "smartTag") => self.append_blocks(element, blocks),
                 (MC, "AlternateContent") => {
                     if let Some(choice) = alternate_choice(element) {
@@ -473,11 +601,24 @@ impl<'a, 'p> Converter<'a, 'p> {
                     self.append_inlines(element, target.as_deref().or(link), content, scan);
                     self.hyperlink_depth -= 1;
                 }
-                (W, "ins" | "moveTo") => {
-                    self.report.tracked_insertions += 1;
-                    self.append_inlines(element, link, content, scan);
+                (W, name @ ("ins" | "moveTo" | "del" | "moveFrom")) => {
+                    let inserted = matches!(name, "ins" | "moveTo");
+                    if inserted {
+                        self.report.tracked_insertions += 1;
+                    } else {
+                        self.report.tracked_deletions += 1;
+                    }
+                    let revision = self.revision(element, inserted);
+                    if inserted || revision.is_some() {
+                        self.revisions.extend(revision.clone());
+                        self.append_inlines(element, link, content, scan);
+                        if revision.is_some() {
+                            self.revisions.pop();
+                        }
+                    }
                 }
-                (W, "del" | "moveFrom") => self.report.tracked_deletions += 1,
+                (W, "commentRangeStart") => self.comment_range(element, true),
+                (W, "commentRangeEnd") => self.comment_range(element, false),
                 (W, "smartTag" | "customXml" | "dir" | "bdo") => {
                     self.append_inlines(element, link, content, scan);
                 }
@@ -562,7 +703,9 @@ impl<'a, 'p> Converter<'a, 'p> {
                     }
                 }
                 _ if self.in_field_code() => {}
-                (W, "t") => self.push_text(content, &element.text(), format, look, link),
+                (W, "t" | "delText") => {
+                    self.push_text(content, &element.text(), format, look, link);
+                }
                 (W, "tab" | "ptab") => self.push_text(content, "\t", format, look, link),
                 (W, "noBreakHyphen") => self.push_text(content, "-", format, look, link),
                 (W, "br") => match element.attribute(W, "type") {
@@ -588,7 +731,16 @@ impl<'a, 'p> Converter<'a, 'p> {
                         content.push(Inline::NoteReference { note });
                     }
                 }
-                (W, "commentReference") => self.report.comments += 1,
+                (W, "commentReference") => {
+                    self.report.comments += 1;
+                    if let Some(comment) =
+                        element.attribute(W, "id").and_then(|id| self.comment(id))
+                        && !self.marked_comments.contains(&comment)
+                    {
+                        self.marked_comments.insert(comment);
+                        content.push(Inline::CommentAnchor { comment });
+                    }
+                }
                 (W, "drawing") => self.append_drawing(element, content),
                 (W, "pict") => self.append_vml(element, content, scan),
                 (W, "object") => self.report.embedded_objects += 1,
@@ -668,7 +820,12 @@ impl<'a, 'p> Converter<'a, 'p> {
             _ => look,
         };
         let link = link.or_else(|| self.current_field_link());
-        let marks = marks_of(format, look, link, self.hyperlink_depth > 0);
+        let mut marks = marks_of(format, look, link, self.hyperlink_depth > 0);
+        marks.extend(self.revisions.iter().cloned());
+        for comment in &self.open_comments {
+            marks.push(Mark::Comment { comment: *comment });
+            self.marked_comments.insert(*comment);
+        }
         if let Some(Inline::Text {
             text: previous,
             marks: previous_marks,
@@ -1412,7 +1569,7 @@ pub(crate) fn plain_text(content: &[Inline]) -> String {
         match inline {
             Inline::Text { text: run, .. } => text.push_str(run),
             Inline::HardBreak => text.push('\n'),
-            Inline::Image { .. } | Inline::NoteReference { .. } => {}
+            Inline::Image { .. } | Inline::NoteReference { .. } | Inline::CommentAnchor { .. } => {}
         }
     }
     text

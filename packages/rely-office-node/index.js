@@ -76,8 +76,14 @@ function readSheets(bytes, fileName, limits) {
   return JSON.parse(json);
 }
 
-function readDocumentTree(bytes, limits) {
-  const handle = call(() => wasm.readDocumentTreeHandle(toBytes(bytes), toLimitsJson(limits)));
+function readDocumentTree(bytes, limits, options) {
+  const handle = call(() =>
+    wasm.readDocumentTreeHandle(
+      toBytes(bytes),
+      toLimitsJson(limits),
+      options === undefined ? undefined : JSON.stringify(options),
+    ),
+  );
   try {
     const tree = JSON.parse(handle.json);
     tree.media = tree.media.map((item) => ({
@@ -180,14 +186,16 @@ function render(bytes, fileName, options) {
 }
 
 function writeDocx(tree) {
-  const { blocks, page, media, notes, headersFooters, sections } = tree ?? {};
+  const { blocks, page, media, notes, headersFooters, sections, comments } = tree ?? {};
   const writer = new wasm.DocxWriter();
   try {
     for (const bytes of media ?? []) {
       writer.addMedia(toBytes(bytes));
     }
     return call(() =>
-      writer.write(JSON.stringify({ blocks: blocks ?? [], page, notes, headersFooters, sections })),
+      writer.write(
+        JSON.stringify({ blocks: blocks ?? [], page, notes, headersFooters, sections, comments }),
+      ),
     );
   } finally {
     writer.free();

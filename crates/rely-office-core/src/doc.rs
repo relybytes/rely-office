@@ -7,6 +7,7 @@
 //! The text of a Word 97-2003 document ([MS-DOC]): the piece table (`Clx`) in the table stream
 //! says where each run of characters lies in the `WordDocument` stream and how it is encoded.
 
+mod comments;
 mod fib;
 mod fkp;
 mod fonts;

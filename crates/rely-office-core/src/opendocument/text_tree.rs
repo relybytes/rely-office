@@ -14,10 +14,10 @@ use super::styles::{FO, STYLE, Scope, Styles, TEXT, TextFlags, border, colour, p
 use crate::archive::{ZipPackage, open_package, read_member_bytes, read_text_member};
 use crate::chart::{odf_chart_picture, odf_object_part};
 use crate::document::{
-    Block, Borders, CellLook, DocumentTree, HeadersFooters, ImportReport, Inline, LabelSuffix,
-    ListLabel, Mark, Media, Note, NoteKind, PageField, PageLayout, ParagraphLook, RunLook, Section,
-    TableCell, TableLook, TableRow, TextFrame, bullet_label, number_label, plain_text, push_block,
-    set_frame, sniff_image_type,
+    Block, Borders, CellLook, Comment, DocumentTree, HeadersFooters, ImportReport, Inline,
+    LabelSuffix, ListLabel, Mark, Media, Note, NoteKind, PageField, PageLayout, ParagraphLook,
+    RunLook, Section, TableCell, TableLook, TableRow, TextFrame, TrackedChanges, TreeOptions,
+    bullet_label, number_label, plain_text, push_block, set_frame, sniff_image_type,
 };
 use crate::xml_tree::{Element, Namespace, Node, parse_tree};
 use crate::{Limits, OfficeError};
@@ -40,7 +40,11 @@ const DEFAULT_TAB_TWIPS: u32 = 709;
     clippy::too_many_lines,
     reason = "the parts, sections and master pages of an odt are read in order"
 )]
-pub(crate) fn read_odt_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree, OfficeError> {
+pub(crate) fn read_odt_tree(
+    bytes: &[u8],
+    limits: &Limits,
+    options: TreeOptions,
+) -> Result<DocumentTree, OfficeError> {
     let mut package = open_package(bytes)?;
     let content = read_text_member(&mut package, "content.xml", limits)?.ok_or_else(|| {
         OfficeError::UnreadableDocument("the package has no content.xml".to_owned())
@@ -75,6 +79,18 @@ pub(crate) fn read_odt_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTre
         next_frame: 0,
         group_anchor: None,
         group_style: None,
+        comments: Vec::new(),
+        comment_names: Vec::new(),
+        open_comments: Vec::new(),
+        reading_comment: false,
+        changes: if options.tracked_changes == TrackedChanges::Keep {
+            body.child(TEXT, "tracked-changes")
+                .map(read_changes)
+                .unwrap_or_default()
+        } else {
+            HashMap::new()
+        },
+        open_changes: Vec::new(),
     };
     // A paragraph or table whose style names a master page other than the current one starts
     // a section on that page.
@@ -151,7 +167,9 @@ pub(crate) fn read_odt_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTre
         sections.clear();
     }
 
+    let comments = converter.threaded_comments();
     Ok(DocumentTree {
+        comments,
         blocks,
         media: converter.media,
         report: converter.report,
@@ -160,6 +178,51 @@ pub(crate) fn read_odt_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTre
         headers_footers: last.headers_footers,
         sections,
     })
+}
+
+/// The changed regions of `text:tracked-changes`, each with the mark its text takes: an
+/// insertion or a deletion, its author and date; format changes are left out.
+fn read_changes(tracked: &Element) -> HashMap<String, Change> {
+    let mut changes = HashMap::new();
+    for region in tracked
+        .elements()
+        .filter(|region| region.is(TEXT, "changed-region"))
+        .take(10_000)
+    {
+        let Some(id) = region.attribute(TEXT, "id") else {
+            continue;
+        };
+        let Some(change) = region
+            .elements()
+            .find(|change| change.is(TEXT, "insertion") || change.is(TEXT, "deletion"))
+        else {
+            continue;
+        };
+        let info = change.child(OFFICE, "change-info");
+        let field = |name: &str| {
+            info.and_then(|info| {
+                info.elements()
+                    .find(|child| child.namespace == Namespace::Other && child.name == name)
+            })
+            .map(Element::text)
+            .filter(|value| !value.trim().is_empty())
+        };
+        let author = field("creator").unwrap_or_default();
+        let date = field("date");
+        let inserted = change.name == "insertion";
+        changes.insert(
+            id.to_owned(),
+            Change {
+                mark: if inserted {
+                    Mark::Insertion { author, date }
+                } else {
+                    Mark::Deletion { author, date }
+                },
+                deleted: (!inserted).then(|| change.clone()),
+            },
+        );
+    }
+    changes
 }
 
 /// Text keeps its spaces inside paragraphs and spans; whitespace between blocks is layout.
@@ -201,6 +264,23 @@ struct Converter<'a, 'p> {
     /// where they name none of their own.
     group_anchor: Option<String>,
     group_style: Option<String>,
+    comments: Vec<Comment>,
+    /// The `office:name` of each comment, and of the comment it answers.
+    comment_names: Vec<(Option<String>, Option<String>)>,
+    /// The comments whose range the text being read is in.
+    open_comments: Vec<usize>,
+    reading_comment: bool,
+    /// The changed regions of the document, by id, when changes are kept.
+    changes: HashMap<String, Change>,
+    /// The insertions the text being read is in, by change id.
+    open_changes: Vec<(String, Mark)>,
+}
+
+/// A changed region of `text:tracked-changes`: the mark of its text, and for a deletion the
+/// text it took away.
+struct Change {
+    mark: Mark,
+    deleted: Option<Element>,
 }
 
 /// Where a paragraph sits in a list: its level, its list, the label of an item's first
@@ -655,7 +735,28 @@ impl Converter<'_, '_> {
                 (TEXT, "meta" | "meta-field" | "ruby" | "ruby-base" | "number") => {
                     self.inlines(element, scope, look, flags, link, text, content);
                 }
-                (OFFICE, "annotation") => self.report.comments += 1,
+                (OFFICE, "annotation") => self.annotation(element, scope, content),
+                (OFFICE, "annotation-end") => {
+                    if let Some(name) = element.attribute(OFFICE, "name") {
+                        let names = &self.comment_names;
+                        self.open_comments
+                            .retain(|open| names[*open].0.as_deref() != Some(name));
+                    }
+                }
+                (TEXT, "change-start") => {
+                    if let Some(id) = element.attribute(TEXT, "change-id")
+                        && let Some(change) = self.changes.get(id)
+                        && change.deleted.is_none()
+                    {
+                        self.open_changes.push((id.to_owned(), change.mark.clone()));
+                    }
+                }
+                (TEXT, "change-end") => {
+                    if let Some(id) = element.attribute(TEXT, "change-id") {
+                        self.open_changes.retain(|(open, _)| open != id);
+                    }
+                }
+                (TEXT, "change") => self.deletion(element, scope, content),
                 (DRAW, "a") => {
                     for child in element.elements() {
                         self.drawing(child, scope, content);
@@ -687,7 +788,13 @@ impl Converter<'_, '_> {
             self.report.truncated = true;
         }
         self.remaining_chars -= count;
-        let marks = marks_of(look, flags, link);
+        let mut marks = marks_of(look, flags, link);
+        marks.extend(self.open_changes.iter().map(|(_, mark)| mark.clone()));
+        marks.extend(
+            self.open_comments
+                .iter()
+                .map(|comment| Mark::Comment { comment: *comment }),
+        );
         let run_look = RunLook {
             bold: None,
             italic: None,
@@ -748,6 +855,107 @@ impl Converter<'_, '_> {
         content.push(Inline::NoteReference {
             note: self.notes.len() - 1,
         });
+    }
+
+    /// An `office:annotation`: a comment on the text up to the `office:annotation-end` of its
+    /// name, or on the place it stands when it has none.
+    fn annotation(&mut self, element: &Element, scope: Scope, content: &mut Vec<Inline>) {
+        self.report.comments += 1;
+        if self.reading_comment || self.reading_note {
+            return;
+        }
+        self.reading_comment = true;
+        let floating = std::mem::take(&mut self.floating);
+        let open = std::mem::take(&mut self.open_comments);
+        let changes = std::mem::take(&mut self.open_changes);
+        let mut blocks = Vec::new();
+        self.blocks(element, scope, &mut blocks);
+        self.open_changes = changes;
+        self.open_comments = open;
+        self.floating = floating;
+        self.reading_comment = false;
+        let text = |name: &str| {
+            element
+                .elements()
+                .find(|child| child.namespace == Namespace::Other && child.name == name)
+                .map(Element::text)
+                .filter(|value| !value.trim().is_empty())
+        };
+        self.comments.push(Comment {
+            author: text("creator").unwrap_or_default(),
+            initials: text("creator-initials"),
+            date: text("date"),
+            blocks,
+            parent: None,
+            resolved: element.attribute(Namespace::LoExt, "resolved") == Some("true"),
+        });
+        let name = element.attribute(OFFICE, "name").map(str::to_owned);
+        self.comment_names.push((
+            name.clone(),
+            element
+                .attribute(Namespace::LoExt, "parent-name")
+                .map(str::to_owned),
+        ));
+        let index = self.comments.len() - 1;
+        if name.is_some() {
+            self.open_comments.push(index);
+        } else {
+            content.push(Inline::CommentAnchor { comment: index });
+        }
+    }
+
+    /// A `text:change` where a deletion took text away: the text, marked as deleted, when
+    /// changes are kept; its paragraphs are joined by line breaks.
+    fn deletion(&mut self, element: &Element, scope: Scope, content: &mut Vec<Inline>) {
+        let Some(id) = element.attribute(TEXT, "change-id") else {
+            return;
+        };
+        let Some((mark, deleted)) = self
+            .changes
+            .get(id)
+            .and_then(|change| Some((change.mark.clone(), change.deleted.clone()?)))
+        else {
+            return;
+        };
+        self.open_changes.push((id.to_owned(), mark));
+        let mut first = true;
+        for paragraph in deleted
+            .elements()
+            .filter(|paragraph| paragraph.is(TEXT, "p") || paragraph.is(TEXT, "h"))
+        {
+            if !first {
+                content.push(Inline::HardBreak);
+            }
+            first = false;
+            let mut text = TextState {
+                space_before: false,
+            };
+            self.inlines(
+                paragraph,
+                scope,
+                &RunLook::default(),
+                TextFlags::default(),
+                None,
+                &mut text,
+                content,
+            );
+        }
+        self.open_changes.retain(|(open, _)| open != id);
+    }
+
+    /// The comments read, each reply pointing at the comment it answers.
+    fn threaded_comments(&mut self) -> Vec<Comment> {
+        let mut comments = std::mem::take(&mut self.comments);
+        for (index, (_, parent)) in self.comment_names.iter().enumerate() {
+            if let Some(parent) = parent {
+                comments[index].parent = self
+                    .comment_names
+                    .iter()
+                    .position(|(name, _)| name.as_ref() == Some(parent))
+                    .filter(|position| *position != index);
+            }
+        }
+        comments
     }
 
     /// A drawing inside a paragraph: a picture, a text box set after the paragraph, or a

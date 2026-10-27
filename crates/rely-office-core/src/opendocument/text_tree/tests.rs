@@ -109,6 +109,7 @@ fn texts(content: &[Inline]) -> String {
             Inline::HardBreak => "\n".to_owned(),
             Inline::Image { .. } => "[image]".to_owned(),
             Inline::NoteReference { note } => format!("[{note}]"),
+            Inline::CommentAnchor { comment } => format!("[comment {comment}]"),
         })
         .collect()
 }
@@ -408,7 +409,9 @@ fn reads_notes_images_text_boxes_and_fields() {
         "one image, loaded once"
     );
     assert_eq!(read.media.len(), 1);
-    assert_eq!(texts(&content[2..]), "27/10/2026");
+    assert_eq!(texts(&content[2..]), "27/10/2026 [comment 0]");
+    assert_eq!(read.comments.len(), 1);
+    assert_eq!(texts(paragraph(&read.comments[0].blocks[0]).0), "Commento");
     assert_eq!(texts(paragraph(&read.blocks[2]).0), "In una casella");
     assert_eq!(texts(paragraph(&read.blocks[3]).0), "Forma");
     assert!(

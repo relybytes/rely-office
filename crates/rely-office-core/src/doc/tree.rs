@@ -13,6 +13,7 @@ mod table;
 use std::collections::HashMap;
 use std::ops::Range;
 
+use super::comments::{CommentTables, StoredComment, date_of, read_comments, reviewers};
 use super::fib::{Fib, Stories, pair};
 use super::fkp::{
     CharacterRun, ParagraphRun, character_runs, paragraph_runs, plex, positions, run_at,
@@ -26,10 +27,11 @@ use super::styles::StyleSheet;
 use super::{decode_piece, read_piece_table, unreadable};
 use crate::compound::{open_compound_file, read_stream, u16_at, u32_at};
 use crate::document::{
-    Alignment, Anchor, AnchorAlign, AnchorBase, AnchorPosition, Block, Borders, DocumentTree,
-    HeadersFooters, ImportReport, Inline, LabelSuffix, LineSpacing, ListLabel, Mark, Media, Note,
-    NoteKind, PageField, PageLayout, ParagraphLook, RunLook, Section, TextFrame, Wrap,
-    bullet_character, format_number, push_block, set_frame, sniff_image_type,
+    Alignment, Anchor, AnchorAlign, AnchorBase, AnchorPosition, Block, Borders, Comment,
+    DocumentTree, HeadersFooters, ImportReport, Inline, LabelSuffix, LineSpacing, ListLabel, Mark,
+    Media, Note, NoteKind, PageField, PageLayout, ParagraphLook, RunLook, Section, TextFrame,
+    TrackedChanges, TreeOptions, Wrap, bullet_character, format_number, push_block, set_frame,
+    sniff_image_type,
 };
 use crate::geometry::{DrawnShape, flip_paths, preset_geometry, rectangle_paths, shapes_svg};
 use crate::office_art::preset_of_shape_type;
@@ -64,7 +66,15 @@ const MAX_FIELD_DEPTH: usize = 32;
 /// [`OfficeError::TooLarge`] past the input or stream limits, [`OfficeError::Encrypted`] for a
 /// protected document, [`OfficeError::DamagedContainer`] for a broken compound file, and
 /// [`OfficeError::UnreadableDocument`] when the streams do not hold a Word 97-2003 document.
-pub(crate) fn read_doc_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree, OfficeError> {
+#[expect(
+    clippy::too_many_lines,
+    reason = "every table of the file the tree reads is located here, in one place"
+)]
+pub(crate) fn read_doc_tree(
+    bytes: &[u8],
+    limits: &Limits,
+    options: TreeOptions,
+) -> Result<DocumentTree, OfficeError> {
     if bytes.len() as u64 > limits.max_input_bytes {
         return Err(OfficeError::TooLarge {
             what: "input".to_owned(),
@@ -146,6 +156,20 @@ pub(crate) fn read_doc_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTre
                 .map_or(0, |(_, entries)| entries.len()),
             ..ImportReport::default()
         },
+        stored_comments: read_comments(
+            &CommentTables {
+                references: structure(pair::COMMENT_REFERENCES),
+                texts: structure(pair::COMMENT_TEXTS),
+                owners: structure(pair::COMMENT_OWNERS),
+                bookmark_names: structure(pair::COMMENT_BOOKMARK_NAMES),
+                bookmark_firsts: structure(pair::COMMENT_BOOKMARK_FIRSTS),
+                bookmark_lasts: structure(pair::COMMENT_BOOKMARK_LASTS),
+            },
+            fib.stories.comments_start(),
+        ),
+        comments: Vec::new(),
+        reviewers: reviewers(structure(pair::REVIEWERS)),
+        tracked_changes: options.tracked_changes,
         media: Vec::new(),
         media_bytes: 0,
         pictures: HashMap::new(),
@@ -159,6 +183,8 @@ pub(crate) fn read_doc_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTre
         page_break_pending: false,
         in_note: false,
     };
+    let mut converter = converter;
+    converter.read_comments();
     Ok(converter.convert(
         &read_sections(&word_document, structure(pair::SECTIONS)),
         &positions(structure(pair::HEADERS)),
@@ -252,9 +278,74 @@ struct Converter<'a> {
     style_properties: HashMap<u16, (Paragraph, Character)>,
     page_break_pending: bool,
     in_note: bool,
+    stored_comments: Vec<StoredComment>,
+    comments: Vec<Comment>,
+    reviewers: Vec<String>,
+    tracked_changes: TrackedChanges,
 }
 
 impl Converter<'_> {
+    /// Read the text of every comment, before the main text marks what they cover.
+    fn read_comments(&mut self) {
+        for stored in self.stored_comments.clone() {
+            self.in_note = true;
+            let floating = std::mem::take(&mut self.floating);
+            let pending = std::mem::take(&mut self.page_break_pending);
+            let mut blocks = self.blocks(stored.text.clone());
+            self.floating = floating;
+            self.page_break_pending = pending;
+            self.in_note = false;
+            while matches!(blocks.last(), Some(Block::Paragraph { content, .. }) if content.is_empty())
+            {
+                blocks.pop();
+            }
+            self.comments.push(Comment {
+                author: stored.author,
+                initials: stored.initials,
+                date: None,
+                blocks,
+                parent: None,
+                resolved: false,
+            });
+        }
+    }
+
+    /// The marks a character takes beyond its formatting: the comments whose text it is in,
+    /// and the change it belongs to when changes are kept.
+    fn annotation_marks(&self, position: usize, properties: &Character) -> Vec<Mark> {
+        let mut marks = Vec::new();
+        if self.in_note {
+            return marks;
+        }
+        let reviewer = |(index, date): (u16, u32)| {
+            (
+                self.reviewers
+                    .get(usize::from(index))
+                    .cloned()
+                    .unwrap_or_default(),
+                date_of(date),
+            )
+        };
+        if self.tracked_changes == TrackedChanges::Keep {
+            if properties.deleted {
+                let (author, date) = reviewer(properties.deletion);
+                marks.push(Mark::Deletion { author, date });
+            } else if properties.inserted {
+                let (author, date) = reviewer(properties.insertion);
+                marks.push(Mark::Insertion { author, date });
+            }
+        }
+        for (index, stored) in self.stored_comments.iter().enumerate() {
+            if stored
+                .covers
+                .as_ref()
+                .is_some_and(|covers| covers.contains(&position))
+            {
+                marks.push(Mark::Comment { comment: index });
+            }
+        }
+        marks
+    }
     fn convert(
         mut self,
         sections: &[SectionLayout],
@@ -333,6 +424,7 @@ impl Converter<'_> {
         }
         self.report.headers_and_footers = inherited.iter().filter(|part| !part.is_empty()).count();
         DocumentTree {
+            comments: std::mem::take(&mut self.comments),
             blocks,
             media: self.media,
             report: self.report,
@@ -727,9 +819,12 @@ impl Converter<'_> {
                     self.report.tracked_deletions += 1;
                 }
                 deleted = true;
-                continue;
+                if self.tracked_changes == TrackedChanges::Accept || self.in_note {
+                    continue;
+                }
+            } else {
+                deleted = false;
             }
-            deleted = false;
             if properties.inserted && !inserted {
                 self.report.tracked_insertions += 1;
             }
@@ -755,6 +850,19 @@ impl Converter<'_> {
                         && let Some(note) = self.note_at(position)
                     {
                         content.push(Inline::NoteReference { note });
+                    }
+                    continue;
+                }
+                '\u{05}' if special => {
+                    flush(&mut current, &mut content);
+                    if !self.in_note
+                        && let Some(comment) = self
+                            .stored_comments
+                            .iter()
+                            .position(|stored| stored.reference == position)
+                        && self.stored_comments[comment].covers.is_none()
+                    {
+                        content.push(Inline::CommentAnchor { comment });
                     }
                     continue;
                 }
@@ -792,7 +900,11 @@ impl Converter<'_> {
             let mut look = self.run_look(&properties, Some(paragraph_font));
             look.field = page;
             let key = RunKey {
-                marks: marks_of(&properties, &look, link.as_deref()),
+                marks: {
+                    let mut marks = marks_of(&properties, &look, link.as_deref());
+                    marks.extend(self.annotation_marks(position, &properties));
+                    marks
+                },
                 look,
             };
             match &mut current {

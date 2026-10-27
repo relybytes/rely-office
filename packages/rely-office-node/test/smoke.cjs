@@ -336,6 +336,34 @@ test('writes a docx it reads back', () => {
   );
 });
 
+test('writes comments and tracked changes it reads back', () => {
+  const text = (words, marks = []) => ({ type: 'text', text: words, marks });
+  const written = office.writeDocx({
+    blocks: [
+      {
+        type: 'paragraph',
+        content: [
+          text('Visto ', [{ type: 'comment', comment: 0 }]),
+          text('aggiunto', [{ type: 'insertion', author: 'Revisore' }]),
+          text('tolto', [{ type: 'deletion', author: 'Revisore' }]),
+        ],
+      },
+    ],
+    comments: [{ author: 'Anna', blocks: [{ type: 'paragraph', content: [text('Ok')] }], resolved: true }],
+  });
+  const kept = office.readDocumentTree(written, undefined, { trackedChanges: 'keep' });
+  assert.equal(kept.comments[0].author, 'Anna');
+  assert.equal(kept.comments[0].resolved, true);
+  const marks = kept.blocks[0].content.map((inline) => (inline.marks ?? []).map((mark) => mark.type));
+  assert.deepEqual(marks, [['comment'], ['insertion'], ['deletion']]);
+  const accepted = office.readDocumentTree(written);
+  assert.equal(accepted.blocks[0].content.map((inline) => inline.text).join(''), 'Visto aggiunto');
+  assert.throws(
+    () => office.readDocumentTree(written, undefined, { trackedChanges: 'maybe' }),
+    (error) => error.code === 'INVALID_OPTIONS',
+  );
+});
+
 test('edits a spreadsheet and saves it as xlsx', () => {
   const sheet = office.createSheet({ locale: 'it' });
   try {

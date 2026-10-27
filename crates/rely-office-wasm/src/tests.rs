@@ -94,7 +94,7 @@ fn reads_a_document_tree_with_its_media_aside() {
             ("word/media/logo.png", PNG),
         ],
     );
-    let mut handle = document_tree(&bytes, None).unwrap();
+    let mut handle = document_tree(&bytes, None, None).unwrap();
     let tree = parse(&handle.json());
     assert_eq!(
         tree["blocks"],
@@ -190,7 +190,7 @@ fn reports_library_errors_with_their_code() {
             .error_message()
             .starts_with("UNSUPPORTED_FORMAT: unsupported format")
     );
-    let failure = document_tree(b"a,b", None).unwrap_err();
+    let failure = document_tree(b"a,b", None, None).unwrap_err();
     assert_eq!(failure.code, "UNSUPPORTED_FORMAT");
     let failure =
         read_sheets_json(b"a,b", Some("a.csv"), Some(r#"{"maxInputBytes":1}"#)).unwrap_err();
@@ -245,7 +245,7 @@ fn writes_a_docx_from_the_json_of_a_tree() {
     let mut writer = DocxWriter::new();
     assert_eq!(writer.add_media(PNG.to_vec()), 0);
     let bytes = docx_from_json(&tree.to_string(), std::mem::take(&mut writer.media)).unwrap();
-    let read = parse(&document_tree(&bytes, None).unwrap().json());
+    let read = parse(&document_tree(&bytes, None, None).unwrap().json());
     assert_eq!(read["blocks"][0]["type"], "heading");
     assert_eq!(read["blocks"][1]["align"], "center");
     assert_eq!(

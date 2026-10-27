@@ -47,6 +47,7 @@ fn plain(blocks: &[Block]) -> Vec<String> {
                     Inline::NoteReference { note } => format!("[{note}]"),
                     Inline::Image { .. } => "[image]".to_owned(),
                     Inline::HardBreak => "\n".to_owned(),
+                    Inline::CommentAnchor { comment } => format!("[comment {comment}]"),
                 })
                 .collect(),
             other => format!("{other:?}"),

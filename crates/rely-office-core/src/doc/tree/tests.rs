@@ -60,7 +60,7 @@ fn styled(main: &str) -> DocBuilder {
 }
 
 fn read(builder: &DocBuilder) -> DocumentTree {
-    read_doc_tree(&builder.build(), &Limits::default()).unwrap()
+    read_doc_tree(&builder.build(), &Limits::default(), TreeOptions::default()).unwrap()
 }
 
 fn at(text: &str, needle: &str) -> usize {
@@ -106,6 +106,7 @@ fn pieces(content: &[Inline]) -> Vec<String> {
             Inline::HardBreak => "<br>".to_owned(),
             Inline::Image { .. } => "<image>".to_owned(),
             Inline::NoteReference { note } => format!("<note {note}>"),
+            Inline::CommentAnchor { comment } => format!("<comment {comment}>"),
         })
         .collect()
 }
@@ -548,8 +549,17 @@ fn reads_footnotes_endnotes_and_counts_comments() {
     let tree = read(&builder);
     assert_eq!(
         pieces(content(&tree.blocks[0])),
-        vec!["Testo", "<note 0>", " e altro", "<note 1>", " fine."]
+        vec![
+            "Testo",
+            "<note 0>",
+            " e altro",
+            "<note 1>",
+            " fine",
+            "<comment 0>",
+            "."
+        ]
     );
+    assert_eq!(tree.comments.len(), 1, "a comment on a point");
     assert_eq!(tree.notes.len(), 2);
     assert_eq!(tree.notes[0].kind, NoteKind::Footnote);
     assert_eq!(texts(&tree.notes[0].blocks), vec![" La nota."]);
@@ -734,7 +744,7 @@ fn reads_inline_pictures_once_and_counts_what_it_cannot_keep() {
         max_images: 0,
         ..Limits::default()
     };
-    let limited = read_doc_tree(&builder.build(), &limits).unwrap();
+    let limited = read_doc_tree(&builder.build(), &limits, TreeOptions::default()).unwrap();
     assert_eq!(limited.media, Vec::<Media>::new());
     assert_eq!(
         limited.report.images_over_limit, 1,
@@ -745,7 +755,7 @@ fn reads_inline_pictures_once_and_counts_what_it_cannot_keep() {
         ..Limits::default()
     };
     assert_eq!(
-        read_doc_tree(&builder.build(), &small)
+        read_doc_tree(&builder.build(), &small, TreeOptions::default())
             .unwrap()
             .report
             .oversized_images,
@@ -973,7 +983,7 @@ fn stops_at_the_text_limit() {
         max_text_chars: 5,
         ..Limits::default()
     };
-    let tree = read_doc_tree(&styled(main).build(), &limits).unwrap();
+    let tree = read_doc_tree(&styled(main).build(), &limits, TreeOptions::default()).unwrap();
     assert!(tree.report.truncated);
     assert_eq!(texts(&tree.blocks), vec!["Uno", "Du"]);
 }
@@ -983,7 +993,11 @@ fn refuses_what_it_cannot_read() {
     let mut encrypted = styled("Segreto\r");
     encrypted.encrypted = true;
     assert!(matches!(
-        read_doc_tree(&encrypted.build(), &Limits::default()),
+        read_doc_tree(
+            &encrypted.build(),
+            &Limits::default(),
+            TreeOptions::default()
+        ),
         Err(OfficeError::Encrypted)
     ));
     let limits = Limits {
@@ -991,12 +1005,12 @@ fn refuses_what_it_cannot_read() {
         ..Limits::default()
     };
     assert!(matches!(
-        read_doc_tree(&styled("x\r").build(), &limits),
+        read_doc_tree(&styled("x\r").build(), &limits, TreeOptions::default()),
         Err(OfficeError::TooLarge { .. })
     ));
     let other = crate::test_support::build_compound_file(&[("/Altro", b"x".as_slice())]);
     assert!(matches!(
-        read_doc_tree(&other, &Limits::default()),
+        read_doc_tree(&other, &Limits::default(), TreeOptions::default()),
         Err(OfficeError::UnreadableDocument(_))
     ));
 }
@@ -1006,4 +1020,119 @@ fn is_what_the_document_tree_reads_for_a_doc() {
     let tree =
         read_document_tree(&styled("Dal vecchio Word\r").build(), &Limits::default()).unwrap();
     assert_eq!(texts(&tree.blocks), vec!["Dal vecchio Word"]);
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one document carries a comment, its owner, its range and a change"
+)]
+fn reads_comments_with_their_range_and_keeps_changes() {
+    use crate::document::{Comment, TrackedChanges};
+    let main = "Uno due\u{5} tre quattro.\r";
+    let mut builder = styled(main);
+    builder.comments = "\u{5}Rivedere.\r".to_owned();
+    let reference = u32::try_from(at(main, "\u{5}")).unwrap();
+    let comment_length = u32::try_from(builder.comments.len()).unwrap();
+    let mut record = vec![0_u8; 30];
+    record[0..2].copy_from_slice(&2_u16.to_le_bytes());
+    record[2..6].copy_from_slice(&[b'G', 0, b'D', 0]);
+    record[20..22].copy_from_slice(&1_u16.to_le_bytes());
+    record[26..30].copy_from_slice(&7_u32.to_le_bytes());
+    let mut owners = Vec::new();
+    for name in ["Anna", "Giosue"] {
+        owners.extend_from_slice(&u16::try_from(name.len()).unwrap().to_le_bytes());
+        owners.extend(name.encode_utf16().flat_map(u16::to_le_bytes));
+    }
+    let mut bookmarks = vec![0xFF, 0xFF, 1, 0, 10, 0, 0, 0];
+    bookmarks.extend_from_slice(&[0, 0]);
+    bookmarks.extend_from_slice(&7_u32.to_le_bytes());
+    bookmarks.extend_from_slice(&[0; 4]);
+    let mut reviewers = vec![0xFF, 0xFF, 1, 0, 0, 0];
+    reviewers.extend_from_slice(&5_u16.to_le_bytes());
+    reviewers.extend("Bruno".encode_utf16().flat_map(u16::to_le_bytes));
+    let special = [0x55, 0x08, 0x01];
+    let deleted_from = at(main, " quattro");
+    builder = builder
+        .character(reference as usize..reference as usize + 1, &special)
+        .character(main.len()..main.len() + 1, &special)
+        .character(
+            deleted_from..deleted_from + 8,
+            &[
+                0x00, 0x08, 0x01, 0x63, 0x48, 0x00, 0x00, 0x64, 0x68, 0x5E, 0xDA, 0xEA, 0x47,
+            ],
+        )
+        .structure(
+            pair::COMMENT_REFERENCES,
+            plex_of(&[reference, reference + 1], &[&record]),
+        )
+        .structure(
+            pair::COMMENT_TEXTS,
+            plex_of(&[0, comment_length, comment_length + 1], &[]),
+        )
+        .structure(pair::COMMENT_OWNERS, owners)
+        .structure(pair::COMMENT_BOOKMARK_NAMES, bookmarks)
+        .structure(
+            pair::COMMENT_BOOKMARK_FIRSTS,
+            plex_of(&[4, 100], &[&[0, 0, 0, 0]]),
+        )
+        .structure(
+            pair::COMMENT_BOOKMARK_LASTS,
+            [7_u32, 100]
+                .iter()
+                .flat_map(|position| position.to_le_bytes())
+                .collect(),
+        )
+        .structure(pair::REVIEWERS, reviewers);
+    let accepted = read(&builder);
+    assert_eq!(
+        accepted.comments,
+        vec![Comment {
+            author: "Giosue".to_owned(),
+            initials: Some("GD".to_owned()),
+            date: None,
+            blocks: accepted.comments[0].blocks.clone(),
+            parent: None,
+            resolved: false,
+        }]
+    );
+    assert_eq!(texts(&accepted.comments[0].blocks), vec!["Rivedere."]);
+    let pieces_of = |tree: &DocumentTree| -> Vec<(String, Vec<Mark>)> {
+        content(&tree.blocks[0])
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Text { text, marks, .. } => Some((text.clone(), marks.clone())),
+                _ => None,
+            })
+            .collect()
+    };
+    let read_accepted = pieces_of(&accepted);
+    assert_eq!(
+        read_accepted[1],
+        ("due".to_owned(), vec![Mark::Comment { comment: 0 }])
+    );
+    assert!(
+        read_accepted
+            .iter()
+            .all(|(text, _)| !text.contains("quattro"))
+    );
+    let kept = read_doc_tree(
+        &builder.build(),
+        &Limits::default(),
+        TreeOptions {
+            tracked_changes: TrackedChanges::Keep,
+        },
+    )
+    .unwrap();
+    let deleted = pieces_of(&kept)
+        .into_iter()
+        .find(|(text, _)| text == " quattro")
+        .expect("the deleted text kept");
+    assert_eq!(
+        deleted.1,
+        vec![Mark::Deletion {
+            author: "Bruno".to_owned(),
+            date: Some("2026-10-27T09:30:00Z".to_owned()),
+        }]
+    );
 }

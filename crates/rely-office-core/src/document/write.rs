@@ -23,8 +23,8 @@ use zip::write::SimpleFileOptions;
 use super::edges::{Border, BorderStyle, Borders, CellLook, TabKind, TabLeader, VerticalAlignment};
 use super::look::{LineSpacing, PageField, ParagraphLook, RunLook, TableLook};
 use super::{
-    Alignment, Anchor, Block, DocumentTree, Inline, Mark, Media, Note, NoteKind, PageLayout,
-    Section, TableRow, TextFrame,
+    Alignment, Anchor, Block, Comment, DocumentTree, Inline, Mark, Media, Note, NoteKind,
+    PageLayout, Section, TableRow, TextFrame,
 };
 use crate::OfficeError;
 
@@ -40,6 +40,10 @@ const RELATIONSHIP_TYPE: &str =
 /// The relationships of the main part the writer always declares: styles, numbering, settings,
 /// footnotes and endnotes.
 const MAIN_FIXED_RELATIONSHIPS: usize = 5;
+const W14: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+const W15: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
+const COMMENTS_EXTENDED_RELATIONSHIP: &str =
+    "http://schemas.microsoft.com/office/2011/relationships/commentsExtended";
 const NAMESPACES: &str = concat!(
     r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" "#,
     r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" "#,
@@ -64,6 +68,14 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
     let mut writer = DocxWriter {
         media: &tree.media,
         notes: &tree.notes,
+        comments: &tree.comments,
+        in_body: false,
+        open_comments: Vec::new(),
+        comment_ids: HashMap::new(),
+        comments_xml: String::new(),
+        comment_relationships: Vec::new(),
+        threads: Vec::new(),
+        next_revision: 1,
         relationships: Vec::new(),
         relationship_base: MAIN_FIXED_RELATIONSHIPS,
         image_parts: BTreeMap::new(),
@@ -98,7 +110,15 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
         };
         writer.text_width_twips = text_width(&section.layout);
         let mut xml = String::new();
+        writer.in_body = true;
         writer.blocks(&tree.blocks[start..end], None, &mut xml);
+        if index + 1 == sections.len() && !writer.open_comments.is_empty() {
+            // A comment still open at the end of the text closes in a paragraph of its own.
+            xml.push_str("<w:p>");
+            writer.close_comments(&[], &mut xml);
+            xml.push_str("</w:p>");
+        }
+        writer.in_body = false;
         bodies.push(xml);
         start = end;
     }
@@ -141,15 +161,20 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
         .collect();
     lists.sort_unstable();
 
-    let mut members: Vec<(String, Vec<u8>)> = Vec::new();
-    let mut add = |name: &str, bytes: &[u8]| members.push((name.to_owned(), bytes.to_vec()));
     let header_names: Vec<String> = extra_relationships
         .iter()
         .map(|relationship| relationship.target.clone())
         .collect();
+    let mut all_main = main_relationships;
+    all_main.extend(extra_relationships);
+    let comment_parts = writer.comment_parts(&mut all_main);
+    let mut members: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut add = |name: &str, bytes: &[u8]| members.push((name.to_owned(), bytes.to_vec()));
+    let mut content_parts = header_names;
+    content_parts.extend(comment_parts.iter().map(|(name, _)| name.clone()));
     add(
         "[Content_Types].xml",
-        content_types(&header_names).as_bytes(),
+        content_types(&content_parts).as_bytes(),
     );
     add("_rels/.rels", package_relationships().as_bytes());
     add("word/document.xml", document.as_bytes());
@@ -164,8 +189,6 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
         "word/endnotes.xml",
         notes_part("endnotes", "endnote", &writer.endnotes).as_bytes(),
     );
-    let mut all_main = main_relationships;
-    all_main.extend(extra_relationships);
     add(
         "word/_rels/document.xml.rels",
         relationships_part(&all_main, true).as_bytes(),
@@ -200,6 +223,9 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
     }
     for (index, part) in &writer.image_parts {
         add(&format!("word/{part}"), &tree.media[*index].bytes);
+    }
+    for (name, bytes) in &comment_parts {
+        add(&format!("word/{name}"), bytes);
     }
     zip_members(&members)
 }
@@ -259,6 +285,19 @@ struct Relationship {
 struct DocxWriter<'a> {
     media: &'a [Media],
     notes: &'a [Note],
+    comments: &'a [Comment],
+    /// The body is being written, where comments are anchored; notes and headers have none.
+    in_body: bool,
+    /// The comments whose range is open, by their index in the tree.
+    open_comments: Vec<usize>,
+    /// Comment index of the tree to the id written for it.
+    comment_ids: HashMap<usize, u32>,
+    comments_xml: String,
+    comment_relationships: Vec<Relationship>,
+    /// The paragraph id of each written comment and of the comment it answers, and whether it
+    /// is done, for `commentsExtended`.
+    threads: Vec<(u32, Option<u32>, bool)>,
+    next_revision: u32,
     /// The relationships of the part being written.
     relationships: Vec<Relationship>,
     /// How many relationship ids the part being written reserves before its own.
@@ -456,6 +495,26 @@ impl DocxWriter<'_> {
 
     fn inlines(&mut self, content: &[Inline], paragraph_font: &RunLook, xml: &mut String) {
         for inline in content {
+            if self.in_body
+                && let Inline::Text { marks, .. } = inline
+            {
+                let marked: Vec<usize> = marks
+                    .iter()
+                    .filter_map(|mark| match mark {
+                        Mark::Comment { comment } => Some(*comment),
+                        _ => None,
+                    })
+                    .collect();
+                self.close_comments(&marked, xml);
+                for comment in marked {
+                    if !self.open_comments.contains(&comment)
+                        && let Some(id) = self.comment_id(comment)
+                    {
+                        let _ = write!(xml, r#"<w:commentRangeStart w:id="{id}"/>"#);
+                        self.open_comments.push(comment);
+                    }
+                }
+            }
             match inline {
                 Inline::Text { text, marks, look } => {
                     self.text_run(text, marks, look, paragraph_font, xml);
@@ -475,8 +534,153 @@ impl DocxWriter<'_> {
                     xml,
                 ),
                 Inline::NoteReference { note } => self.note_reference(*note, xml),
+                Inline::CommentAnchor { comment } => {
+                    if self.in_body
+                        && let Some(id) = self.comment_id(*comment)
+                    {
+                        let _ = write!(
+                            xml,
+                            r#"<w:commentRangeStart w:id="{id}"/><w:commentRangeEnd w:id="{id}"/>"#
+                        );
+                        comment_reference(id, xml);
+                    }
+                }
             }
         }
+    }
+
+    /// Close the open comments that are not among `kept`, each with its reference.
+    fn close_comments(&mut self, kept: &[usize], xml: &mut String) {
+        let closing: Vec<usize> = self
+            .open_comments
+            .iter()
+            .copied()
+            .filter(|comment| !kept.contains(comment))
+            .collect();
+        for comment in closing {
+            self.open_comments.retain(|open| *open != comment);
+            if let Some(id) = self.comment_ids.get(&comment).copied() {
+                let _ = write!(xml, r#"<w:commentRangeEnd w:id="{id}"/>"#);
+                comment_reference(id, xml);
+            }
+        }
+    }
+
+    /// The id of a comment, writing it into the comments part the first time; a reply writes
+    /// the comment it answers first.
+    fn comment_id(&mut self, comment: usize) -> Option<u32> {
+        if let Some(id) = self.comment_ids.get(&comment) {
+            return Some(*id);
+        }
+        let comments = self.comments;
+        let content = comments.get(comment)?;
+        let id = u32::try_from(self.comment_ids.len()).ok()?;
+        self.comment_ids.insert(comment, id);
+        let parent = content
+            .parent
+            .filter(|parent| *parent != comment)
+            .and_then(|parent| self.comment_id(parent));
+        let outer_relationships = std::mem::take(&mut self.relationships);
+        let outer_base = std::mem::replace(
+            &mut self.relationship_base,
+            self.comment_relationships.len(),
+        );
+        let outer_body = std::mem::replace(&mut self.in_body, false);
+        let mut blocks = String::new();
+        self.blocks(&content.blocks, Some("CommentText"), &mut blocks);
+        self.in_body = outer_body;
+        let relationships = std::mem::replace(&mut self.relationships, outer_relationships);
+        self.relationship_base = outer_base;
+        self.comment_relationships.extend(relationships);
+        let mark =
+            r#"<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:annotationRef/></w:r>"#;
+        let blocks = with_leading_run(&blocks, mark, "CommentText");
+        let paragraph = paragraph_id(id);
+        let blocks = match blocks
+            .rfind("<w:p>")
+            .into_iter()
+            .chain(blocks.rfind("<w:p "))
+            .max()
+        {
+            Some(position) => format!(
+                r#"{}<w:p w14:paraId="{paragraph:08X}"{}"#,
+                &blocks[..position],
+                &blocks[position + 4..]
+            ),
+            None => blocks,
+        };
+        let mut attributes = format!(r#" w:id="{id}" w:author="{}""#, escape(&content.author));
+        if let Some(date) = content.date.as_deref().filter(|date| is_date(date)) {
+            let _ = write!(attributes, r#" w:date="{date}""#);
+        }
+        if let Some(initials) = &content.initials {
+            let _ = write!(attributes, r#" w:initials="{}""#, escape(initials));
+        }
+        let _ = write!(
+            self.comments_xml,
+            "<w:comment{attributes}>{blocks}</w:comment>"
+        );
+        self.threads
+            .push((paragraph, parent.map(paragraph_id), content.resolved));
+        Some(id)
+    }
+
+    /// The comments part, its relationships and the threads of the comments, when the text
+    /// anchored any; their relationships are added to the main part's.
+    fn comment_parts(&mut self, main: &mut Vec<Relationship>) -> Vec<(String, Vec<u8>)> {
+        if self.comment_ids.is_empty() {
+            return Vec::new();
+        }
+        let mut parts = vec![(
+            "comments.xml".to_owned(),
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments {NAMESPACES} xmlns:w14="{W14}">{}</w:comments>"#,
+                self.comments_xml
+            )
+            .into_bytes(),
+        )];
+        if !self.comment_relationships.is_empty() {
+            parts.push((
+                "_rels/comments.xml.rels".to_owned(),
+                relationships_part(&self.comment_relationships, false).into_bytes(),
+            ));
+        }
+        let id = format!("rId{}", MAIN_FIXED_RELATIONSHIPS + main.len() + 1);
+        main.push(Relationship {
+            id,
+            kind: "comments",
+            target: "comments.xml".to_owned(),
+            external: false,
+        });
+        if self
+            .threads
+            .iter()
+            .any(|(_, parent, done)| parent.is_some() || *done)
+        {
+            let mut entries = String::new();
+            for (paragraph, parent, done) in &self.threads {
+                let _ = write!(entries, r#"<w15:commentEx w15:paraId="{paragraph:08X}""#);
+                if let Some(parent) = parent {
+                    let _ = write!(entries, r#" w15:paraIdParent="{parent:08X}""#);
+                }
+                let _ = write!(entries, r#" w15:done="{}"/>"#, u8::from(*done));
+            }
+            parts.push((
+                "commentsExtended.xml".to_owned(),
+                format!(
+                    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w15:commentsEx xmlns:w15="{W15}">{entries}</w15:commentsEx>"#
+                )
+                .into_bytes(),
+            ));
+            let id = format!("rId{}", MAIN_FIXED_RELATIONSHIPS + main.len() + 1);
+            main.push(Relationship {
+                id,
+                kind: COMMENTS_EXTENDED_RELATIONSHIP,
+                target: "commentsExtended.xml".to_owned(),
+                external: false,
+            });
+        }
+        parts
     }
 
     fn text_run(
@@ -488,6 +692,34 @@ impl DocxWriter<'_> {
         xml: &mut String,
     ) {
         let (run_properties, link) = run_properties(marks, look, paragraph_font);
+        let revision = marks.iter().find_map(|mark| match mark {
+            Mark::Insertion { author, date } => Some(("ins", author, date)),
+            Mark::Deletion { author, date } => Some(("del", author, date)),
+            _ => None,
+        });
+        if let Some((element, author, date)) = revision {
+            let id = self.next_revision;
+            self.next_revision += 1;
+            let mut attributes = format!(r#" w:id="{id}" w:author="{}""#, escape(author));
+            if let Some(date) = date.as_deref().filter(|date| is_date(date)) {
+                let _ = write!(attributes, r#" w:date="{date}""#);
+            }
+            let deleted = element == "del";
+            let mut runs = String::new();
+            push_runs(&mut runs, text, &run_properties, deleted);
+            let changed = format!("<w:{element}{attributes}>{runs}</w:{element}>");
+            match link {
+                Some(href) => {
+                    let id = self.relationship("hyperlink", href.to_owned(), true);
+                    let _ = write!(
+                        xml,
+                        r#"<w:hyperlink r:id="{id}" w:history="1">{changed}</w:hyperlink>"#
+                    );
+                }
+                None => xml.push_str(&changed),
+            }
+            return;
+        }
         if let Some(field) = look.field {
             let instruction = match field {
                 PageField::Page => "PAGE",
@@ -1139,7 +1371,37 @@ fn place_cells(rows: &[TableRow]) -> PlacedTable {
 }
 
 /// Runs for text that may hold tabs and line breaks, each with the same properties.
+/// The run that refers to a comment, after the end of its range.
+fn comment_reference(id: u32, xml: &mut String) {
+    let _ = write!(
+        xml,
+        r#"<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="{id}"/></w:r>"#
+    );
+}
+
+/// The `w14:paraId` of a written comment's last paragraph: below `0x80000000`, as Word requires.
+fn paragraph_id(comment: u32) -> u32 {
+    0x1000_0000 + comment
+}
+
+/// Whether a date is the ISO 8601 date and time Word writes, `2026-10-27T10:30:00Z`, so no
+/// other text reaches an attribute that takes a date.
+fn is_date(date: &str) -> bool {
+    date.len() <= 32
+        && date.len() >= 10
+        && date.bytes().all(|byte| {
+            byte.is_ascii_digit() || matches!(byte, b'-' | b':' | b'T' | b'Z' | b'.' | b'+')
+        })
+}
+
 fn push_text_runs(xml: &mut String, text: &str, run_properties: &str) {
+    push_runs(xml, text, run_properties, false);
+}
+
+/// The runs of a text, its line breaks and tabs each a run of their own; deleted text is
+/// `w:delText`.
+fn push_runs(xml: &mut String, text: &str, run_properties: &str, deleted: bool) {
+    let element = if deleted { "delText" } else { "t" };
     for (line_index, line) in text.split('\n').enumerate() {
         if line_index > 0 {
             let _ = write!(xml, "<w:r>{run_properties}<w:br/></w:r>");
@@ -1151,7 +1413,7 @@ fn push_text_runs(xml: &mut String, text: &str, run_properties: &str) {
             if !piece.is_empty() {
                 let _ = write!(
                     xml,
-                    r#"<w:r>{run_properties}<w:t xml:space="preserve">{}</w:t></w:r>"#,
+                    r#"<w:r>{run_properties}<w:{element} xml:space="preserve">{}</w:{element}></w:r>"#,
                     escape(piece)
                 );
             }
@@ -1331,6 +1593,12 @@ fn content_types(header_parts: &[String]) -> String {
     for part in header_parts {
         let kind = if part.starts_with("header") {
             "header"
+        } else if part.starts_with("commentsExtended") {
+            "commentsExtended"
+        } else if part.starts_with("comments.") {
+            "comments"
+        } else if part.starts_with("_rels") {
+            continue;
         } else {
             "footer"
         };
@@ -1385,11 +1653,15 @@ fn relationships_part(relationships: &[Relationship], main: bool) -> String {
         } else {
             ""
         };
+        let kind = if relationship.kind.starts_with("http") {
+            relationship.kind.to_owned()
+        } else {
+            format!("{RELATIONSHIP_TYPE}/{}", relationship.kind)
+        };
         let _ = write!(
             xml,
-            r#"<Relationship Id="{}" Type="{RELATIONSHIP_TYPE}/{}" Target="{}"{mode}/>"#,
+            r#"<Relationship Id="{}" Type="{kind}" Target="{}"{mode}/>"#,
             relationship.id,
-            relationship.kind,
             escape(&relationship.target)
         );
     }
@@ -1501,6 +1773,10 @@ const STYLES: &str = concat!(
     r#"<w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>"#,
     r#"<w:style w:type="character" w:styleId="EndnoteReference"><w:name w:val="endnote reference"/><w:basedOn w:val="DefaultParagraphFont"/>"#,
     r#"<w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>"#,
+    r#"<w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/>"#,
+    r#"<w:pPr><w:spacing w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style>"#,
+    r#"<w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:basedOn w:val="DefaultParagraphFont"/>"#,
+    r#"<w:rPr><w:sz w:val="16"/></w:rPr></w:style>"#,
     r#"<w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:semiHidden/>"#,
     r#"<w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/>"#,
     r#"<w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style>"#,

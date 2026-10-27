@@ -591,3 +591,113 @@ fn keeps_metafile_pictures_word_shows() {
     .unwrap();
     assert!(types.contains(r#"<Default Extension="emf" ContentType="image/x-emf"/>"#));
 }
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one document carries comments, a reply, a point comment and both changes"
+)]
+fn writes_comments_replies_and_tracked_changes_that_read_back() {
+    use crate::document::{Comment, TrackedChanges, TreeOptions, read_document_tree_with};
+    let text = |text: &str, marks: Vec<Mark>| Inline::Text {
+        text: text.to_owned(),
+        marks,
+        look: RunLook::default(),
+    };
+    let comment = |author: &str, words: &str, parent: Option<usize>, resolved: bool| Comment {
+        author: author.to_owned(),
+        initials: Some("GD".to_owned()),
+        date: Some("2026-10-27T10:30:00Z".to_owned()),
+        blocks: vec![Block::Paragraph {
+            content: vec![text(words, Vec::new())],
+            align: None,
+            look: ParagraphLook::default(),
+        }],
+        parent,
+        resolved,
+    };
+    let inserted = Mark::Insertion {
+        author: "Revisore".to_owned(),
+        date: Some("2026-10-27T11:00:00Z".to_owned()),
+    };
+    let deleted = Mark::Deletion {
+        author: "Revisore".to_owned(),
+        date: None,
+    };
+    let tree = DocumentTree {
+        blocks: vec![
+            Block::Paragraph {
+                content: vec![
+                    text("Prima ", Vec::new()),
+                    text(
+                        "commentato",
+                        vec![Mark::Comment { comment: 0 }, Mark::Comment { comment: 1 }],
+                    ),
+                    text(" poi ", Vec::new()),
+                    text("aggiunto", vec![inserted.clone()]),
+                    text("tolto", vec![deleted.clone()]),
+                    Inline::CommentAnchor { comment: 2 },
+                ],
+                align: None,
+                look: ParagraphLook::default(),
+            },
+            Block::Paragraph {
+                content: vec![text("fino a qui", vec![Mark::Comment { comment: 3 }])],
+                align: None,
+                look: ParagraphLook::default(),
+            },
+        ],
+        comments: vec![
+            comment("Anna", "Da rivedere", None, false),
+            comment("Bruno", "Fatto", Some(0), true),
+            comment("Carla", "Qui manca una frase", None, false),
+            comment("Dario", "Fine", None, false),
+        ],
+        ..DocumentTree::default()
+    };
+    let written = write_docx(&tree).unwrap();
+    let keep = TreeOptions {
+        tracked_changes: TrackedChanges::Keep,
+    };
+    let read = read_document_tree_with(&written, &Limits::default(), &keep).unwrap();
+    assert_eq!(read.comments.len(), 4);
+    assert_eq!(read.comments[0].author, "Anna");
+    assert_eq!(
+        read.comments[0].date.as_deref(),
+        Some("2026-10-27T10:30:00Z")
+    );
+    assert_eq!(read.comments[1].parent, Some(0), "a reply keeps its thread");
+    assert!(read.comments[1].resolved && !read.comments[0].resolved);
+    let Block::Paragraph { content, .. } = &read.blocks[0] else {
+        panic!("a paragraph");
+    };
+    let marks_of = |words: &str| {
+        content
+            .iter()
+            .find_map(|inline| match inline {
+                Inline::Text { text, marks, .. } if text == words => Some(marks.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{words} in {content:?}"))
+    };
+    assert!(marks_of("commentato").contains(&Mark::Comment { comment: 0 }));
+    assert!(marks_of("commentato").contains(&Mark::Comment { comment: 1 }));
+    assert_eq!(marks_of("aggiunto"), vec![inserted]);
+    assert_eq!(marks_of("tolto"), vec![deleted]);
+    assert!(content.contains(&Inline::CommentAnchor { comment: 2 }));
+    let accepted = read_document_tree(&written, &Limits::default()).unwrap();
+    let Block::Paragraph { content, .. } = &accepted.blocks[0] else {
+        panic!("a paragraph");
+    };
+    let words: String = content
+        .iter()
+        .filter_map(|inline| match inline {
+            Inline::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        words, "Prima commentato poi aggiunto",
+        "accepted, the deletion is gone"
+    );
+}

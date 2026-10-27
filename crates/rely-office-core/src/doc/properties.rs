@@ -80,6 +80,10 @@ pub(super) struct Character {
     pub(super) object: bool,
     pub(super) deleted: bool,
     pub(super) inserted: bool,
+    /// The reviewer who inserted the run and when, an index of `SttbfRMark` and a `DTTM`.
+    pub(super) insertion: (u16, u32),
+    /// The reviewer who deleted the run and when.
+    pub(super) deletion: (u16, u32),
     pub(super) style: Option<u16>,
 }
 
@@ -115,6 +119,10 @@ impl Character {
                 0x0806 | 0x080A | 0x0856 => self.object |= byte(operand) != 0,
                 0x0800 => self.deleted = byte(operand) != 0,
                 0x0801 => self.inserted = byte(operand) != 0,
+                0x4804 => self.insertion.0 = word(operand),
+                0x6805 => self.insertion.1 = long(operand),
+                0x4863 => self.deletion.0 = word(operand),
+                0x6864 => self.deletion.1 = long(operand),
                 0x4A30 => self.style = Some(word(operand)),
                 _ => {}
             }

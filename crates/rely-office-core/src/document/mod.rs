@@ -64,6 +64,48 @@ pub struct DocumentTree {
     /// Every section of a document of more than one, in order, the last one included; empty
     /// for a document of one section, whose page is `layout`.
     pub sections: Vec<Section>,
+    /// The comments on the text, referenced from [`Mark::Comment`] and
+    /// [`Inline::CommentAnchor`] by their index in this list, in the order the file keeps them.
+    pub comments: Vec<Comment>,
+}
+
+/// A comment on a stretch of the document, or a reply to one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase", default)
+)]
+pub struct Comment {
+    pub author: String,
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub initials: Option<String>,
+    /// When it was written, as the file stores it: ISO 8601, `2026-10-27T10:30:00Z`.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub date: Option<String>,
+    pub blocks: Vec<Block>,
+    /// The comment this one answers, by its index in [`DocumentTree::comments`].
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub parent: Option<usize>,
+    /// The discussion is marked as done.
+    pub resolved: bool,
+}
+
+/// What a reader does with the changes a document tracks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TrackedChanges {
+    /// Insertions are kept and deletions dropped, as if every change were accepted.
+    #[default]
+    Accept,
+    /// Both are kept, each run marked [`Mark::Insertion`] or [`Mark::Deletion`], so an editor
+    /// can show them and a writer can write them back as changes.
+    Keep,
+}
+
+/// How a document is read into its tree, beyond its [`Limits`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TreeOptions {
+    pub tracked_changes: TrackedChanges,
 }
 
 /// A run of blocks laid out on one page setup: a landscape table among portrait pages.
@@ -321,6 +363,9 @@ pub enum Inline {
     /// The reference to a footnote or an endnote: `note` is its index in [`DocumentTree::notes`].
     /// The number it shows is its position among the notes of its kind.
     NoteReference { note: usize },
+    /// The place of a comment that covers no text: `comment` is its index in
+    /// [`DocumentTree::comments`]. A comment on text marks the text instead.
+    CommentAnchor { comment: usize },
 }
 
 /// A formatting mark of a text run, in this order when several apply.
@@ -369,6 +414,29 @@ pub enum Mark {
     /// A hyperlink; only `http`, `https` and `mailto` targets are kept.
     Link {
         href: String,
+    },
+    /// Text a comment is on: `comment` is its index in [`DocumentTree::comments`].
+    Comment {
+        comment: usize,
+    },
+    /// Text inserted while changes were tracked, read only with [`TrackedChanges::Keep`].
+    Insertion {
+        author: String,
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
+        date: Option<String>,
+    },
+    /// Text deleted while changes were tracked, still in the document until the change is
+    /// accepted; read only with [`TrackedChanges::Keep`].
+    Deletion {
+        author: String,
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
+        date: Option<String>,
     },
 }
 
@@ -431,11 +499,25 @@ pub struct ImportReport {
 /// [`OfficeError::UnsupportedFormat`] for anything but a docx, [`OfficeError::TooLarge`] past the
 /// input or member limits, [`OfficeError::DamagedContainer`] and [`OfficeError::MalformedXml`] for
 /// a damaged package, [`OfficeError::UnreadableDocument`] when the main part has no body.
+pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree, OfficeError> {
+    read_document_tree_with(bytes, limits, &TreeOptions::default())
+}
+
+/// [`read_document_tree`] with options: whether the changes a document tracks are accepted or
+/// kept as marks.
+///
+/// # Errors
+///
+/// As [`read_document_tree`].
 #[expect(
     clippy::too_many_lines,
     reason = "the parts of a docx are read in the order the tree needs them"
 )]
-pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree, OfficeError> {
+pub fn read_document_tree_with(
+    bytes: &[u8],
+    limits: &Limits,
+    options: &TreeOptions,
+) -> Result<DocumentTree, OfficeError> {
     if bytes.len() as u64 > limits.max_input_bytes {
         return Err(OfficeError::TooLarge {
             what: "input".to_owned(),
@@ -444,10 +526,10 @@ pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree,
     }
     let format = detect_format(bytes, None);
     if format == DocumentFormat::Odt {
-        return crate::opendocument::read_odt_tree(bytes, limits);
+        return crate::opendocument::read_odt_tree(bytes, limits, *options);
     }
     if format == DocumentFormat::Doc {
-        return crate::doc::read_doc_tree(bytes, limits);
+        return crate::doc::read_doc_tree(bytes, limits, *options);
     }
     if format != DocumentFormat::Docx {
         return Err(OfficeError::UnsupportedFormat(format));
@@ -500,6 +582,10 @@ pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree,
         footnotes: side_part(&mut package, "footnotes"),
         endnotes: side_part(&mut package, "endnotes"),
     };
+    let comment_parts = notes::CommentParts::read(
+        side_part(&mut package, "comments"),
+        side_part(&mut package, "commentsExtended"),
+    );
     // Each paragraph whose properties hold a `w:sectPr` ends a section; the body's own is the last.
     let mut groups: Vec<(Vec<&Element>, Option<&Element>)> = Vec::new();
     let mut current = Vec::new();
@@ -536,6 +622,8 @@ pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree,
         &styles,
         &numbering,
         &note_parts,
+        &comment_parts,
+        options.tracked_changes,
         limits,
         &mut report,
     );
@@ -571,7 +659,7 @@ pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree,
                 == Some("continuous"),
         });
     }
-    let (media, notes) = converter.finish();
+    let (media, notes, comments) = converter.finish();
     let last = sections.last().cloned().unwrap_or_else(|| Section {
         end_block: blocks.len(),
         layout: PageLayout::default(),
@@ -590,6 +678,7 @@ pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree,
         notes,
         headers_footers: last.headers_footers,
         sections,
+        comments,
     })
 }
 

@@ -63,6 +63,51 @@ impl NoteParts {
     }
 }
 
+/// The comments of a document, and how they thread: for the last paragraph of each comment,
+/// the last paragraph of the comment it answers and whether it is done (`commentsExtended`).
+#[derive(Default)]
+pub(super) struct CommentParts {
+    pub comments: Option<Part>,
+    pub threads: std::collections::HashMap<String, (Option<String>, bool)>,
+}
+
+impl CommentParts {
+    /// Read the comments part and its threads, either of them missing or damaged left out.
+    pub(super) fn read(comments: Option<Part>, extended: Option<Part>) -> Self {
+        let mut threads = std::collections::HashMap::new();
+        if let Some(extended) = extended {
+            for entry in extended
+                .root
+                .elements()
+                .filter(|entry| entry.name == "commentEx")
+            {
+                if let Some(paragraph) = entry.attribute(Namespace::Other, "paraId") {
+                    threads.insert(
+                        paragraph.to_owned(),
+                        (
+                            entry
+                                .attribute(Namespace::Other, "paraIdParent")
+                                .map(str::to_owned),
+                            entry.attribute(Namespace::Other, "done") == Some("1"),
+                        ),
+                    );
+                }
+            }
+        }
+        Self { comments, threads }
+    }
+
+    /// The comment with this id and the relationships of its part.
+    pub(super) fn find(&self, id: &str) -> Option<(&Element, &[Relationship])> {
+        let part = self.comments.as_ref()?;
+        let comment = part
+            .root
+            .elements()
+            .find(|comment| comment.is(W, "comment") && comment.attribute(W, "id") == Some(id))?;
+        Some((comment, &part.relationships))
+    }
+}
+
 /// What `word/settings.xml` says about the layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Settings {

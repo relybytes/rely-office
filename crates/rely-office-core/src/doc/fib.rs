@@ -26,6 +26,12 @@ pub(super) mod pair {
     pub(in super::super) const FOOTNOTE_REFERENCES: usize = 2;
     pub(in super::super) const FOOTNOTE_TEXTS: usize = 3;
     pub(in super::super) const COMMENT_REFERENCES: usize = 4;
+    pub(in super::super) const COMMENT_TEXTS: usize = 5;
+    pub(in super::super) const COMMENT_OWNERS: usize = 36;
+    pub(in super::super) const COMMENT_BOOKMARK_NAMES: usize = 37;
+    pub(in super::super) const COMMENT_BOOKMARK_FIRSTS: usize = 42;
+    pub(in super::super) const COMMENT_BOOKMARK_LASTS: usize = 43;
+    pub(in super::super) const REVIEWERS: usize = 51;
     pub(in super::super) const SECTIONS: usize = 6;
     pub(in super::super) const HEADERS: usize = 11;
     pub(in super::super) const CHARACTER_PAGES: usize = 12;
@@ -76,6 +82,10 @@ impl Stories {
 
     pub(super) fn headers_start(&self) -> usize {
         self.main.saturating_add(self.footnotes)
+    }
+
+    pub(super) fn comments_start(&self) -> usize {
+        self.headers_start().saturating_add(self.headers)
     }
 
     pub(super) fn endnotes_start(&self) -> usize {

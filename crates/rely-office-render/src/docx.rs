@@ -31,6 +31,8 @@ use crate::metrics::FontLines;
 use floats::{Float, PagePlace, frame_of};
 
 const TWIPS_PER_POINT: f64 = 20.0;
+/// The colour of tracked changes, as Word marks those of its first reviewer.
+const REVISION_COLOUR: &str = "#C00000";
 const POINTS_PER_CSS_PIXEL: f64 = 0.75;
 /// Word's body size when the document names none.
 const DEFAULT_FONT_POINTS: f64 = 11.0;
@@ -802,6 +804,7 @@ impl Writer<'_> {
                     let reference = self.note_reference(*note);
                     push_expression(&mut segments, &reference);
                 }
+                Inline::CommentAnchor { .. } => {}
             }
         }
         match tabs {
@@ -1349,8 +1352,16 @@ fn marked(text: &str, marks: &[Mark], look: &RunLook, paragraph_font: &RunLook) 
             Mark::Superscript => format!("super({expression})"),
             Mark::Subscript => format!("sub({expression})"),
             Mark::Link { href } => format!("link({}, {expression})", string_literal(href)),
-            // The look already draws the run's own font, size and colour.
-            Mark::TextStyle { .. } | Mark::Highlight { .. } => expression,
+            // Changes show as Word shows them with markup on.
+            Mark::Insertion { .. } => {
+                format!("text(fill: rgb(\"{REVISION_COLOUR}\"), underline({expression}))")
+            }
+            Mark::Deletion { .. } => {
+                format!("text(fill: rgb(\"{REVISION_COLOUR}\"), strike({expression}))")
+            }
+            // The look already draws the run's own font, size and colour; a comment is not
+            // printed.
+            Mark::TextStyle { .. } | Mark::Highlight { .. } | Mark::Comment { .. } => expression,
         };
     }
     if let Some(highlight) = look

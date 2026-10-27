@@ -127,6 +127,7 @@ pub(super) struct DocBuilder {
     pub(super) main: String,
     pub(super) footnotes: String,
     pub(super) headers: String,
+    pub(super) comments: String,
     pub(super) endnotes: String,
     pub(super) text_boxes: String,
     /// Character modifiers over ranges of character positions; the rest have none.
@@ -173,6 +174,7 @@ impl DocBuilder {
             &self.main,
             &self.footnotes,
             &self.headers,
+            &self.comments,
             &self.endnotes,
             &self.text_boxes,
         ]
@@ -253,6 +255,7 @@ impl DocBuilder {
             (3, self.main.chars().count()),
             (4, self.footnotes.chars().count()),
             (5, self.headers.chars().count()),
+            (7, self.comments.chars().count()),
             (8, self.endnotes.chars().count()),
             (9, self.text_boxes.chars().count()),
         ];

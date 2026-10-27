@@ -13,9 +13,10 @@
 //! cross as their own byte arrays, never inside the JSON.
 
 use rely_office_core::{
-    Block, DocumentTree, HeadersFooters, ImportReport, Limits, Media, Note, OfficeError,
-    PageLayout, Section, Sheet, detect_format, extract_text, read_document_tree, read_presentation,
-    read_workbook, sniff_image_type, write_docx, write_pptx,
+    Block, Comment, DocumentTree, HeadersFooters, ImportReport, Limits, Media, Note, OfficeError,
+    PageLayout, Section, Sheet, TrackedChanges, TreeOptions, detect_format, extract_text,
+    read_document_tree, read_document_tree_with, read_presentation, read_workbook,
+    sniff_image_type, write_docx, write_pptx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -151,6 +152,37 @@ struct DocumentTreeOutput<'a> {
     page: PageOutput,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     sections: Vec<SectionOutput<'a>>,
+    #[serde(skip_serializing_if = "<[Comment]>::is_empty")]
+    comments: &'a [Comment],
+}
+
+/// How a document is read for JavaScript: `{ trackedChanges: "accept" | "keep" }`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+struct TreeOptionsInput {
+    tracked_changes: Option<String>,
+}
+
+/// The options of a read from their JSON; none means the defaults.
+fn parse_tree_options(options_json: Option<&str>) -> Result<TreeOptions, Failure> {
+    let Some(json) = options_json.map(str::trim).filter(|json| !json.is_empty()) else {
+        return Ok(TreeOptions::default());
+    };
+    let input: TreeOptionsInput = serde_json::from_str(json).map_err(|error| Failure {
+        code: "INVALID_OPTIONS",
+        message: format!("invalid options: {error}"),
+    })?;
+    let tracked_changes = match input.tracked_changes.as_deref() {
+        None | Some("accept") => TrackedChanges::Accept,
+        Some("keep") => TrackedChanges::Keep,
+        Some(other) => {
+            return Err(Failure {
+                code: "INVALID_OPTIONS",
+                message: format!("trackedChanges is accept or keep, not {other}"),
+            });
+        }
+    };
+    Ok(TreeOptions { tracked_changes })
 }
 
 #[derive(Serialize)]
@@ -278,8 +310,10 @@ impl DocumentTreeHandle {
 pub fn document_tree(
     bytes: &[u8],
     limits_json: Option<&str>,
+    options_json: Option<&str>,
 ) -> Result<DocumentTreeHandle, Failure> {
     let limits = parse_limits(limits_json)?;
+    let options = parse_tree_options(options_json)?;
     let DocumentTree {
         blocks,
         media,
@@ -288,7 +322,8 @@ pub fn document_tree(
         notes,
         headers_footers,
         sections,
-    } = read_document_tree(bytes, &limits)?;
+        comments,
+    } = read_document_tree_with(bytes, &limits, &options)?;
     let json = to_json(&DocumentTreeOutput {
         blocks: &blocks,
         media: media
@@ -313,6 +348,7 @@ pub fn document_tree(
                 continuous: section.continuous,
             })
             .collect(),
+        comments: &comments,
     })?;
     Ok(DocumentTreeHandle { json, media })
 }
@@ -344,6 +380,8 @@ struct DocxInput {
     headers_footers: HeadersFooters,
     #[serde(default)]
     sections: Vec<SectionInput>,
+    #[serde(default)]
+    comments: Vec<Comment>,
 }
 
 /// One section of a document to write: where it ends, its page and its headers and footers.
@@ -402,6 +440,7 @@ pub fn docx_from_json(tree_json: &str, media: Vec<Media>) -> Result<Vec<u8>, Fai
         notes: input.notes,
         headers_footers: input.headers_footers,
         sections,
+        comments: input.comments,
     };
     Ok(write_docx(&tree)?)
 }
@@ -509,8 +548,10 @@ pub fn read_sheets_js(
 pub fn read_document_tree_js(
     bytes: &[u8],
     limits_json: Option<String>,
+    options_json: Option<String>,
 ) -> Result<DocumentTreeHandle, JsError> {
-    document_tree(bytes, limits_json.as_deref()).map_err(|failure| throw(&failure))
+    document_tree(bytes, limits_json.as_deref(), options_json.as_deref())
+        .map_err(|failure| throw(&failure))
 }
 
 /// A document as a docx: a doc, an odt or a docx read into its tree and written back, so an
