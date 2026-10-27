@@ -57,6 +57,8 @@ pub(crate) enum Namespace {
     OdfAnimation,
     /// `xml:id` and the other attributes of the XML namespace itself.
     Xml,
+    /// The formulas of an `OpenDocument` formula object.
+    MathMl,
     Other,
 }
 
@@ -103,6 +105,7 @@ impl Namespace {
             "urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0" => Self::OdfSmil,
             "urn:oasis:names:tc:opendocument:xmlns:animation:1.0" => Self::OdfAnimation,
             "http://www.w3.org/XML/1998/namespace" => Self::Xml,
+            "http://www.w3.org/1998/Math/MathML" => Self::MathMl,
             _ => Self::Other,
         }
     }

@@ -100,7 +100,7 @@ fn png_size(png: &[u8]) -> (u32, u32) {
 
 #[test]
 fn holds_the_bundled_fonts() {
-    assert_eq!(RENDERER.font_count(), 18);
+    assert_eq!(RENDERER.font_count(), 19);
     assert_eq!(bundled_font_families().len(), 5);
 }
 

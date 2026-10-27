@@ -716,7 +716,21 @@ fn counts_what_an_editor_cannot_hold() {
     assert_eq!(
         without_looks(&read.blocks),
         vec![
-            paragraph("commentato"),
+            Block::Paragraph {
+                look: ParagraphLook::default(),
+                align: None,
+                content: vec![
+                    Inline::Text {
+                        text: "commentato".to_owned(),
+                        marks: Vec::new(),
+                        look: RunLook::default(),
+                    },
+                    Inline::Math {
+                        latex: "x".to_owned(),
+                        display: false,
+                    },
+                ],
+            },
             paragraph("casella"),
             Block::Paragraph {
                 look: ParagraphLook::default(),

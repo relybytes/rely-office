@@ -701,3 +701,52 @@ fn writes_comments_replies_and_tracked_changes_that_read_back() {
         "accepted, the deletion is gone"
     );
 }
+
+#[test]
+fn writes_equations_as_office_math_that_reads_back() {
+    let math = |latex: &str, display: bool| Inline::Math {
+        latex: latex.to_owned(),
+        display,
+    };
+    let tree = DocumentTree {
+        blocks: vec![
+            Block::Paragraph {
+                content: vec![
+                    Inline::Text {
+                        text: "Sia ".to_owned(),
+                        marks: Vec::new(),
+                        look: RunLook::default(),
+                    },
+                    math(r"x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}", false),
+                ],
+                align: None,
+                look: ParagraphLook::default(),
+            },
+            Block::Paragraph {
+                content: vec![math(r"\sum_{i=1}^n{i}=\frac{n(n+1)}{2}", true)],
+                align: None,
+                look: ParagraphLook::default(),
+            },
+        ],
+        ..DocumentTree::default()
+    };
+    let written = write_docx(&tree).unwrap();
+    let read = read_document_tree(&written, &Limits::default()).unwrap();
+    let equations: Vec<&Inline> = read
+        .blocks
+        .iter()
+        .flat_map(|block| match block {
+            Block::Paragraph { content, .. } => content.iter().collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .filter(|inline| matches!(inline, Inline::Math { .. }))
+        .collect();
+    assert_eq!(
+        equations,
+        vec![
+            &math(r"x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}", false),
+            &math(r"\sum_{i=1}^n{i}=\frac{n(n+1)}{2}", true),
+        ]
+    );
+    assert_eq!(read.report.equations, 2);
+}

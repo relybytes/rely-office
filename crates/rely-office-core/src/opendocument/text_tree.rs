@@ -963,17 +963,23 @@ impl Converter<'_, '_> {
     fn drawing(&mut self, element: &Element, scope: Scope, content: &mut Vec<Inline>) {
         match element.name.as_str() {
             "frame" => {
-                if let Some(image) = element.child(DRAW, "image") {
+                // An object comes with a picture of itself: the formula or chart it holds is
+                // read first, and the picture only stands in for what cannot be.
+                let object = element.child(DRAW, "object");
+                if let Some(object) = object
+                    && (self.formula(element, object, content)
+                        || self.chart(element, object, content))
+                {
+                } else if let Some(image) = element.child(DRAW, "image") {
+                    if object.is_some() {
+                        self.report.embedded_objects += 1;
+                    }
                     self.image(element, image, scope, content);
                 } else if let Some(text_box) = element.child(DRAW, "text-box") {
                     self.report.text_boxes += 1;
                     let frame = self.text_frame(element, scope);
                     self.text_box(text_box, scope, frame.as_ref());
-                } else if let Some(object) = element.child(DRAW, "object") {
-                    if !self.chart(element, object, content) {
-                        self.report.embedded_objects += 1;
-                    }
-                } else if element.child(DRAW, "object-ole").is_some() {
+                } else if object.is_some() || element.child(DRAW, "object-ole").is_some() {
                     self.report.embedded_objects += 1;
                 }
             }
@@ -1031,6 +1037,46 @@ impl Converter<'_, '_> {
 
     /// A chart object drawn as an SVG image the size of its frame; `false` when the object is
     /// not a chart this reader draws.
+    /// A formula object: its `MathML` as an equation, in the line when the frame is anchored as
+    /// a character and on a line of its own otherwise.
+    fn formula(&mut self, frame: &Element, object: &Element, content: &mut Vec<Inline>) -> bool {
+        let Some(xml) = object
+            .attribute(XLINK, "href")
+            .and_then(odf_object_part)
+            .and_then(|part| {
+                read_text_member(self.package, &part, self.limits)
+                    .ok()
+                    .flatten()
+            })
+        else {
+            return false;
+        };
+        let Ok(root) = parse_tree(&xml, |namespace, name| {
+            namespace == Namespace::MathMl && matches!(name, "mi" | "mn" | "mo" | "mtext")
+        }) else {
+            return false;
+        };
+        if !root.is(Namespace::MathMl, "math") {
+            return false;
+        }
+        self.report.equations += 1;
+        let latex = crate::math::to_latex(&crate::math::mathml_to_math(&root));
+        let length = latex.chars().count();
+        if length > self.remaining_chars {
+            self.report.truncated = true;
+            return true;
+        }
+        self.remaining_chars -= length;
+        if !latex.is_empty() {
+            content.push(Inline::Math {
+                latex,
+                display: root.attribute(Namespace::None, "display") == Some("block")
+                    || frame.attribute(TEXT, "anchor-type") != Some("as-char"),
+            });
+        }
+        true
+    }
+
     fn chart(&mut self, frame: &Element, object: &Element, content: &mut Vec<Inline>) -> bool {
         let size = |name: &str| {
             frame

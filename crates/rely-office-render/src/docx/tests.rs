@@ -368,3 +368,33 @@ fn sets_the_font_of_a_run() {
         r#""y""#
     );
 }
+
+#[test]
+fn sets_equations_in_typst_math() {
+    let mut writer = writer(&[]);
+    let paragraph = Block::Paragraph {
+        content: vec![
+            text("Area "),
+            Inline::Math {
+                latex: r"\pi r^2".to_owned(),
+                display: false,
+            },
+            Inline::Math {
+                latex: r"\frac{a}{b}".to_owned(),
+                display: true,
+            },
+        ],
+        align: None,
+        look: ParagraphLook::default(),
+    };
+    let placed = writer.place(&paragraph);
+    assert!(
+        placed
+            .expression
+            .contains("#$π r^(2)$#h(1fr)#$display(frac(a, b))$#h(1fr)"),
+        "{}",
+        placed.expression
+    );
+    let (source, _) = document_source(&tree(vec![paragraph], Vec::new()), true, &LINES);
+    assert!(source.contains("#show math.equation: set text(font: (\"DejaVu Math TeX Gyre\""));
+}

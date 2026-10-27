@@ -107,6 +107,7 @@ fn pieces(content: &[Inline]) -> Vec<String> {
             Inline::Image { .. } => "<image>".to_owned(),
             Inline::NoteReference { note } => format!("<note {note}>"),
             Inline::CommentAnchor { comment } => format!("<comment {comment}>"),
+            Inline::Math { latex, .. } => format!("<math {latex}>"),
         })
         .collect()
 }

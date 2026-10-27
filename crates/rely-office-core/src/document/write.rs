@@ -50,7 +50,8 @@ const NAMESPACES: &str = concat!(
     r#"xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" "#,
     r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,
     r#"xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" "#,
-    r#"xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape""#,
+    r#"xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" "#,
+    r#"xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math""#,
 );
 
 /// Write a document tree as a docx. An image whose type is not one Word shows (PNG, JPEG, GIF,
@@ -534,6 +535,10 @@ impl DocxWriter<'_> {
                     xml,
                 ),
                 Inline::NoteReference { note } => self.note_reference(*note, xml),
+                Inline::Math { latex, display } => {
+                    let math = crate::math::parse_latex(latex);
+                    xml.push_str(&crate::math::math_to_omml(&math, *display));
+                }
                 Inline::CommentAnchor { comment } => {
                     if self.in_body
                         && let Some(id) = self.comment_id(*comment)

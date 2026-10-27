@@ -33,6 +33,8 @@ use floats::{Float, PagePlace, frame_of};
 const TWIPS_PER_POINT: f64 = 20.0;
 /// The colour of tracked changes, as Word marks those of its first reviewer.
 const REVISION_COLOUR: &str = "#C00000";
+/// The math font equations are set in, an OpenType font with a MATH table.
+const MATH_FONT: &str = "DejaVu Math TeX Gyre";
 const POINTS_PER_CSS_PIXEL: f64 = 0.75;
 /// Word's body size when the document names none.
 const DEFAULT_FONT_POINTS: f64 = 11.0;
@@ -194,6 +196,12 @@ pub(crate) fn document_source(
         source,
         "#show raw: set text(font: {})",
         string_literal(MONO)
+    );
+    // Equations take the math font the renderer holds, and the body's when it holds none.
+    let _ = writeln!(
+        source,
+        "#show math.equation: set text(font: {})",
+        font_list(&[MATH_FONT.to_owned(), "Liberation Serif".to_owned()])
     );
     let _ = writeln!(
         source,
@@ -805,6 +813,18 @@ impl Writer<'_> {
                     push_expression(&mut segments, &reference);
                 }
                 Inline::CommentAnchor { .. } => {}
+                Inline::Math { latex, display } => {
+                    let math = rely_office_core::latex_to_typst(latex);
+                    if *display {
+                        // A paragraph holds inline content only: a display equation is set in
+                        // display style between springs, on the line the paragraph gives it.
+                        push_expression(&mut segments, "h(1fr)");
+                        push_expression(&mut segments, &format!("$display({math})$"));
+                        push_expression(&mut segments, "h(1fr)");
+                    } else {
+                        push_expression(&mut segments, &format!("${math}$"));
+                    }
+                }
             }
         }
         match tabs {

@@ -651,7 +651,20 @@ impl<'a, 'p> Converter<'a, 'p> {
                         );
                     }
                 }
-                (Namespace::Math, "oMath" | "oMathPara") => self.report.equations += 1,
+                (Namespace::Math, "oMath" | "oMathPara") => {
+                    self.report.equations += 1;
+                    let latex = crate::math::to_latex(&crate::math::omml_to_math(element));
+                    let length = latex.chars().count();
+                    if length > self.remaining_chars {
+                        self.report.truncated = true;
+                    } else if !latex.is_empty() {
+                        self.remaining_chars -= length;
+                        content.push(Inline::Math {
+                            latex,
+                            display: element.name == "oMathPara",
+                        });
+                    }
+                }
                 (MC, "AlternateContent") => {
                     if let Some(choice) = alternate_choice(element) {
                         self.append_inlines(choice, link, content, scan);
@@ -1569,6 +1582,7 @@ pub(crate) fn plain_text(content: &[Inline]) -> String {
         match inline {
             Inline::Text { text: run, .. } => text.push_str(run),
             Inline::HardBreak => text.push('\n'),
+            Inline::Math { latex, .. } => text.push_str(latex),
             Inline::Image { .. } | Inline::NoteReference { .. } | Inline::CommentAnchor { .. } => {}
         }
     }

@@ -366,6 +366,9 @@ pub enum Inline {
     /// The place of a comment that covers no text: `comment` is its index in
     /// [`DocumentTree::comments`]. A comment on text marks the text instead.
     CommentAnchor { comment: usize },
+    /// An equation in LaTeX, `\frac{a}{b}`: set in the line, or on a line of its own when
+    /// `display`.
+    Math { latex: String, display: bool },
 }
 
 /// A formatting mark of a text run, in this order when several apply.
@@ -800,7 +803,8 @@ fn page_layout(section: Option<&Element>) -> PageLayout {
 
 /// Text runs and field instructions keep their spaces; everywhere else whitespace is layout.
 fn keeps_whitespace(namespace: Namespace, name: &str) -> bool {
-    namespace == Namespace::Word && matches!(name, "t" | "instrText" | "delText")
+    (namespace == Namespace::Word && matches!(name, "t" | "instrText" | "delText"))
+        || (namespace == Namespace::Math && name == "t")
 }
 
 #[cfg(test)]

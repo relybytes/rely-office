@@ -55,6 +55,7 @@
     "web/rely_office_sheet_wasm_bg.wasm",
     "fonts/*.ttf",
     "fonts/OFL-*.txt",
+    "fonts/LICENSE-*.txt",
     "README.md",
     "LICENSE",
     "NOTICE"

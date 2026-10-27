@@ -48,6 +48,7 @@ fn plain(blocks: &[Block]) -> Vec<String> {
                     Inline::Image { .. } => "[image]".to_owned(),
                     Inline::HardBreak => "\n".to_owned(),
                     Inline::CommentAnchor { comment } => format!("[comment {comment}]"),
+                    Inline::Math { latex, .. } => format!("[math {latex}]"),
                 })
                 .collect(),
             other => format!("{other:?}"),

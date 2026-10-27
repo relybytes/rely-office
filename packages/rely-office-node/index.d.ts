@@ -109,7 +109,13 @@ export type Mark =
   /** A highlight behind the text, as a CSS colour. */
   | { type: 'highlight'; color: string }
   /** Only `http:`, `https:` and `mailto:` targets are kept. */
-  | { type: 'link'; href: string };
+  | { type: 'link'; href: string }
+  /** Text a comment is on: `comment` indexes `DocumentTree.comments`. */
+  | { type: 'comment'; comment: number }
+  /** A tracked insertion, read only with `{ trackedChanges: 'keep' }`; `date` is ISO 8601. */
+  | { type: 'insertion'; author: string; date?: string }
+  /** A tracked deletion, still in the text until accepted; read only with `keep`. */
+  | { type: 'deletion'; author: string; date?: string };
 
 export type Inline =
   | { type: 'text'; text: string; marks?: Mark[] }
@@ -117,7 +123,33 @@ export type Inline =
   /** `media` indexes `DocumentTree.media`; sizes are CSS pixels. */
   | { type: 'image'; media: number; alt?: string; width?: number; height?: number }
   /** A footnote or endnote: `note` indexes `DocumentTree.notes`. */
-  | { type: 'noteReference'; note: number };
+  | { type: 'noteReference'; note: number }
+  /** A comment on a point rather than on text: `comment` indexes `DocumentTree.comments`. */
+  | { type: 'commentAnchor'; comment: number }
+  /** An equation in LaTeX, `\frac{a}{b}`; `display` sets it on a line of its own. */
+  | { type: 'math'; latex: string; display: boolean };
+
+/** A comment, or a reply to one. */
+export interface Comment {
+  author: string;
+  initials?: string;
+  /** ISO 8601, as the file stores it. */
+  date?: string;
+  blocks: Block[];
+  /** The comment this one answers, an index of `DocumentTree.comments`. */
+  parent?: number;
+  /** The discussion is marked as done. */
+  resolved: boolean;
+}
+
+/** How a document is read. */
+export interface TreeOptions {
+  /**
+   * `accept` (the default) reads the document as if every tracked change were accepted;
+   * `keep` keeps both, each run marked `insertion` or `deletion`.
+   */
+  trackedChanges?: 'accept' | 'keep';
+}
 
 export interface TableCell {
   colSpan: number;
@@ -233,6 +265,8 @@ export interface DocumentTree {
   page: PageSize;
   /** Every section, the last included, when there are more than one. */
   sections?: Section[];
+  /** The comments on the text, when there are any. */
+  comments?: Comment[];
 }
 
 /** The format of a document; the name only tells CSV from TSV and never overrides the bytes. */
@@ -252,7 +286,11 @@ export function readSheets(bytes: DocumentBytes, fileName?: string, limits?: Lim
  * A docx, a doc or an odt as a neutral tree of blocks for a rich-text editor, with its images
  * and a report. Charts come as SVG images; the tree is written back with `writeDocx`.
  */
-export function readDocumentTree(bytes: DocumentBytes, limits?: Limits): DocumentTree;
+export function readDocumentTree(
+  bytes: DocumentBytes,
+  limits?: Limits,
+  options?: TreeOptions,
+): DocumentTree;
 
 /** What to produce from one render. */
 export interface RenderOptions {
@@ -303,6 +341,8 @@ export interface DocxInput {
   headersFooters?: HeadersFooters;
   /** The sections of a document of several, as `readDocumentTree` gives them. */
   sections?: Section[];
+  /** The comments the marks and anchors of the blocks name. */
+  comments?: Comment[];
 }
 
 /** A docx Word opens and `readDocumentTree` reads back to the same tree. */
