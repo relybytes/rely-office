@@ -141,3 +141,95 @@ fn draws_a_group_of_shapes_with_their_text() {
         "a shape with no size draws nothing"
     );
 }
+
+const DIAGRAM: &str = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
+const DIAGRAM_DRAWING: &str = "http://schemas.microsoft.com/office/drawing/2008/diagram";
+
+fn smart_art_docx(drawing_relationship: &str) -> Vec<u8> {
+    let frame = format!(
+        concat!(
+            r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="2540000" cy="1270000"/><a:graphic>"#,
+            r#"<a:graphicData uri="{0}"><dgm:relIds xmlns:dgm="{0}" r:dm="rId1" r:lo="rId2" r:qs="rId3" r:cs="rId4"/></a:graphicData>"#,
+            "</a:graphic></wp:inline></w:drawing></w:r></w:p>"
+        ),
+        DIAGRAM
+    );
+    let model = format!(
+        concat!(
+            r#"<dgm:dataModel xmlns:dgm="{0}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dgm:ptLst/>"#,
+            r#"<dgm:extLst><a:ext uri="http://schemas.microsoft.com/office/drawing/2008/diagram"><dsp:dataModelExt xmlns:dsp="{1}" relId="{2}" minVer="x"/></a:ext></dgm:extLst></dgm:dataModel>"#
+        ),
+        DIAGRAM, DIAGRAM_DRAWING, drawing_relationship
+    );
+    let drawing = format!(
+        concat!(
+            r#"<dsp:drawing xmlns:dsp="{0}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dsp:spTree><dsp:nvGrpSpPr/><dsp:grpSpPr/>"#,
+            r#"<dsp:sp modelId="1"><dsp:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1270000" cy="635000"/></a:xfrm><a:prstGeom prst="roundRect"/>"#,
+            r#"<a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></dsp:spPr><dsp:style><a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef></dsp:style>"#,
+            r#"<dsp:txBody><a:bodyPr/><a:p><a:r><a:rPr sz="1400" b="1"/><a:t>Analisi</a:t></a:r></a:p></dsp:txBody></dsp:sp>"#,
+            r#"<dsp:grpSp><dsp:grpSpPr><a:xfrm><a:off x="1270000" y="0"/><a:ext cx="1270000" cy="635000"/><a:chOff x="0" y="0"/><a:chExt cx="100" cy="50"/></a:xfrm></dsp:grpSpPr>"#,
+            r#"<dsp:sp><dsp:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="50"/></a:xfrm><a:prstGeom prst="rightArrow"/><a:solidFill><a:srgbClr val="A5A5A5"/></a:solidFill></dsp:spPr></dsp:sp>"#,
+            "</dsp:grpSp></dsp:spTree></dsp:drawing>"
+        ),
+        DIAGRAM_DRAWING
+    );
+    let relationships = crate::test_support::rels_xml(&[
+        ("rId1", "diagramData", "diagrams/data1.xml", false),
+        ("rId5", "diagramDrawing", "diagrams/drawing1.xml", false),
+    ]);
+    build_docx_from_body(
+        &frame,
+        &[
+            ("word/_rels/document.xml.rels", relationships.as_bytes()),
+            ("word/diagrams/data1.xml", model.as_bytes()),
+            ("word/diagrams/drawing1.xml", drawing.as_bytes()),
+        ],
+    )
+}
+
+#[test]
+fn draws_a_smart_art_from_its_drawing() {
+    for relationship in ["rId5", "rId9"] {
+        let tree = read_document_tree(&smart_art_docx(relationship), &Limits::default()).unwrap();
+        assert_eq!(tree.report.smart_art, 1);
+        assert_eq!(
+            tree.media.len(),
+            1,
+            "{relationship}: the only drawing is the one"
+        );
+        let svg = String::from_utf8(tree.media[0].bytes.clone()).unwrap();
+        assert!(
+            svg.contains(r##"fill="#4472C4""##) && svg.contains(">Analisi</text>"),
+            "{svg}"
+        );
+        assert!(svg.contains(r#"font-weight="bold""#) && svg.contains(r##"fill="#FFFFFF""##));
+        assert!(
+            svg.contains(r##"fill="#A5A5A5""##),
+            "the grouped arrow: {svg}"
+        );
+        let Some(Block::Paragraph { content, .. }) = tree.blocks.first() else {
+            panic!("a paragraph");
+        };
+        assert!(matches!(
+            content[0],
+            Inline::Image {
+                width: Some(267),
+                height: Some(133),
+                ..
+            }
+        ));
+    }
+}
+
+#[test]
+fn finds_the_drawing_a_data_model_names() {
+    assert_eq!(
+        super::smart_art_drawing(r#"<x><dsp:dataModelExt relId="rId7" minVer="m"/></x>"#),
+        Some("rId7")
+    );
+    assert_eq!(
+        super::smart_art_drawing(r#"<dsp:dataModelExt relId="a\"b"/>"#),
+        None
+    );
+    assert_eq!(super::smart_art_drawing("<nothing/>"), None);
+}

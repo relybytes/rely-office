@@ -59,6 +59,9 @@ pub(crate) enum Namespace {
     Xml,
     /// The formulas of an `OpenDocument` formula object.
     MathMl,
+    /// The data model of a `SmartArt`, and the drawing Office keeps of it.
+    Diagram,
+    DiagramDrawing,
     Other,
 }
 
@@ -75,6 +78,9 @@ impl Namespace {
             | "http://purl.oclc.org/ooxml/drawingml/main" => Self::Drawing,
             "http://schemas.microsoft.com/office/word/2010/wordprocessingShape" => Self::WordShape,
             "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" => Self::WordGroup,
+            "http://schemas.microsoft.com/office/drawing/2008/diagram" => Self::DiagramDrawing,
+            "http://schemas.openxmlformats.org/drawingml/2006/diagram"
+            | "http://purl.oclc.org/ooxml/drawingml/diagram" => Self::Diagram,
             "http://schemas.openxmlformats.org/presentationml/2006/main"
             | "http://purl.oclc.org/ooxml/presentationml/main" => Self::Presentation,
             "http://schemas.openxmlformats.org/drawingml/2006/chart"

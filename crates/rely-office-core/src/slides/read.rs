@@ -21,7 +21,9 @@ use super::{
 };
 use crate::archive::{ZipPackage, open_package, read_member_bytes, read_text_member};
 use crate::chart::{chart_picture, no_cells};
-use crate::document::{Alignment, Media, image_pixel_size, sniff_image_type};
+use crate::document::{
+    Alignment, Media, image_pixel_size, smart_art_drawing, smart_art_svg, sniff_image_type,
+};
 use crate::presentation::slide_parts;
 use crate::relationships::{Relationship, main_part_path, read_relationships};
 use crate::theme::{Theme, colour_in};
@@ -593,16 +595,12 @@ impl Reader<'_, '_> {
         if let Some(chart) = frame.descendant(Namespace::Chart, "chart") {
             let bounds = transform.apply(bounds);
             let media = self.chart(chart.attribute(R, "id")?, relationships, context, bounds)?;
-            return Some(SlideShape {
-                id: None,
-                inherited: false,
-                frame: bounds,
-                rotation: 0.0,
-                geometry: ShapeGeometry::Rectangle,
-                fill: None,
-                line: None,
-                content: ShapeContent::Picture { media },
-            });
+            return Some(picture_shape(bounds, media));
+        }
+        if let Some(ids) = frame.descendant(Namespace::Diagram, "relIds") {
+            let bounds = transform.apply(bounds);
+            let media = self.smart_art(ids, relationships, context, bounds)?;
+            return Some(picture_shape(bounds, media));
         }
         let table = frame.descendant(A, "tbl")?;
         let column_widths_emu: Vec<i64> = table
@@ -959,6 +957,52 @@ impl Reader<'_, '_> {
         Some(self.media.len() - 1)
     }
 
+    /// A `SmartArt` as a picture, drawn from the drawing part its data model names.
+    fn smart_art(
+        &mut self,
+        ids: &Element,
+        relationships: &[Relationship],
+        context: &Context,
+        frame: Frame,
+    ) -> Option<usize> {
+        let target = |id: &str| {
+            relationships
+                .iter()
+                .find(|relationship| relationship.id == id && !relationship.external)
+                .map(|relationship| relationship.target.clone())
+        };
+        let data = target(ids.attribute(R, "dm")?)?;
+        let model = read_text_member(self.package, &data, self.limits)
+            .ok()
+            .flatten()?;
+        let drawing = smart_art_drawing(&model).and_then(target).or_else(|| {
+            let mut drawings = relationships.iter().filter(|relationship| {
+                !relationship.external && relationship.is_kind("diagramDrawing")
+            });
+            match (drawings.next(), drawings.next()) {
+                (Some(only), None) => Some(only.target.clone()),
+                _ => None,
+            }
+        })?;
+        let xml = read_text_member(self.package, &drawing, self.limits)
+            .ok()
+            .flatten()?;
+        let bytes = smart_art_svg(&xml, &context.theme, frame.width, frame.height)?;
+        let size = bytes.len() as u64;
+        if self.media.len() >= self.limits.max_images
+            || self.media_bytes.saturating_add(size) > self.limits.max_total_image_bytes
+        {
+            self.truncated = true;
+            return None;
+        }
+        self.media_bytes += size;
+        self.media.push(Media {
+            content_type: "image/svg+xml",
+            bytes,
+        });
+        Some(self.media.len() - 1)
+    }
+
     /// The media index of an image of a part, loading it the first time.
     /// The fill a shape's properties name, a picture fill included.
     fn paint_of(
@@ -1135,6 +1179,20 @@ impl Transform {
 }
 
 /// The frame, rotation and vertical flip of an `a:xfrm` or `p:xfrm`.
+/// A picture the slide draws in a frame: a chart, a `SmartArt`.
+fn picture_shape(frame: Frame, media: usize) -> SlideShape {
+    SlideShape {
+        id: None,
+        inherited: false,
+        frame,
+        rotation: 0.0,
+        geometry: ShapeGeometry::Rectangle,
+        fill: None,
+        line: None,
+        content: ShapeContent::Picture { media },
+    }
+}
+
 /// A shape with the id its slide gives it, or marked as drawn from the layout or the master.
 fn placed(mut shape: SlideShape, element: &Element, own: bool) -> SlideShape {
     shape.inherited = !own;

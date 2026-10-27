@@ -6,7 +6,8 @@
 
 //! The shapes of a docx drawn as pictures: a `wps:wsp` with no text box, and a `wpg:wgp` group
 //! of shapes with their text, each with its preset or custom outline, its fill and line from
-//! its properties or its style.
+//! its properties or its style; and the shapes of a `SmartArt`, from the drawing Office keeps
+//! beside its data model, the same shapes in the `dsp:` namespace with `DrawingML` text.
 
 use super::{Converter, EMUS_PER_PIXEL};
 use crate::document::{Inline, Media};
@@ -14,9 +15,10 @@ use crate::geometry::{
     DrawnShape, TextLine, custom_geometry, flip_paths, preset_geometry, rectangle_paths, shapes_svg,
 };
 use crate::theme::{Theme, colour_in};
-use crate::xml_tree::{Element, Namespace};
+use crate::xml_tree::{Element, Namespace, parse_tree};
 
 const A: Namespace = Namespace::Drawing;
+const DSP: Namespace = Namespace::DiagramDrawing;
 const WPS: Namespace = Namespace::WordShape;
 const WPG: Namespace = Namespace::WordGroup;
 const W: Namespace = Namespace::Word;
@@ -68,6 +70,89 @@ impl Placement {
 }
 
 impl Converter<'_, '_> {
+    /// A `SmartArt` of a drawing frame as a picture in `content`, drawn from the drawing part its
+    /// data model names; whether it drew one.
+    pub(super) fn append_smart_art(
+        &mut self,
+        frame: &Element,
+        graphic_data: Option<&Element>,
+        anchor: Option<crate::document::Anchor>,
+        content: &mut Vec<Inline>,
+    ) -> bool {
+        let extent = frame.child(Namespace::WordDrawing, "extent");
+        let emus = |name: &str| {
+            extent
+                .and_then(|extent| extent.attribute(Namespace::None, name))
+                .and_then(|emus| emus.parse::<i64>().ok())
+                .filter(|emus| *emus > 0)
+        };
+        let (Some(data), Some(width), Some(height)) = (graphic_data, emus("cx"), emus("cy")) else {
+            return false;
+        };
+        let target = |id: &str| {
+            self.relationships
+                .get(id)
+                .filter(|relationship| !relationship.external)
+                .map(|relationship| relationship.target.clone())
+        };
+        let Some(data_part) = data
+            .descendant(Namespace::Diagram, "relIds")
+            .and_then(|ids| ids.attribute(Namespace::Relationships, "dm"))
+            .and_then(target)
+        else {
+            return false;
+        };
+        let Some(model) = crate::archive::read_text_member(self.package, &data_part, self.limits)
+            .ok()
+            .flatten()
+        else {
+            return false;
+        };
+        let drawing = smart_art_drawing(&model).and_then(target).or_else(|| {
+            let mut drawings = self.relationships.values().filter(|relationship| {
+                !relationship.external && relationship.is_kind("diagramDrawing")
+            });
+            match (drawings.next(), drawings.next()) {
+                (Some(only), None) => Some(only.target.clone()),
+                _ => None,
+            }
+        });
+        let Some(xml) = drawing.and_then(|drawing| {
+            crate::archive::read_text_member(self.package, &drawing, self.limits)
+                .ok()
+                .flatten()
+        }) else {
+            return false;
+        };
+        let theme = self.loaded_theme();
+        let Some(bytes) = smart_art_svg(&xml, &theme, width, height) else {
+            return false;
+        };
+        let size = bytes.len() as u64;
+        if self.media.len() >= self.limits.max_images
+            || self.media_bytes.saturating_add(size) > self.limits.max_total_image_bytes
+        {
+            self.report.images_over_limit += 1;
+            return false;
+        }
+        self.media_bytes += size;
+        self.media.push(Media {
+            content_type: "image/svg+xml",
+            bytes,
+        });
+        let pixels = |emus: i64| {
+            u32::try_from((emus.unsigned_abs() + EMUS_PER_PIXEL / 2) / EMUS_PER_PIXEL).ok()
+        };
+        content.push(Inline::Image {
+            media: self.media.len() - 1,
+            alt: None,
+            width: pixels(width),
+            height: pixels(height),
+            anchor: anchor.map(Box::new),
+        });
+        true
+    }
+
     /// A shape or group of a drawing frame as a picture in `content`, at the frame's size and
     /// anchor; whether it drew one.
     pub(super) fn append_shape(
@@ -123,6 +208,7 @@ impl Converter<'_, '_> {
         } else if let Some(shape) = graphic_data.child(WPS, "wsp") {
             shapes.extend(drawn(
                 shape,
+                WPS,
                 &theme,
                 Placement::IDENTITY,
                 Some((width, height)),
@@ -163,6 +249,29 @@ impl Converter<'_, '_> {
         }
         self.theme.clone().unwrap_or_default()
     }
+}
+
+/// The relationship id of the drawing a `SmartArt`'s data model names, `dsp:dataModelExt`.
+pub(crate) fn smart_art_drawing(model: &str) -> Option<&str> {
+    let start = model.find("dataModelExt")?;
+    let rest = &model[start..];
+    let at = rest.find("relId=\"")? + 7;
+    let end = rest[at..].find('"')?;
+    Some(&rest[at..at + end]).filter(|id| {
+        id.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
+    })
+}
+
+/// The SVG of a `SmartArt` drawing part in a frame of `width` by `height` EMU: its shapes, its
+/// groups, their outlines, fills, lines and text.
+pub(crate) fn smart_art_svg(xml: &str, theme: &Theme, width: i64, height: i64) -> Option<Vec<u8>> {
+    let root = parse_tree(xml, |namespace, name| namespace == A && name == "t").ok()?;
+    let tree = root.child(DSP, "spTree")?;
+    let mut shapes = Vec::new();
+    collect(tree, theme, Placement::IDENTITY, &mut shapes, 0);
+    shapes_svg(&shapes, width, height)
 }
 
 /// The placement of a group's children: its child extent stretched over its own frame.
@@ -220,9 +329,14 @@ fn collect(
     }
     for child in group.elements() {
         match (child.namespace, child.name.as_str()) {
-            (WPS, "wsp") => shapes.extend(drawn(child, theme, placement, None)),
+            (WPS, "wsp") => shapes.extend(drawn(child, WPS, theme, placement, None)),
+            (DSP, "sp") => shapes.extend(drawn(child, DSP, theme, placement, None)),
             (WPG, "grpSp") => {
                 let inner = group_placement(child.child(WPG, "grpSpPr"), placement, (0, 0));
+                collect(child, theme, inner, shapes, depth + 1);
+            }
+            (DSP, "grpSp") => {
+                let inner = group_placement(child.child(DSP, "grpSpPr"), placement, (0, 0));
                 collect(child, theme, inner, shapes, depth + 1);
             }
             _ => {}
@@ -230,15 +344,16 @@ fn collect(
     }
 }
 
-/// One `wps:wsp`: its frame from its transform (or the whole picture), its outline, fill, line
-/// and text.
+/// One `wps:wsp` or `dsp:sp`, the namespace `own` says: its frame from its transform (or the
+/// whole picture), its outline, fill, line and text.
 fn drawn(
     shape: &Element,
+    own: Namespace,
     theme: &Theme,
     placement: Placement,
     whole: Option<(i64, i64)>,
 ) -> Option<DrawnShape> {
-    let properties = shape.child(WPS, "spPr");
+    let properties = shape.child(own, "spPr");
     let transform = properties.and_then(|properties| properties.child(A, "xfrm"));
     let number = |element: Option<&Element>, name: &str| {
         element
@@ -290,7 +405,7 @@ fn drawn(
         flipped("flipH"),
         flipped("flipV"),
     );
-    let style = shape.child(WPS, "style");
+    let style = shape.child(own, "style");
     let (fill, line) = paint_of(properties, style, theme);
     let style_colour = |name: &str| {
         let reference = style?.child(A, name)?;
@@ -299,11 +414,18 @@ fn drawn(
             .flatten()
     };
     let text_colour = style_colour("fontRef").unwrap_or_else(|| "000000".to_owned());
-    let text = shape
-        .child(WPS, "txbx")
-        .and_then(|text_box| text_box.child(W, "txbxContent"))
-        .map(|content| text_lines(content, &text_colour))
-        .unwrap_or_default();
+    let text = if own == DSP {
+        shape
+            .child(DSP, "txBody")
+            .map(|body| drawing_text_lines(body, &text_colour, theme))
+            .unwrap_or_default()
+    } else {
+        shape
+            .child(WPS, "txbx")
+            .and_then(|text_box| text_box.child(W, "txbxContent"))
+            .map(|content| text_lines(content, &text_colour))
+            .unwrap_or_default()
+    };
     Some(DrawnShape {
         x,
         y,
@@ -367,6 +489,41 @@ fn paint_of(
         None => style_colour("lnRef").map(|colour| (colour, DEFAULT_LINE_EMU)),
     };
     (fill, line)
+}
+
+/// The paragraphs of a `DrawingML` text body as centred lines, each in the size, colour and
+/// weight of its first run; an empty paragraph stays as an empty line.
+fn drawing_text_lines(body: &Element, default_colour: &str, theme: &Theme) -> Vec<TextLine> {
+    body.elements()
+        .filter(|paragraph| paragraph.is(A, "p"))
+        .map(|paragraph| {
+            let runs: Vec<&Element> = paragraph.elements().filter(|run| run.is(A, "r")).collect();
+            let text: String = runs
+                .iter()
+                .filter_map(|run| run.child(A, "t"))
+                .map(Element::text)
+                .collect();
+            let properties = runs
+                .first()
+                .and_then(|run| run.child(A, "rPr"))
+                .or_else(|| paragraph.child(A, "endParaRPr"));
+            let attribute = |name: &str| {
+                properties.and_then(|properties| properties.attribute(Namespace::None, name))
+            };
+            TextLine {
+                text,
+                size_points: attribute("sz")
+                    .and_then(|size| size.parse::<f64>().ok())
+                    .map_or(18.0, |hundredths| (hundredths / 100.0).clamp(1.0, 400.0)),
+                colour: properties
+                    .and_then(|properties| properties.child(A, "solidFill"))
+                    .and_then(|fill| colour_in(fill, theme))
+                    .unwrap_or_else(|| default_colour.to_owned()),
+                bold: matches!(attribute("b"), Some("1" | "true")),
+                italic: matches!(attribute("i"), Some("1" | "true")),
+            }
+        })
+        .collect()
 }
 
 /// The paragraphs of a shape's text as centred lines, each in the size, colour and weight of

@@ -170,6 +170,8 @@ fn presentation_with(
         ("rId2", "image", "../media/image1.png"),
         ("rId3", "image", "../media/missing.png"),
         ("rId4", "chart", "../charts/chart1.xml"),
+        ("rId5", "diagramData", "../diagrams/data1.xml"),
+        ("rId6", "diagramDrawing", "../diagrams/drawing1.xml"),
     ]);
     let slide_parts: Vec<(String, String)> = slides
         .iter()
@@ -217,6 +219,8 @@ fn presentation_with(
         ("ppt/theme/theme1.xml", THEME.as_bytes()),
         ("ppt/media/image1.png", PNG),
         ("ppt/charts/chart1.xml", CHART.as_bytes()),
+        ("ppt/diagrams/data1.xml", DIAGRAM_DATA.as_bytes()),
+        ("ppt/diagrams/drawing1.xml", DIAGRAM_DRAWING.as_bytes()),
     ];
     for ((path, xml), relationship_path) in slide_parts.iter().zip(&slide_relationship_parts) {
         members.push((path, xml.as_bytes()));
@@ -229,6 +233,18 @@ const CHART: &str = concat!(
     r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea>"#,
     r#"<c:pieChart><c:ser><c:val><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt>"#,
     r#"<c:pt idx="1"><c:v>3</c:v></c:pt></c:numLit></c:val></c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>"#
+);
+
+const DIAGRAM_DATA: &str = concat!(
+    r#"<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+    r#"<dgm:extLst><a:ext uri="x"><dsp:dataModelExt xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" relId="rId6"/></a:ext></dgm:extLst></dgm:dataModel>"#
+);
+
+const DIAGRAM_DRAWING: &str = concat!(
+    r#"<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dsp:spTree>"#,
+    r#"<dsp:sp><dsp:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm><a:prstGeom prst="ellipse"/>"#,
+    r#"<a:solidFill><a:srgbClr val="70AD47"/></a:solidFill></dsp:spPr><dsp:txBody><a:bodyPr/><a:p><a:r><a:t>Fase</a:t></a:r></a:p></dsp:txBody></dsp:sp>"#,
+    "</dsp:spTree></dsp:drawing>"
 );
 
 const WIDE: &str = r#"<p:sldSz cx="12192000" cy="6858000"/>"#;
@@ -813,4 +829,39 @@ fn reads_gradients_and_pictures_as_fills() {
         "a picture fill that is missing is no fill"
     );
     assert_eq!(fills[5], Some(Paint::Solid("ABCDEF".to_owned())));
+}
+
+#[test]
+fn draws_a_smart_art_as_a_picture_of_its_drawing() {
+    let frame = concat!(
+        r#"<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="4" name="D"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>"#,
+        r#"<p:xfrm><a:off x="914400" y="914400"/><a:ext cx="1828800" cy="914400"/></p:xfrm><a:graphic>"#,
+        r#"<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram">"#,
+        r#"<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="rId5" r:lo="rId5" r:qs="rId5" r:cs="rId5"/>"#,
+        "</a:graphicData></a:graphic></p:graphicFrame>"
+    );
+    let slide = format!("<p:cSld>{}</p:cSld>", tree(frame));
+    let read = read(&[&slide]);
+    let shape = read.slides[0]
+        .shapes
+        .iter()
+        .find(|shape| !shape.inherited && shape.id == Some(4))
+        .expect("the SmartArt");
+    assert_eq!(
+        shape.frame,
+        Frame {
+            x: 914_400,
+            y: 914_400,
+            width: 1_828_800,
+            height: 914_400,
+        }
+    );
+    let ShapeContent::Picture { media } = shape.content else {
+        panic!("a picture: {:?}", shape.content);
+    };
+    let svg = String::from_utf8(read.media[media].bytes.clone()).unwrap();
+    assert!(
+        svg.contains(r##"fill="#70AD47""##) && svg.contains(">Fase</text>"),
+        "{svg}"
+    );
 }

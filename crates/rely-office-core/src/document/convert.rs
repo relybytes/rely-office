@@ -1055,6 +1055,7 @@ impl<'a, 'p> Converter<'a, 'p> {
             });
         } else if uri.contains("/diagram") {
             self.report.smart_art += 1;
+            self.append_smart_art(frame, graphic_data, anchor, content);
         } else if let Some(text_box) = frame
             .descendant(W, "txbxContent")
             .filter(|_| !uri.ends_with("/wordprocessingGroup"))
@@ -1723,6 +1724,7 @@ fn decimal_hundredths(number: &str) -> Option<u64> {
 }
 
 mod shapes;
+pub(crate) use shapes::{smart_art_drawing, smart_art_svg};
 
 #[cfg(test)]
 mod tests {

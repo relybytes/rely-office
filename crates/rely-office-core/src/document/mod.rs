@@ -33,7 +33,7 @@ pub use media::sniff_image_type;
 pub use write::write_docx;
 pub(crate) use write::{escape as escape_xml, image_extension, zip_members};
 
-pub(crate) use convert::{plain_text, push_block};
+pub(crate) use convert::{plain_text, push_block, smart_art_drawing, smart_art_svg};
 pub(crate) use numbering::{bullet_character, bullet_label, format_number, number_label};
 
 const MAIN_PART: &str = "word/document.xml";
