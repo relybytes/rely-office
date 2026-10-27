@@ -22,7 +22,7 @@ use rely_office_core::{
 use zip::write::SimpleFileOptions;
 
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS, column_name};
-use crate::formula::{Expr, number_text, parse_formula, print_formula};
+use crate::formula::{Expr, PREFIXED_FUNCTIONS, number_text, parse_formula, print_formula};
 use crate::model::{Cell, MAX_CELLS, MAX_SHEETS, NumberFormat, Sheet, Workbook};
 use crate::value::{ErrorKind, Input, Locale, Value};
 
@@ -704,6 +704,26 @@ fn sheet_part(sheet: &Sheet, values: &HashMap<CellRef, Value>, styles: &Styles) 
     xml
 }
 
+/// A formula with the functions newer than Excel 2007 named as a file names them.
+fn file_names(expression: &Expr) -> Expr {
+    let boxed = |inner: &Expr| Box::new(file_names(inner));
+    match expression {
+        Expr::Call(name, arguments) => Expr::Call(
+            if PREFIXED_FUNCTIONS.contains(&name.as_str()) {
+                format!("_xlfn.{name}")
+            } else {
+                name.clone()
+            },
+            arguments.iter().map(file_names).collect(),
+        ),
+        Expr::Unary(operator, operand) => Expr::Unary(*operator, boxed(operand)),
+        Expr::Percent(operand) => Expr::Percent(boxed(operand)),
+        Expr::Group(operand) => Expr::Group(boxed(operand)),
+        Expr::Binary(operator, left, right) => Expr::Binary(*operator, boxed(left), boxed(right)),
+        other => other.clone(),
+    }
+}
+
 fn write_cell(
     xml: &mut String,
     reference: &str,
@@ -734,7 +754,7 @@ fn write_cell(
             );
         }
         Input::Formula(expression) => {
-            let formula = escape(&print_formula(expression));
+            let formula = escape(&print_formula(&file_names(expression)));
             let (kind, cached) = match value.unwrap_or(&Value::Empty) {
                 Value::Empty => ("", String::new()),
                 Value::Number(number) => ("", format!("<v>{}</v>", number_text(*number))),

@@ -53,6 +53,7 @@ pub(crate) fn evaluate_workbook(workbook: &Workbook) -> Vec<HashMap<CellRef, Val
         values: vec![HashMap::new(); workbook.sheets.len()],
         states: vec![HashMap::new(); workbook.sheets.len()],
         formula_cells,
+        current: std::cell::Cell::new(None),
     };
     for sheet in 0..workbook.sheets.len() {
         let cells: Vec<CellRef> = evaluator.formula_cells[sheet].iter().copied().collect();
@@ -68,6 +69,8 @@ struct Evaluator<'a> {
     values: Vec<HashMap<CellRef, Value>>,
     states: Vec<HashMap<CellRef, State>>,
     formula_cells: Vec<BTreeSet<CellRef>>,
+    /// The cell whose formula is being computed, for `ROW()` and `COLUMN()`.
+    current: std::cell::Cell<Option<CellRef>>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -107,6 +110,7 @@ impl<'a> Evaluator<'a> {
                 self.finish(current_sheet, current, Value::Error(ErrorKind::Circular));
                 stack.pop();
             } else if pending.is_empty() {
+                self.current.set(Some(current));
                 let value = match self.evaluate(current_sheet, expression) {
                     Operand::Value(value) => finite(value),
                     // A formula that is a whole range, such as `=A1:B2`, shows no single value.
@@ -747,7 +751,10 @@ impl<'a> Evaluator<'a> {
                     Value::Number(self.workbook.today.ok_or(ErrorKind::NotAvailable)?.floor())
                 }
                 "NOW" => Value::Number(self.workbook.today.ok_or(ErrorKind::NotAvailable)?),
-                _ => return Err(ErrorKind::Name),
+                _ => match self.extended(sheet, name, arguments) {
+                    Some(result) => result?,
+                    None => return Err(ErrorKind::Name),
+                },
             })
         })();
         result.unwrap_or_else(Value::Error)
@@ -1009,6 +1016,8 @@ fn wildcard(pattern: &[char], text: &[char]) -> bool {
         .iter()
         .all(|character| *character == '*')
 }
+
+mod functions;
 
 #[cfg(test)]
 mod tests;
