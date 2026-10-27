@@ -44,12 +44,14 @@ spreadsheet features past values, formulas, number formats and column widths.
 | `xml_text` | a streaming walk from XML to search text, configured per format by a `TextRules` |
 | `xml_tree` | a small element tree with resolved namespaces, depth-capped, for structural reads |
 | `word`, `presentation`, `opendocument` | the text of docx, pptx, odt and odp; `opendocument` also reads an odt into the document tree and an odp into slides, through its style resolver |
-| `doc`, `ppt` | the text of the binary formats |
+| `doc`, `ppt` | the text of the binary formats, a doc as the document tree and a ppt as slides |
+| `office_art` | the drawing records doc and ppt share: shapes, their properties and the pictures of the blip store |
+| `geometry` | shape outlines as paths: the `DrawingML` presets and custom geometries, `OpenDocument` enhanced geometries, polygons and SVG paths |
 | `sheet` | spreadsheets as tables, through calamine, and delimited text |
 | `sheet_layout`, `sheet_styles`, `number_format` | the print settings, cell styles and merges of xlsx sheets, read as a stream that skips the cells, and Excel's number format codes |
 | `sheet_drawings` | the pictures and charts a sheet's drawing anchors to its cells, and the drawing parts an editor writes back unchanged |
-| `document` | the docx document tree: styles, table styles, numbering, notes, headers and footers, conversion, looks, media sniffing, and the writer |
-| `slides`, `theme` | a pptx as slides over its layouts and masters, and the colours and fonts of a `DrawingML` theme |
+| `document` | the docx document tree: styles, table styles, numbering, notes, headers and footers, sections, floating anchors, conversion, looks, media sniffing, and the docx writer |
+| `slides`, `theme` | a pptx as slides over its layouts and masters, the pptx writer, and the colours and fonts of a `DrawingML` theme |
 | `chart` | `DrawingML` and `OpenDocument` charts, read from their cached values or cells and drawn as SVG |
 
 ## Decisions
@@ -78,7 +80,11 @@ spreadsheet features past values, formulas, number formats and column widths.
   stepping into a container is moving past its header, so no recursion is needed. Text comes from
   `TextCharsAtom` (UTF-16LE) and `TextBytesAtom` (the low bytes of UTF-16); masters and handouts
   are skipped. The walk follows stream order, so after an incremental save a slide may appear
-  twice and notes may come after all the slides: good enough for search, not for display.
+  twice and notes may come after all the slides: good enough for search. Display reads the same
+  stream through its persist directories instead, so each slide is the one the last save kept.
+- **Old formats are converted, not written.** A doc and a ppt are read into the structures a docx
+  and a pptx give and saved as docx and pptx; nothing writes the binary formats, so rendering,
+  editing and saving know only the new ones.
 - **Tables start at A1.** calamine's ranges start at the first used cell; the table is shifted so a
   row number is the one Excel shows. A formula with no computed value (as libraries such as openpyxl
   write it) widens the table and shows its text, `=A1+B1`, instead of an empty cell.

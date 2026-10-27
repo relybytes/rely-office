@@ -1,9 +1,10 @@
 # rely-office
 
 Office documents without an office suite, in safe Rust: format detection, text for search, sheets
-as tables, a `.docx` as a document tree for a rich-text editor, rendering to PDF and PNG through
-Typst, writing `.docx` back from that tree, and an editable spreadsheet with formulas that opens
-and saves xlsx. It runs natively and, compiled to WebAssembly, in process from Node and in the
+as tables, a `.docx`, `.doc` or `.odt` as a document tree for a rich-text editor, rendering to
+PDF and PNG through Typst, writing `.docx` back from that tree and `.pptx` from slides, so a Word
+or PowerPoint 97-2003 file converts to the new format, and an editable spreadsheet with formulas
+that opens and saves xlsx. It runs natively and, compiled to WebAssembly, in process from Node and in the
 browser.
 
 rely-office is built and maintained by [RelyBytes Consulting](https://relybytes.com) for the Drive
@@ -14,13 +15,14 @@ files a team stores, and is published under the Mozilla Public License 2.0 so th
 
 | Format | Detect | Text for search | Sheets as tables | Document tree | Render | Write | Edit |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| docx | yes | body, headers, footers, notes | - | yes | layout, with headers, footers, notes and charts | yes | through the tree |
+| docx | yes | body, headers, footers, notes | - | yes | layout, with sections, headers, footers, notes, floating objects and charts | yes | through the tree |
+| doc (97-2003) | yes | every story | - | yes | layout, as a docx | as docx | through the tree |
 | odt | yes | body with headers and footers | - | yes | layout, as a docx | as docx | through the tree |
 | xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings, cell formats, merges, pictures and charts | yes | yes, its styles, merges, pictures and charts kept |
 | xls, ods | yes | every sheet | yes | - | layout | as xlsx | yes |
 | csv, tsv | by name, text only | yes | yes, UTF-8 or Windows-1252, `;` or `,` | - | layout | as xlsx | yes |
-| pptx, odp | yes | slides and pages with their notes | - | - | slides, with their masters, shapes, tables, pictures and charts | - | - |
-| doc, ppt (97-2003) | yes | every story, every text atom outside the masters | - | - | text | - | - |
+| pptx, odp | yes | slides and pages with their notes | - | - | slides, with their masters, shapes, tables, pictures and charts | as pptx | - |
+| ppt (97-2003) | yes | every text atom outside the masters | - | - | slides, with their masters, shapes, tables and pictures | as pptx | - |
 
 The format comes from the bytes, never from the file name alone. Every input is bounded by
 [`Limits`](crates/rely-office-core/src/limits.rs): the input size, each decompressed archive
@@ -32,9 +34,9 @@ length and nesting.
 
 ```toml
 [dependencies]
-rely-office-core = "0.4"    # reading, the document tree, writing docx
-rely-office-render = "0.4"  # PDF and PNG through Typst
-rely-office-sheet = "0.4"   # the editable spreadsheet
+rely-office-core = "0.5"    # reading, the document tree, writing docx and pptx
+rely-office-render = "0.5"  # PDF and PNG through Typst
+rely-office-sheet = "0.5"   # the editable spreadsheet
 ```
 
 ```rust
@@ -68,6 +70,8 @@ office.extractText(bytes, 'contratto.docx');            // { format, text, trunc
 office.readDocumentTree(bytes);                         // { blocks, media, report }
 office.render(bytes, 'contratto.docx', { thumbnailWidth: 320 }); // { pdf, thumbnail, ... }
 office.writeDocx({ blocks, media });                    // Uint8Array
+office.convertToDocx(doc);                              // a Word 97-2003 file as docx
+office.convertToPptx(ppt);                              // a PowerPoint 97-2003 file as pptx
 const sheet = office.openSheet(xlsx, 'conti.xlsx');     // edit, recalculate, save()
 ```
 
@@ -81,6 +85,8 @@ cargo run -p rely-office-cli -- tree contract.docx
 cargo run -p rely-office-cli -- pdf contract.docx       # writes contract.docx.pdf
 cargo run -p rely-office-cli -- png sales.xlsx          # one PNG per page
 cargo run -p rely-office-cli -- rewrite contract.docx   # through the tree and back
+cargo run -p rely-office-cli -- rewrite relazione.doc   # a doc converted to docx
+cargo run -p rely-office-cli -- rewrite riunione.ppt    # a ppt converted to pptx
 cargo run -p rely-office-cli -- rewrite sales.xlsx      # through the editable model and back
 ```
 

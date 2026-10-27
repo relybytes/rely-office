@@ -2,12 +2,16 @@
 
 rely-office edits in two ways, one per kind of document:
 
-- **Text documents** are edited as a document tree. `read_document_tree` turns a docx or an odt
-  into neutral blocks an editor maps onto its own schema; `write_docx` turns the tree back into a
-  docx, so an odt edited this way is saved as a docx. The library has no editor of its own for
-  text: the tree is the contract with the editor.
+- **Text documents** are edited as a document tree. `read_document_tree` turns a docx, a doc or an
+  odt into neutral blocks an editor maps onto its own schema; `write_docx` turns the tree back into
+  a docx, so a doc or an odt edited this way is saved as a docx. The library has no editor of its
+  own for text: the tree is the contract with the editor.
 - **Spreadsheets** are edited through `rely-office-sheet`, a workbook model with formulas that an
   editor drives cell by cell, and that opens and saves xlsx.
+
+The old binary formats are converted, not edited in place: a doc becomes a docx and a ppt a pptx
+through the same structures the new formats are read into, so nothing downstream knows the old
+formats and a file saved after an edit is always in the new one.
 
 ## Writing a docx
 
@@ -32,15 +36,42 @@ this crate read the file the same way:
 | `headersFooters` | header and footer parts with their own relationships, `w:titlePg` for a first page, `w:evenAndOddHeaders` in `settings.xml` for even pages |
 | the looks (Rust) | paragraph borders, shading, tabs, spacing and indents; table widths, borders and cell margins; cell fills, borders and vertical alignment; a numbered heading keeps its label as text |
 | the layout's page | `w:sectPr` with the page size, orientation, margins, columns and the default tab stop |
+| `sections` | a `w:sectPr` in the paragraph that ends each section, with its own page, headers and footers and `w:type` `continuous` when it goes on on the same page |
+| a floating image's `anchor` | a `wp:anchor` with its position, size and wrapping, instead of `wp:inline` |
+| a floating text box's `frame` | a `wps:wsp` text box at its anchor, with its fill and outline, holding its blocks |
 
 An image whose bytes are not a type Word shows is left out, its alternative text kept as text.
 Text is escaped, and the characters XML 1.0 cannot hold are dropped. Reading the written file
 gives back the same blocks, marks, alignment, spans, images and page (tested in
 `document/write/tests.rs`); list ids are renumbered, as numbering instances are the file's own.
 
-From JavaScript: `writeDocx({ blocks, media, page, notes, headersFooters })`, where `media` lists
-the bytes of each image in the order `image.media` indexes them, and `page` is
-`{ widthTwips, heightTwips, marginsTwips }`.
+From JavaScript: `writeDocx({ blocks, media, page, notes, headersFooters, sections })`, where
+`media` lists the bytes of each image in the order `image.media` indexes them, and `page` is
+`{ widthTwips, heightTwips, marginsTwips }`. `convertToDocx(bytes)` reads a doc, an odt or a docx
+and writes it as a docx in one call.
+
+## Writing a pptx
+
+`write_pptx(&Presentation) -> Vec<u8>` writes the slide model `read_presentation` gives, from a
+pptx, an odp or a ppt, as a pptx PowerPoint and LibreOffice open. What the source drew from its
+masters and layouts is already resolved into each slide's shapes, so the file has one blank master
+and layout and every shape on the slide itself:
+
+| Slide model | pptx |
+| --- | --- |
+| the page size | `p:sldSz`, clamped to the 1 to 56 inch PowerPoint accepts |
+| `background` | a solid `p:bg` |
+| a rectangle, rounded rectangle, ellipse or line | `p:sp` with its `prstGeom`, a line flipped when it runs the other way |
+| a `Path` geometry | `a:custGeom` in the shape's own size, each path with its fill and stroke switches |
+| fill, line, rotation | `a:solidFill`, `a:ln` with its width, `rot` on `a:xfrm` |
+| `Text` | a `p:txBody` with its insets, anchor and wrapping; each paragraph's level, alignment, indents, line spacing, spacing and bullet or numbering; runs with size, bold, italic, underline, strike, colour and font, line breaks as `a:br` |
+| `Picture` | `p:pic` with the image stored once in `ppt/media/`; an image PowerPoint does not show (WMF, EMF, unknown bytes) is left out |
+| `Table` | a `graphicFrame` holding an `a:tbl` with column widths, row heights, cell text and fills, `gridSpan`, `rowSpan`, and `hMerge` on a covered cell |
+
+A shape with neither fill, line nor content draws nothing and is left out; a presentation with no
+slides gets one blank slide. Reading the written file gives back the same slides (tested in
+`slides/write/tests.rs`). From JavaScript: `convertToPptx(bytes)` reads a ppt, an odp or a pptx and
+writes it as a pptx.
 
 ## The spreadsheet model
 

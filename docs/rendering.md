@@ -10,11 +10,11 @@ WebAssembly included.
 
 | Format | Fidelity | How |
 | --- | --- | --- |
-| docx, odt | `layout` | the document tree with its looks: page size, margins and columns, headers and footers with their first and even variants, page numbers, body font, paragraph spacing, line spacing, indents, tabs with their leaders, alignment, borders and shading, page breaks, run fonts, sizes, colours and highlights, list labels in the numbering's own formats, tables with their style's regions, per-cell borders, fills and vertical alignment, footnotes and endnotes, text boxes, images and charts |
+| docx, odt, doc | `layout` | the document tree with its looks: each section's page size, orientation, margins and columns, headers and footers with their first and even variants, page numbers, body font, paragraph spacing, line spacing, indents, tabs with their leaders, alignment, borders and shading, page breaks, run fonts, sizes, colours and highlights, list labels in the numbering's own formats, tables with their style's regions, per-cell borders, fills and vertical alignment, footnotes and endnotes, text boxes and images where they float, charts |
 | xlsx | `layout` | every sheet with its print settings and its cells' formats: orientation, margins, column widths and row heights, hidden rows and columns, header and footer, grid lines, number formats, fonts, fills, borders, alignment and wrapping, merged cells; its pictures and charts after the cells |
 | xls, ods, csv, tsv | `layout` | the sheets with Excel's print defaults (portrait A4, 0.7 and 0.75 inch margins, 8.43 character columns, no grid) |
-| pptx, odp | `layout` | one page per slide at the slide's size: background, the shapes of the master and layout behind the slide's own, placeholders placed and styled as their layout and master say, text frames, custom shapes, lines, groups, rotations, tables, pictures and charts |
-| doc, ppt | `text` | the extracted text, one paragraph per line, on A4 |
+| pptx, odp, ppt | `layout` | one page per slide at the slide's size: background, the shapes of the master and layout behind the slide's own, placeholders placed and styled as their layout and master say, text frames, preset shapes (arrows, stars, callouts, flowchart symbols), custom and free-form outlines, lines, groups, rotations, tables, pictures and charts |
+| doc, ppt that cannot be read | `text` | the extracted text, one paragraph per line, on A4 |
 
 `Rendered::fidelity` says which of the two a render had, so a viewer can tell a laid-out preview
 from a text one.
@@ -41,6 +41,16 @@ The rules follow Word, the program most docx files come from, rather than Typst'
   names no size takes the sizes of Word's default template.
 - **Images** Typst cannot decode fail the whole document in Typst, so a failed render with images
   is retried with every image drawn as an empty frame of its size.
+- **Each section sets its own page.** A section starts a `#set page` with its size, margins,
+  headers and footers, which starts a new page; a continuous section on the same paper goes on
+  where the last one stopped, and columns are a `#columns` block inside the section. A section's
+  first-page header is chosen against the page its marker lands on.
+- **Floating objects stand where their anchor puts them**, the nearest Typst can: an object in
+  front of or behind the text is placed at its point of the page (measured from the page, the
+  margins, the column or the paragraph); one the text goes around is set beside its paragraph on
+  its side; one with text above and below on a line of its own. Typst sets no text around a shape,
+  so text that would wrap a picture's outline lines up beside its box instead. A text box draws its
+  own fill and outline at its anchored size.
 
 Text only ever enters the generated source as a Typst string literal, so no document content can
 become markup or code.
@@ -66,6 +76,22 @@ stay templates, its footer, date and page number show when the page asks for the
 outline level takes its own presentation style (`Default-outline2` one level down). Text frames
 keep their insets, anchor, bullets and numbering, and every shape is placed absolutely on a Typst
 page of the slide's size.
+
+A shape's outline comes from its geometry (`geometry.rs`). A `DrawingML` preset is evaluated from
+the guide formulas of ECMA-376 against the shape's size and adjust values (`presets.rs` holds the
+presets in that language, one statement a line); an `a:custGeom` with the same engine. An
+`OpenDocument` enhanced geometry is interpreted with its equations, modifiers and the commands of
+`draw:enhanced-path`, and a shape that came from `DrawingML` (`draw:type="ooxml-..."`) is drawn
+again from its preset, since its saved path can miss the arcs. Polygons, polylines and SVG paths
+are read as outlines. Paths are curves filled even-odd, so a ring or a frame keeps its hole.
+
+A ppt is read into the same slide model ([MS-PPT]): the persist directories of every saved edit
+locate the document, its slides and their masters; the slide list holds the text of placeholders;
+each shape gives its frame (mapped through the groups it is in), its type, which draws the
+`DrawingML` preset of the same shape, or its own vertices and segments with the guide formulas a
+vertex can name, its fill, line, rotation, picture and text. Text is styled by its paragraph and
+character runs over the master's text styles, and colours that name the scheme take the slide's or
+the master's.
 
 ## How a chart is drawn
 
@@ -138,13 +164,17 @@ SOFFICE=soffice node scripts/corpus.mjs                 # the corpus comparison
 
 ## Known gaps
 
-- A docx is laid out with the page of its last section: a document that turns one section
-  landscape prints every page portrait.
-- Floating images and text boxes are set after the paragraph that anchors them, not where they
-  float.
+- Text does not flow around a floating picture's outline, only beside its box; a picture the text
+  goes around is set beside its whole paragraph.
 - The pictures and charts of a sheet print after its cells, at their size, not over the cells
   they are anchored to; an ods sheet prints no drawings.
-- Shapes PowerPoint and Impress draw from a preset other than rectangles, rounded rectangles,
-  ellipses and lines (arrows, stars, callouts) are drawn as their rectangle; gradients show their
-  first colour, pictures as fills are not drawn.
-- doc and ppt print their text, not their layout.
+- Gradients show their first colour, pictures as fills are not drawn, and the presets without a
+  definition here (curved and circular arrows, ribbons, waves, braces, scrolls) are drawn as their
+  rectangle.
+- A doc's shapes without a picture or a text box, its OLE objects beyond their replacement
+  picture, and the metafiles (WMF, EMF) of its pictures are left out; nested tables are flattened
+  into their cell. Word 6 and 95 files are not read.
+- A ppt's preset shapes are drawn with their default adjust values, and its notes, animations and
+  slide transitions are left out. LibreOffice writes the shapes it exports to ppt from `DrawingML`
+  with guide constants cut to sixteen bits, so those outlines come out wrong; LibreOffice cannot
+  draw them back either.

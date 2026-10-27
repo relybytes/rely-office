@@ -51,13 +51,24 @@ tree, and the Foglio's grid drives a `SheetDocument`.
 | 3.4 | Charts of docx, xlsx, pptx, odt and odp drawn as SVG; the pictures and charts of an edited xlsx written back | done (0.4.0) |
 | 3.5 | odt read into the document tree: laid out, and imported into the editor like a docx | done (0.4.0) |
 
+## Phase 4: layout and the binary formats (0.5.0)
+
+| Step | Content | Status |
+| --- | --- | --- |
+| 4.1 | Sections of their own page in docx and odt: read, laid out and written back | done (0.5.0) |
+| 4.2 | Floating images and text boxes where they float, in docx (DrawingML and VML) and odt | done (0.5.0) |
+| 4.3 | Shape geometry: the DrawingML presets and custom geometries, OpenDocument enhanced geometries, polygons and paths | done (0.5.0) |
+| 4.4 | doc read into the document tree: laid out, imported into the editor, converted to docx | done (0.5.0) |
+| 4.5 | ppt read into slides: drawn, and converted to pptx with `write_pptx` | done (0.5.0) |
+
+A doc and a ppt are converted rather than edited in place: the library reads them into the same
+structures a docx and a pptx give, so rendering, editing and saving only know the new formats, and
+a converted file is saved as docx or pptx.
+
 ## Next
 
-- docx sections of their own page: a landscape section among portrait ones.
-- Floating images and text boxes where they float; sheet drawings over the cells they are
-  anchored to.
-- The remaining DrawingML presets (arrows, stars, callouts) and picture fills.
-- doc and ppt laid out instead of their text.
+- Sheet drawings over the cells they are anchored to; picture fills and gradients.
+- The remaining DrawingML presets (curved and circular arrows, ribbons, waves, braces).
 - A larger corpus with documents made by Word and pptx and odp pages, and the corpus figure as a
   CI gate once it is stable.
 - Publishing to the public npm registry (issue #1).
@@ -71,7 +82,8 @@ tree, and the Foglio's grid drives a `SheetDocument`.
 - Typst pulls in crates that RustSEC lists as unmaintained (ttf-parser, rustybuzz, yaml and
   bincode crates); `deny.toml` records each with its reason, to revisit on every Typst upgrade.
 - The binary formats (doc, xls, ppt) are the long tail: xls is read through calamine; doc and ppt
-  give text only, ppt in stream order, and Word 6 and 95 files are refused.
+  are read from their own records, which a malformed file can only cut short, and Word 6 and 95
+  files are refused.
 - calamine holds a sheet as a dense range from its first to its last used cell, so a workbook with
   two cells far apart costs memory in proportion to the rectangle between them, inside the input
   and member caps.

@@ -54,9 +54,11 @@ A document is a `Uint8Array` (a Node `Buffer` is one), an `ArrayBuffer` or any t
 | `detectFormat(bytes, fileName?)` | anything | `'docx' \| 'xlsx' \| 'pptx' \| 'odt' \| 'ods' \| 'odp' \| 'doc' \| 'xls' \| 'ppt' \| 'csv' \| 'tsv' \| 'unknown'` |
 | `extractText(bytes, fileName?, limits?)` | every format above | `{ format, text, truncated }` |
 | `readSheets(bytes, fileName?, limits?)` | xlsx, xls, ods, csv, tsv | `{ format, sheets: [{ name, rows, totalRows, totalColumns }] }` |
-| `readDocumentTree(bytes, limits?)` | docx, odt | `{ blocks, media, report, notes, headersFooters, page }` |
-| `render(bytes, fileName?, options?)` | docx, odt, xlsx, xls, ods, csv, tsv, pptx, odp (layout); doc, ppt (text) | `{ format, fidelity, pageCount, truncated, pdf, thumbnail, pageImages }` |
-| `writeDocx({ blocks, media?, page? })` | a document tree | the docx bytes |
+| `readDocumentTree(bytes, limits?)` | docx, doc, odt | `{ blocks, media, report, notes, headersFooters, page, sections? }` |
+| `render(bytes, fileName?, options?)` | docx, doc, odt, xlsx, xls, ods, csv, tsv, pptx, ppt, odp (layout); a doc or ppt that cannot be read (text) | `{ format, fidelity, pageCount, truncated, pdf, thumbnail, pageImages }` |
+| `writeDocx({ blocks, media?, page?, sections? })` | a document tree | the docx bytes |
+| `convertToDocx(bytes, limits?)` | doc, odt, docx | the docx bytes |
+| `convertToPptx(bytes, limits?)` | ppt, odp, pptx | the pptx bytes |
 | `createSheet(options?)`, `openSheet(bytes, fileName?, options?)` | xlsx, xls, ods, csv, tsv | a `SheetDocument` |
 | `version` | | the library version |
 

@@ -1,17 +1,18 @@
 # The document tree
 
-`read_document_tree` (Rust) and `readDocumentTree` (Node) read a `.docx` or an `.odt` as a
-neutral tree for import into a rich-text editor. It is not HTML and not any editor's schema: the
-caller maps each block and mark onto its own. The JSON names below are those of the `serde`
+`read_document_tree` (Rust) and `readDocumentTree` (Node) read a `.docx`, a `.doc` or an `.odt`
+as a neutral tree for import into a rich-text editor. It is not HTML and not any editor's schema:
+the caller maps each block and mark onto its own. The JSON names below are those of the `serde`
 feature and of the npm package; the Rust names are the same in snake case. The sections below
-describe the docx; [the odt](#the-odt) gives the same tree from its own elements and styles.
+describe the docx; [the odt](#the-odt) and [the doc](#the-doc) give the same tree from their own
+structures.
 
 ## Result
 
 ```text
 {
   blocks: Block[], media: MediaItem[], report: ImportReport,
-  notes: Note[], headersFooters: HeadersFooters, page: PageSize
+  notes: Note[], headersFooters: HeadersFooters, page: PageSize, sections?: Section[]
 }
 ```
 
@@ -21,7 +22,12 @@ describe the docx; [the odt](#the-odt) gives the same tree from its own elements
   each a list of blocks, of the last section. The first-page pair is present only when the
   section has a different first page, the even pair only when odd and even pages differ.
 - `page`: `{ widthTwips, heightTwips, marginsTwips }`, the margins top, right, bottom, left, in
-  twentieths of a point.
+  twentieths of a point, of the last section.
+- `sections`: present only when the document has more than one section, each
+  `{ endBlock, page, headersFooters, continuous }`: the block it ends before, its own page and
+  headers, and whether it goes on on the page the section before ends on. A section that names no
+  header or footer of a kind keeps the one of the section before, as Word does; the tree carries
+  each section's resolved parts. `writeDocx` writes the sections back.
 
 ## Blocks
 
@@ -40,7 +46,10 @@ when neither sets one.
 
 In Rust, paragraphs, headings, list items, tables and text runs also carry a `look`: spacing,
 line spacing, indents, page breaks, fonts, sizes and colours, column widths, cell margins and
-borders, and the tree has a `layout` with the page size, margins and body font. The renderer lays
+borders, and the tree has a `layout` with the page size, margins and body font. A floating image
+carries its `anchor` (what its position is measured from, its offset or alignment, its size and
+how the text goes around it), and the blocks of a floating text box a `frame` with the same anchor
+and the box's fill and outline. The renderer lays
 the document out from them; they are not serialized, since an editor has its own styles. The tree
 also deserializes from the same JSON, which is how `writeDocx` reads it.
 
@@ -110,7 +119,7 @@ Counts of what the tree leaves out or changes:
 | Field | Counts |
 | --- | --- |
 | `truncated` | `true` when `maxTextChars` cut the document; the rest is left out |
-| `textBoxes` | DrawingML and VML text boxes; their content follows the paragraph that anchors them |
+| `textBoxes` | DrawingML and VML text boxes; their content follows the paragraph that anchors them, an editor getting it in the flow |
 | `footnotes`, `endnotes` | note references; the notes are in `notes` |
 | `comments` | comment references; comments are left out, the commented text stays |
 | `headersAndFooters` | header and footer parts; their content is in `headersFooters` |
@@ -193,11 +202,34 @@ carries; sections and indexes are read through. The page, columns, headers and f
 the master page of the first paragraph's style, else `Standard`: a header's height and spacing
 are added to the top margin, as the page lays it out.
 
+## The doc
+
+A Word 97-2003 file is read from its own structures ([MS-DOC]): the File Information Block, the
+piece table that says where each run of characters lies, the formatted disk pages that give each
+run and paragraph its modifiers, the style sheet they apply over, the font table, the lists and
+their overrides, and the section table. Character properties toggle against their style as Word
+toggles them.
+
+| Block | From |
+| --- | --- |
+| `heading` | a paragraph whose style is the built-in heading 1 to 9, or whose outline level is set |
+| `paragraph` | a run of text up to its paragraph mark, with alignment, indents, spacing, line spacing, page breaks, shading and borders; contextual spacing drops the space between paragraphs of one style |
+| `listItem` | a paragraph naming a list override, its label counted in the level's number format and template, a start override restarting it |
+| `table` | the paragraphs in a table, a cell ending at its cell mark and a row at its row mark, whose cell layout (`sprmTDefTable`) gives the grid, the merges going across and down, the header rows, the cell fills and borders; a nested table is flattened into its cell |
+
+Inline pictures are read from the Data stream (`PICF` and the drawing records that hold their
+bytes); floating pictures and text boxes from the drawings the main text anchors, their position
+from the shape's own properties over its anchor's. Footnotes, endnotes, headers and footers come
+from their stories; fields keep their result, `HYPERLINK` makes a link and `PAGE` and `NUMPAGES`
+the page fields. Hidden text, deletions and the codes of fields are left out and counted. A doc is
+written as a docx with `writeDocx`, or in one call with `convertToDocx`.
+
 ## Trying it
 
 ```sh
 cargo run -p rely-office-cli -- tree contract.docx
 cargo run -p rely-office-cli -- tree verbale.odt
+cargo run -p rely-office-cli -- tree relazione.doc
 ```
 
 prints the blocks, the media list and the report in Rust's debug form.

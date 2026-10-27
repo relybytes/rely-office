@@ -3,6 +3,34 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## 0.5.0
+
+### Added
+
+- doc: Word 97-2003 files read into the document tree from their own structures (piece table,
+  formatting pages, styles, fonts, lists, sections, pictures and drawings, notes, headers and
+  footers, fields), laid out like a docx, imported into an editor and written back as a docx.
+- ppt: PowerPoint 97-2003 files read into slides from their persist directories, masters, colour
+  schemes, shapes with their preset or free-form geometry, groups, text styles, pictures and
+  tables, and drawn like a pptx.
+- `write_pptx`: the slide model back to a pptx, so a ppt or an odp converts to the new format.
+- docx and odt sections of their own page: each section's size, orientation, margins, columns,
+  headers and footers, read into `sections`, laid out and written back.
+- Floating images and text boxes where they float: `wp:anchor`, VML positioning and odt frames
+  read into an `anchor`, drawn in front, behind, beside or between the lines, and written back
+  as `wp:anchor` pictures and `wps` text boxes.
+- Shape geometry: the DrawingML presets (arrows, stars, callouts, flowchart symbols and about
+  120 more) and custom geometries from their guide formulas, OpenDocument enhanced geometries,
+  polygons and SVG paths, drawn as curves (`ShapeGeometry::Path`).
+- npm: `convertToDocx` and `convertToPptx`; the tree's `sections`; `readDocumentTree` and
+  `render` accept doc, and `render` lays out ppt.
+- CLI: `rewrite` converts a doc to docx and a ppt, odp or pptx to pptx.
+
+### Changed
+
+- `Rendered::fidelity` is `layout` for doc and ppt; `text` only when such a file cannot be read.
+- `ShapeGeometry` is no longer `Copy`, since a path geometry holds its commands.
+
 ## 0.4.0
 
 ### Added
