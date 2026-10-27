@@ -9,6 +9,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use rely_office_core::{CellRange, CellStyle};
+
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS};
 use crate::evaluate;
 use crate::formula::{Expr, FormulaError};
@@ -49,6 +51,12 @@ pub struct Sheet {
     pub(crate) cells: BTreeMap<CellRef, Cell>,
     /// Column widths in characters, as files store them; a column not listed has the default.
     pub column_widths: BTreeMap<u32, f64>,
+    /// Row heights in points, 0 for a hidden row; a row not listed fits its content.
+    pub row_heights: BTreeMap<u32, f64>,
+    /// The style of each cell that has one other than the default, an index into
+    /// [`Workbook::styles`].
+    pub(crate) styles: BTreeMap<CellRef, u32>,
+    pub(crate) merges: Vec<CellRange>,
 }
 
 impl Sheet {
@@ -61,6 +69,11 @@ impl Sheet {
     /// Every cell with content, row by row.
     pub fn cells(&self) -> impl Iterator<Item = (CellRef, &Cell)> {
         self.cells.iter().map(|(cell, content)| (*cell, content))
+    }
+
+    /// Every cell with a style other than the default, row by row, with the style's index.
+    pub fn styled_cells(&self) -> impl Iterator<Item = (CellRef, u32)> {
+        self.styles.iter().map(|(cell, style)| (*cell, *style))
     }
 
     /// The last row and column holding content, plus one: the used area from A1.
@@ -92,6 +105,8 @@ pub enum EditError {
     LastSheet,
     #[error("the edit goes past the grid or the workbook limits")]
     OutOfBounds,
+    #[error("a style holds a value no cell can show")]
+    InvalidStyle,
 }
 
 /// A workbook with its computed values; every edit recalculates.
@@ -102,6 +117,9 @@ pub struct Workbook {
     pub(crate) values: Vec<HashMap<CellRef, Value>>,
     /// Today's serial date for `TODAY` and `NOW`, which a host sets: WebAssembly has no clock.
     pub(crate) today: Option<f64>,
+    /// Every style the cells use, each once; the first is the default look.
+    pub(crate) styles: Vec<CellStyle>,
+    pub(crate) style_index: HashMap<CellStyle, u32>,
 }
 
 impl Default for Workbook {
@@ -121,10 +139,26 @@ impl Workbook {
     }
 
     pub(crate) fn from_sheets(sheets: Vec<Sheet>) -> Self {
+        Self::from_parts(sheets, vec![CellStyle::default()])
+    }
+
+    /// A workbook of sheets whose cells index `styles`, the default look first.
+    pub(crate) fn from_parts(sheets: Vec<Sheet>, mut styles: Vec<CellStyle>) -> Self {
+        if styles.first() != Some(&CellStyle::default()) {
+            styles.insert(0, CellStyle::default());
+        }
+        let style_index = styles
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(index, style)| (style.clone(), u32::try_from(index).unwrap_or(0)))
+            .collect();
         let mut workbook = Self {
             values: vec![HashMap::new(); sheets.len()],
             sheets,
             today: None,
+            styles,
+            style_index,
         };
         workbook.recalculate();
         workbook
@@ -173,12 +207,8 @@ impl Workbook {
     /// A cell's value as the locale shows it, with the cell's number format.
     #[must_use]
     pub fn display(&self, sheet: usize, cell: CellRef, locale: Locale) -> String {
-        let format = self
-            .sheets
-            .get(sheet)
-            .and_then(|sheet| sheet.cells.get(&cell))
-            .map_or(NumberFormat::General, |content| content.format);
-        crate::display::display(&self.value(sheet, cell), format, locale)
+        let (format, code) = self.shown_format(sheet, cell);
+        crate::display::display(&self.value(sheet, cell), format, code, locale)
     }
 
     /// Type into a cell, as an editor does: `=` starts a formula, a number in the locale's
@@ -278,6 +308,7 @@ impl Workbook {
                 NumberFormat::Decimals(decimals) => NumberFormat::Decimals(decimals.min(10)),
                 other => other,
             };
+            self.drop_format_code(sheet, cell);
         }
         Ok(())
     }
@@ -471,6 +502,20 @@ impl Workbook {
         if self.cell_count() + copies.len() > MAX_CELLS {
             return Err(EditError::OutOfBounds);
         }
+        // A paste brings the look of its cells along.
+        let style_copies: Vec<(CellRef, u32)> = (top..=bottom)
+            .flat_map(|row| {
+                source
+                    .styles
+                    .range(CellRef::new(row, left)..=CellRef::new(row, right))
+                    .filter_map(|(cell, style)| {
+                        let row = u32::try_from(i64::from(cell.row) + row_offset).ok()?;
+                        let column = u32::try_from(i64::from(cell.column) + column_offset).ok()?;
+                        Some((CellRef::new(row, column), *style))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
         // The target rectangle is cleared first, so empty source cells empty their targets.
         let height = bottom - top;
         let width = right - left;
@@ -492,6 +537,19 @@ impl Workbook {
         }
         for (cell, content) in copies {
             target.cells.insert(cell, content);
+        }
+        let (target_bottom, target_right) = (
+            to.row.saturating_add(height),
+            to.column.saturating_add(width),
+        );
+        target.styles.retain(|cell, _| {
+            !(to.row..=target_bottom).contains(&cell.row)
+                || !(to.column..=target_right).contains(&cell.column)
+        });
+        for (cell, style) in style_copies {
+            if cell.row < MAX_ROWS && cell.column < MAX_COLUMNS {
+                target.styles.insert(cell, style);
+            }
         }
         self.recalculate();
         Ok(())

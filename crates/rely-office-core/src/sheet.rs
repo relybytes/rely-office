@@ -25,6 +25,9 @@ pub struct Sheet {
     pub total_columns: usize,
     /// How the sheet is printed, read from an xlsx; the defaults for every other format.
     pub layout: SheetLayout,
+    /// The colour a cell's number format gives its value, `[Red]` for a negative amount, by
+    /// row and column of `rows`, as `RRGGBB`.
+    pub value_colours: HashMap<(usize, usize), &'static str>,
 }
 
 /// The sheets of a workbook, in the order the file declares them.
@@ -112,13 +115,18 @@ fn read_binary_workbook(
 
         let layout = layouts.remove(&name).unwrap_or_default();
         let mut rows = vec![vec![String::new(); shown_columns]; shown_rows];
+        let value_colours = std::cell::RefCell::new(HashMap::new());
         place_cells(&range, &mut rows, |row, column, cell| {
             let code = u32::try_from(row)
                 .ok()
                 .zip(u32::try_from(column).ok())
                 .and_then(|(row, column)| layout.style_of(row, column))
                 .and_then(|style| style.number_format.as_deref());
-            display_value(cell, code, locale)
+            let (text, colour) = display_value(cell, code, locale);
+            if let Some(colour) = colour {
+                value_colours.borrow_mut().insert((row, column), colour);
+            }
+            text
         });
         if let Some(formulas) = &formulas {
             place_cells(formulas, &mut rows, |_, _, formula| {
@@ -136,6 +144,7 @@ fn read_binary_workbook(
             total_rows,
             total_columns,
             layout,
+            value_colours: value_colours.into_inner(),
         });
     }
 
@@ -177,25 +186,32 @@ fn place_cells<T: calamine::CellType>(
     }
 }
 
-/// The text a cell shows with its number format: numbers and dates as the code writes them,
-/// text through the code's text section.
-fn display_value(cell: &Data, code: Option<&str>, locale: NumberLocale) -> String {
+/// The text a cell shows with its number format, numbers and dates as the code writes them and
+/// text through the code's text section, and the colour the code gives it.
+fn display_value(
+    cell: &Data,
+    code: Option<&str>,
+    locale: NumberLocale,
+) -> (String, Option<&'static str>) {
     let Some(code) = code else {
-        return match cell {
+        let text = match cell {
             Data::Float(number) => general_number(*number, locale),
             #[allow(clippy::cast_precision_loss)]
             Data::Int(number) => general_number(*number as f64, locale),
             other => display_cell(other),
         };
+        return (text, None);
     };
-    match cell {
-        Data::Float(number) => format_number(*number, code, locale).text,
+    let number = match cell {
+        Data::Float(number) => *number,
         #[allow(clippy::cast_precision_loss)]
-        Data::Int(number) => format_number(*number as f64, code, locale).text,
-        Data::DateTime(moment) => format_number(moment.as_f64(), code, locale).text,
-        Data::String(text) => format_text(text, code),
-        other => display_cell(other),
-    }
+        Data::Int(number) => *number as f64,
+        Data::DateTime(moment) => moment.as_f64(),
+        Data::String(text) => return (format_text(text, code), None),
+        other => return (display_cell(other), None),
+    };
+    let formatted = format_number(number, code, locale);
+    (formatted.text, formatted.colour)
 }
 
 /// The text a cell shows; an error shows its Excel code, an empty cell nothing.
@@ -244,6 +260,7 @@ fn read_delimited(bytes: &[u8], separator: u8, limits: &Limits) -> Sheet {
         total_rows,
         total_columns,
         layout: SheetLayout::default(),
+        value_colours: HashMap::new(),
     }
 }
 
@@ -423,6 +440,8 @@ mod tests {
         sheet.write_with_format(0, 3, 0.125, &percent).unwrap();
         sheet.write_with_format(0, 4, "A12", &text).unwrap();
         sheet.write(0, 5, 3.5).unwrap();
+        let red = Format::new().set_num_format("0;[Red]-0");
+        sheet.write_with_format(0, 6, -5, &red).unwrap();
         sheet
             .merge_range(2, 0, 3, 2, "unite", &Format::new())
             .unwrap();
@@ -440,9 +459,12 @@ mod tests {
                 "ottobre 2026",
                 "12,5%",
                 "Rif. A12",
-                "3,5"
+                "3,5",
+                "-5"
             ]
         );
+        assert_eq!(conti.value_colours.get(&(0, 6)), Some(&"FF0000"));
+        assert_eq!(conti.value_colours.len(), 1);
         let english = read_workbook(&bytes, None, &Limits::default()).unwrap();
         assert_eq!(english.sheets[0].rows[0][0], "1,200.50 €");
         assert_eq!(english.sheets[0].rows[0][2], "October 2026");

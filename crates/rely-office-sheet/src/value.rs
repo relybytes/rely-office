@@ -173,6 +173,15 @@ pub enum Locale {
     English,
 }
 
+impl From<Locale> for rely_office_core::NumberLocale {
+    fn from(locale: Locale) -> Self {
+        match locale {
+            Locale::Italian => Self::Italian,
+            Locale::English => Self::English,
+        }
+    }
+}
+
 impl Locale {
     fn separators(self) -> (char, char) {
         match self {

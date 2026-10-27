@@ -22,6 +22,7 @@ mod edit;
 mod evaluate;
 mod formula;
 mod model;
+mod styling;
 mod value;
 mod xlsx;
 
@@ -32,5 +33,12 @@ pub use formula::{
     UnaryOperator, parse_formula, print_formula,
 };
 pub use model::{Cell, EditError, MAX_CELLS, MAX_SHEETS, NumberFormat, Sheet, Workbook};
+pub use rely_office_core::{
+    Border, BorderStyle, CellBorders, CellFont, CellRange, CellStyle, HorizontalAlignment,
+    VerticalAlignment,
+};
+pub use styling::{
+    BorderPlacement, MAX_MERGES, MAX_ROW_HEIGHT, MAX_STYLED_AREA, MAX_STYLED_CELLS, StylePatch,
+};
 pub use value::{ErrorKind, Input, Locale, Value};
 pub use xlsx::{read_spreadsheet, write_xlsx};

@@ -13,8 +13,8 @@
 
 use rely_office_core::{Limits, OfficeError};
 use rely_office_sheet::{
-    CellRef, EditError, Input, Locale, MAX_COLUMNS, MAX_ROWS, NumberFormat, Value, Workbook,
-    read_spreadsheet, write_xlsx,
+    Border, BorderPlacement, CellRef, EditError, Input, Locale, MAX_COLUMNS, MAX_ROWS,
+    NumberFormat, StylePatch, Value, Workbook, read_spreadsheet, write_xlsx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -53,6 +53,7 @@ impl From<EditError> for Failure {
             EditError::InvalidSheetName => "INVALID_SHEET_NAME",
             EditError::LastSheet => "LAST_SHEET",
             EditError::OutOfBounds => "OUT_OF_BOUNDS",
+            EditError::InvalidStyle => "INVALID_STYLE",
         };
         Self::new(code, error.to_string())
     }
@@ -88,6 +89,8 @@ struct SheetSummary<'a> {
     columns: u32,
     /// Column index to width in characters.
     column_widths: Vec<(u32, f64)>,
+    /// Row index to height in points, 0 for a hidden row.
+    row_heights: Vec<(u32, f64)>,
 }
 
 #[derive(Serialize)]
@@ -102,10 +105,12 @@ struct CellOutput {
     /// `number`, `text`, `bool`, `error` or `empty`: what the value is, for alignment.
     kind: &'static str,
     format: Format,
+    /// The index of the cell's look in `stylesJson`, 0 for the default.
+    style: u32,
 }
 
-/// A number format as JavaScript names it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A number format as JavaScript names it; `code` is an Excel format code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 enum Format {
     General,
@@ -113,6 +118,7 @@ enum Format {
     DateTime,
     Percent,
     Decimals { decimals: u8 },
+    Code { code: String },
 }
 
 impl From<NumberFormat> for Format {
@@ -123,18 +129,6 @@ impl From<NumberFormat> for Format {
             NumberFormat::DateTime => Self::DateTime,
             NumberFormat::Percent => Self::Percent,
             NumberFormat::Decimals(decimals) => Self::Decimals { decimals },
-        }
-    }
-}
-
-impl From<Format> for NumberFormat {
-    fn from(format: Format) -> Self {
-        match format {
-            Format::General => Self::General,
-            Format::Date => Self::Date,
-            Format::DateTime => Self::DateTime,
-            Format::Percent => Self::Percent,
-            Format::Decimals { decimals } => Self::Decimals(decimals),
         }
     }
 }
@@ -194,13 +188,18 @@ impl SheetDocument {
                         .iter()
                         .map(|(column, width)| (*column, *width))
                         .collect(),
+                    row_heights: sheet
+                        .row_heights
+                        .iter()
+                        .map(|(row, height)| (*row, *height))
+                        .collect(),
                 }
             })
             .collect();
         to_json(&sheets)
     }
 
-    /// The cells with content in a window, row by row.
+    /// The cells with content or a look of their own in a window, row by row.
     ///
     /// # Errors
     ///
@@ -224,20 +223,41 @@ impl SheetDocument {
         if area > MAX_WINDOW_CELLS {
             return Err(EditError::OutOfBounds.into());
         }
-        let mut cells = Vec::new();
-        for (position, cell) in content.cells() {
-            if position.row < top
-                || position.row > bottom
-                || position.column < left
-                || position.column > right
-            {
-                continue;
-            }
+        let inside = |position: CellRef| {
+            (top..=bottom).contains(&position.row) && (left..=right).contains(&position.column)
+        };
+        let mut positions: std::collections::BTreeSet<CellRef> = content
+            .cells()
+            .map(|(position, _)| position)
+            .filter(|position| inside(*position))
+            .collect();
+        positions.extend(
+            content
+                .styled_cells()
+                .map(|(position, _)| position)
+                .filter(|position| inside(*position)),
+        );
+        let mut cells = Vec::with_capacity(positions.len());
+        for position in positions {
             let value = self.workbook.value(sheet, position);
+            let style = self.workbook.style_id(sheet, position);
+            let format = content
+                .cell(position)
+                .map_or(NumberFormat::General, |cell| cell.format);
+            let format = match (
+                format,
+                self.workbook.style(sheet, position).number_format.as_ref(),
+            ) {
+                (NumberFormat::General, Some(code)) => Format::Code { code: code.clone() },
+                (format, _) => format.into(),
+            };
             cells.push(CellOutput {
                 row: position.row,
                 column: position.column,
-                input: cell.input.text(),
+                input: content
+                    .cell(position)
+                    .map(|cell| cell.input.text())
+                    .unwrap_or_default(),
                 display: self.workbook.display(sheet, position, self.locale),
                 kind: match value {
                     Value::Empty => "empty",
@@ -246,10 +266,84 @@ impl SheetDocument {
                     Value::Bool(_) => "bool",
                     Value::Error(_) => "error",
                 },
-                format: cell.format.into(),
+                format,
+                style,
             });
         }
         to_json(&cells)
+    }
+
+    /// Change the look of a rectangle with a patch: `{ bold, italic, underline, strike,
+    /// fontFamily, fontSize, fontColour, fill, horizontal, vertical, wrap, numberFormat }`.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_INPUT` for JSON that is not a patch, or the error of the edit.
+    pub fn set_style_json(
+        &mut self,
+        sheet: usize,
+        range: (CellRef, CellRef),
+        patch_json: &str,
+    ) -> Result<(), Failure> {
+        let patch: StylePatch = serde_json::from_str(patch_json)
+            .map_err(|error| Failure::new("INVALID_INPUT", format!("invalid style: {error}")))?;
+        Ok(self.workbook.set_style(sheet, range, &patch)?)
+    }
+
+    /// Put a border on edges of a rectangle: `placement` is `all`, `outline`, `inside`, `top`,
+    /// `bottom`, `left` or `right`, `border_json` `{ style, widthEighths, colour }` or `null`.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_INPUT` for an unknown placement or border, or the error of the edit.
+    pub fn set_borders_json(
+        &mut self,
+        sheet: usize,
+        range: (CellRef, CellRef),
+        placement: &str,
+        border_json: &str,
+    ) -> Result<(), Failure> {
+        let placement: BorderPlacement = serde_json::from_value(serde_json::Value::String(
+            placement.to_owned(),
+        ))
+        .map_err(|error| Failure::new("INVALID_INPUT", format!("invalid placement: {error}")))?;
+        let border: Option<Border> = serde_json::from_str(border_json)
+            .map_err(|error| Failure::new("INVALID_INPUT", format!("invalid border: {error}")))?;
+        if let Some(border) = &border {
+            let valid_colour = border.colour.as_deref().is_none_or(|colour| {
+                colour.len() == 6
+                    && colour
+                        .chars()
+                        .all(|character| character.is_ascii_hexdigit())
+            });
+            if !valid_colour || !(1..=96).contains(&border.width_eighths) {
+                return Err(EditError::InvalidStyle.into());
+            }
+        }
+        Ok(self
+            .workbook
+            .set_borders(sheet, range, placement, border.as_ref())?)
+    }
+
+    /// The looks of the workbook, which `cellsJson` names by index; the first is the default.
+    ///
+    /// # Errors
+    ///
+    /// `INTERNAL` when the JSON cannot be written.
+    pub fn styles_summary(&self) -> Result<String, Failure> {
+        to_json(&self.workbook.styles())
+    }
+
+    /// The merged ranges of a sheet.
+    ///
+    /// # Errors
+    ///
+    /// `NO_SUCH_SHEET`, `INTERNAL` when the JSON cannot be written.
+    pub fn merges_summary(&self, sheet: usize) -> Result<String, Failure> {
+        if sheet >= self.workbook.sheets().len() {
+            return Err(EditError::NoSuchSheet(sheet).into());
+        }
+        to_json(&self.workbook.merges(sheet))
     }
 
     /// Type several cells at once: `[[row, column, text], ...]`.
@@ -282,9 +376,24 @@ impl SheetDocument {
     ) -> Result<(), Failure> {
         let format: Format = serde_json::from_str(format_json)
             .map_err(|error| Failure::new("INVALID_INPUT", format!("invalid format: {error}")))?;
-        Ok(self
-            .workbook
-            .set_format(sheet, CellRef::new(row, column), format.into())?)
+        let cell = CellRef::new(row, column);
+        let simple = match format {
+            Format::Code { code } => {
+                let patch = StylePatch {
+                    number_format: Some(code),
+                    ..StylePatch::default()
+                };
+                self.workbook
+                    .set_format(sheet, cell, NumberFormat::General)?;
+                return Ok(self.workbook.set_style(sheet, (cell, cell), &patch)?);
+            }
+            Format::General => NumberFormat::General,
+            Format::Date => NumberFormat::Date,
+            Format::DateTime => NumberFormat::DateTime,
+            Format::Percent => NumberFormat::Percent,
+            Format::Decimals { decimals } => NumberFormat::Decimals(decimals),
+        };
+        Ok(self.workbook.set_format(sheet, cell, simple)?)
     }
 }
 
@@ -338,8 +447,8 @@ impl SheetDocument {
         self.sheets_summary().map_err(|failure| throw(&failure))
     }
 
-    /// `[{ row, column, input, display, kind, format }]` for the cells with content in the
-    /// window, zero-based and inclusive.
+    /// `[{ row, column, input, display, kind, format, style }]` for the cells with content or a
+    /// look of their own in the window, zero-based and inclusive.
     ///
     /// # Errors
     ///
@@ -432,7 +541,159 @@ impl SheetDocument {
             .map_err(|error| throw(&error.into()))
     }
 
-    /// Empty a rectangle.
+    /// Change the look of a rectangle with a JSON patch.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = setStyle)]
+    pub fn set_style(
+        &mut self,
+        sheet: usize,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+        patch_json: &str,
+    ) -> Result<(), JsError> {
+        self.set_style_json(
+            sheet,
+            (CellRef::new(top, left), CellRef::new(bottom, right)),
+            patch_json,
+        )
+        .map_err(|failure| throw(&failure))
+    }
+
+    /// Put a border, as JSON or `null`, on the edges of a rectangle a placement names.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = setBorders)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a rectangle as flat numbers for JavaScript, a placement and a border"
+    )]
+    pub fn set_borders(
+        &mut self,
+        sheet: usize,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+        placement: &str,
+        border_json: &str,
+    ) -> Result<(), JsError> {
+        self.set_borders_json(
+            sheet,
+            (CellRef::new(top, left), CellRef::new(bottom, right)),
+            placement,
+            border_json,
+        )
+        .map_err(|failure| throw(&failure))
+    }
+
+    /// Give a rectangle the default look.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = clearStyles)]
+    pub fn clear_styles(
+        &mut self,
+        sheet: usize,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+    ) -> Result<(), JsError> {
+        self.workbook
+            .clear_styles(
+                sheet,
+                (CellRef::new(top, left), CellRef::new(bottom, right)),
+            )
+            .map_err(|error| throw(&error.into()))
+    }
+
+    /// `[{ font, fill, borders, horizontal, vertical, wrap, numberFormat }]`: the looks
+    /// `cellsJson` names by index.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = stylesJson)]
+    pub fn styles_json(&self) -> Result<String, JsError> {
+        self.styles_summary().map_err(|failure| throw(&failure))
+    }
+
+    /// `[{ firstRow, firstColumn, lastRow, lastColumn }]`: the merged ranges of a sheet.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = mergesJson)]
+    pub fn merges_json(&self, sheet: usize) -> Result<String, JsError> {
+        self.merges_summary(sheet)
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// Merge a rectangle into one cell, keeping the content of its top-left cell.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = mergeCells)]
+    pub fn merge_cells(
+        &mut self,
+        sheet: usize,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+    ) -> Result<(), JsError> {
+        self.workbook
+            .merge_cells(
+                sheet,
+                (CellRef::new(top, left), CellRef::new(bottom, right)),
+            )
+            .map_err(|error| throw(&error.into()))
+    }
+
+    /// Split the merged ranges a rectangle overlaps.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = unmergeCells)]
+    pub fn unmerge_cells(
+        &mut self,
+        sheet: usize,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+    ) -> Result<(), JsError> {
+        self.workbook
+            .unmerge_cells(
+                sheet,
+                (CellRef::new(top, left), CellRef::new(bottom, right)),
+            )
+            .map_err(|error| throw(&error.into()))
+    }
+
+    /// Set a row's height in points, 0 hiding it; a negative height lets it fit its content.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = setRowHeight)]
+    pub fn set_row_height(&mut self, sheet: usize, row: u32, height: f64) -> Result<(), JsError> {
+        self.workbook
+            .set_row_height(sheet, row, (height >= 0.0).then_some(height))
+            .map_err(|error| throw(&error.into()))
+    }
+
+    /// Empty a rectangle; its look stays.
     ///
     /// # Errors
     ///

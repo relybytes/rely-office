@@ -25,6 +25,10 @@ sheet.setInputs(0, [
 ]);
 assert.equal(sheet.cells(0, { top: 0, left: 0, bottom: 0, right: 1 })[1].display, '30');
 assert.throws(() => sheet.removeSheet(0), (error) => error instanceof web.RelyOfficeError && error.code === 'LAST_SHEET');
+sheet.setStyle(0, { top: 0, left: 0, bottom: 0, right: 1 }, { italic: true });
+sheet.mergeCells(0, { top: 1, left: 0, bottom: 1, right: 1 });
+assert.equal(sheet.styles()[sheet.cells(0, { top: 0, left: 0, bottom: 0, right: 0 })[0].style].font.italic, true);
+assert.equal(sheet.merges(0).length, 1);
 const reopened = await web.openSheet(sheet.save(), 'a.xlsx');
 assert.equal(reopened.input(0, 0, 1), '=A1*3');
 sheet.free();

@@ -25,7 +25,7 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [features]
 # Serialize the model's cells and values, for a JSON boundary such as the WebAssembly package.
-serde = ["dep:serde"]
+serde = ["dep:serde", "rely-office-core/serde"]
 
 [dev-dependencies]
 rust_xlsxwriter = "0.101"

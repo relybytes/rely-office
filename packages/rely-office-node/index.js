@@ -138,13 +138,15 @@ function render(bytes, fileName, options) {
 }
 
 function writeDocx(tree) {
-  const { blocks, page, media } = tree ?? {};
+  const { blocks, page, media, notes, headersFooters } = tree ?? {};
   const writer = new wasm.DocxWriter();
   try {
     for (const bytes of media ?? []) {
       writer.addMedia(toBytes(bytes));
     }
-    return call(() => writer.write(JSON.stringify({ blocks: blocks ?? [], page })));
+    return call(() =>
+      writer.write(JSON.stringify({ blocks: blocks ?? [], page, notes, headersFooters })),
+    );
   } finally {
     writer.free();
   }
@@ -192,6 +194,40 @@ class SheetDocument {
 
   setColumnWidth(sheet, column, width) {
     call(() => this.document.setColumnWidth(sheet, column, width ?? -1));
+  }
+
+  setStyle(sheet, { top, left, bottom, right }, patch) {
+    call(() => this.document.setStyle(sheet, top, left, bottom, right, JSON.stringify(patch ?? {})));
+  }
+
+  setBorders(sheet, { top, left, bottom, right }, placement, border) {
+    call(() =>
+      this.document.setBorders(sheet, top, left, bottom, right, String(placement), JSON.stringify(border ?? null)),
+    );
+  }
+
+  clearStyles(sheet, { top, left, bottom, right }) {
+    call(() => this.document.clearStyles(sheet, top, left, bottom, right));
+  }
+
+  styles() {
+    return JSON.parse(call(() => this.document.stylesJson()));
+  }
+
+  merges(sheet) {
+    return JSON.parse(call(() => this.document.mergesJson(sheet)));
+  }
+
+  mergeCells(sheet, { top, left, bottom, right }) {
+    call(() => this.document.mergeCells(sheet, top, left, bottom, right));
+  }
+
+  unmergeCells(sheet, { top, left, bottom, right }) {
+    call(() => this.document.unmergeCells(sheet, top, left, bottom, right));
+  }
+
+  setRowHeight(sheet, row, height) {
+    call(() => this.document.setRowHeight(sheet, row, height ?? -1));
   }
 
   clearRange(sheet, { top, left, bottom, right }) {

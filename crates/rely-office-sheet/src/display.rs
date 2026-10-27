@@ -6,11 +6,27 @@
 
 //! A value shown with its cell's number format.
 
+use rely_office_core::{format_number, format_text};
+
 use crate::dates::date_from_serial;
 use crate::model::NumberFormat;
 use crate::value::{Locale, Value};
 
-pub(crate) fn display(value: &Value, format: NumberFormat, locale: Locale) -> String {
+/// A value shown with a number format, or with an Excel format code when the cell's style
+/// gives one.
+pub(crate) fn display(
+    value: &Value,
+    format: NumberFormat,
+    code: Option<&str>,
+    locale: Locale,
+) -> String {
+    if let Some(code) = code {
+        match value {
+            Value::Number(number) => return format_number(*number, code, locale.into()).text,
+            Value::Text(text) => return format_text(text, code),
+            _ => {}
+        }
+    }
     let Value::Number(number) = value else {
         return locale.display(value);
     };
@@ -18,13 +34,11 @@ pub(crate) fn display(value: &Value, format: NumberFormat, locale: Locale) -> St
     match format {
         NumberFormat::General => locale.format_number(number),
         NumberFormat::Percent => format!("{}%", locale.format_number(round(number * 100.0, 10))),
+        // Halves round away from zero, as Excel rounds them: 0,125 shows 0,13.
+        NumberFormat::Decimals(0) => format_number(number, "0", locale.into()).text,
         NumberFormat::Decimals(decimals) => {
-            let decimals = usize::from(decimals.min(10));
-            let text = format!("{number:.decimals$}");
-            match locale {
-                Locale::Italian => text.replace('.', ","),
-                Locale::English => text,
-            }
+            let code = format!("0.{}", "0".repeat(usize::from(decimals.min(10))));
+            format_number(number, &code, locale.into()).text
         }
         NumberFormat::Date | NumberFormat::DateTime => {
             let Some((year, month, day)) = date_from_serial(number) else {
@@ -57,41 +71,82 @@ mod tests {
     fn shows_numbers_with_their_format() {
         let italian = Locale::Italian;
         let number = Value::Number(46_322.5);
-        assert_eq!(display(&number, NumberFormat::Date, italian), "27/10/2026");
         assert_eq!(
-            display(&number, NumberFormat::DateTime, italian),
+            display(&number, NumberFormat::Date, None, italian),
+            "27/10/2026"
+        );
+        assert_eq!(
+            display(&number, NumberFormat::DateTime, None, italian),
             "27/10/2026 12:00"
         );
         assert_eq!(
-            display(&number, NumberFormat::Date, Locale::English),
+            display(&number, NumberFormat::Date, None, Locale::English),
             "10/27/2026"
         );
         assert_eq!(
-            display(&Value::Number(0.125), NumberFormat::Percent, italian),
+            display(&Value::Number(0.125), NumberFormat::Percent, None, italian),
             "12,5%"
         );
         assert_eq!(
-            display(&Value::Number(0.07), NumberFormat::Percent, italian),
+            display(&Value::Number(0.07), NumberFormat::Percent, None, italian),
             "7%"
         );
         assert_eq!(
-            display(&Value::Number(2.0), NumberFormat::Decimals(2), italian),
+            display(
+                &Value::Number(2.0),
+                NumberFormat::Decimals(2),
+                None,
+                italian
+            ),
             "2,00"
         );
         assert_eq!(
             display(
                 &Value::Number(2.005),
                 NumberFormat::Decimals(1),
+                None,
                 Locale::English
             ),
             "2.0"
         );
         assert_eq!(
-            display(&Value::Number(3.0), NumberFormat::Date, italian),
+            display(
+                &Value::Number(1_234.5),
+                NumberFormat::General,
+                Some("#,##0.00 \"€\""),
+                italian
+            ),
+            "1.234,50 €"
+        );
+        assert_eq!(
+            display(
+                &Value::Text("A1".to_owned()),
+                NumberFormat::General,
+                Some("\"Rif. \"@"),
+                italian
+            ),
+            "Rif. A1"
+        );
+        assert_eq!(
+            display(
+                &Value::Bool(true),
+                NumberFormat::General,
+                Some("0.00"),
+                italian
+            ),
+            "VERO"
+        );
+        assert_eq!(
+            display(&Value::Number(3.0), NumberFormat::Date, None, italian),
             "3"
         );
         assert_eq!(
-            display(&Value::Text("x".to_owned()), NumberFormat::Date, italian),
+            display(
+                &Value::Text("x".to_owned()),
+                NumberFormat::Date,
+                None,
+                italian
+            ),
             "x"
         );
     }

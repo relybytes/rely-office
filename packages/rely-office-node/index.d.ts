@@ -64,6 +64,7 @@ export type ErrorCode =
   | 'INVALID_SHEET_NAME'
   | 'LAST_SHEET'
   | 'OUT_OF_BOUNDS'
+  | 'INVALID_STYLE'
   | 'INTERNAL';
 
 /** Thrown by every function but `detectFormat` when a document cannot be read. */
@@ -103,6 +104,10 @@ export type Mark =
   | { type: 'code' }
   | { type: 'superscript' }
   | { type: 'subscript' }
+  /** The font, size and colour a run sets itself, as CSS values: `Arial`, `14pt`, `#1F3864`. */
+  | { type: 'textStyle'; fontFamily?: string; fontSize?: string; color?: string }
+  /** A highlight behind the text, as a CSS colour. */
+  | { type: 'highlight'; color: string }
   /** Only `http:`, `https:` and `mailto:` targets are kept. */
   | { type: 'link'; href: string };
 
@@ -110,7 +115,9 @@ export type Inline =
   | { type: 'text'; text: string; marks?: Mark[] }
   | { type: 'hardBreak' }
   /** `media` indexes `DocumentTree.media`; sizes are CSS pixels. */
-  | { type: 'image'; media: number; alt?: string; width?: number; height?: number };
+  | { type: 'image'; media: number; alt?: string; width?: number; height?: number }
+  /** A footnote or endnote: `note` indexes `DocumentTree.notes`. */
+  | { type: 'noteReference'; note: number };
 
 export interface TableCell {
   colSpan: number;
@@ -179,10 +186,39 @@ export interface ImportReport {
   hiddenRuns: number;
 }
 
+export interface Note {
+  kind: 'footnote' | 'endnote';
+  blocks: Block[];
+}
+
+/**
+ * The headers and footers of the last section. The first-page pair is set only when the
+ * section has a different first page, the even-page pair only when odd and even pages differ.
+ */
+export interface HeadersFooters {
+  header: Block[];
+  footer: Block[];
+  firstHeader?: Block[];
+  firstFooter?: Block[];
+  evenHeader?: Block[];
+  evenFooter?: Block[];
+}
+
+/** In twentieths of a point; margins top, right, bottom, left. */
+export interface PageSize {
+  widthTwips: number;
+  heightTwips: number;
+  marginsTwips: [number, number, number, number];
+}
+
 export interface DocumentTree {
   blocks: Block[];
   media: MediaItem[];
   report: ImportReport;
+  /** The footnotes and endnotes, in the order the text refers to them. */
+  notes: Note[];
+  headersFooters: HeadersFooters;
+  page: PageSize;
 }
 
 /** The format of a document; the name only tells CSV from TSV and never overrides the bytes. */
@@ -244,8 +280,10 @@ export interface DocxInput {
   blocks: Block[];
   /** The bytes of each image; `Inline.media` indexes this list. The type is read from the bytes. */
   media?: DocumentBytes[];
-  /** In twentieths of a point; A4 with 2.5 cm margins when left out. Margins: top, right, bottom, left. */
-  page?: { widthTwips: number; heightTwips: number; marginsTwips: [number, number, number, number] };
+  /** A4 with 2.5 cm margins when left out. */
+  page?: PageSize;
+  notes?: Note[];
+  headersFooters?: HeadersFooters;
 }
 
 /** A docx Word opens and `readDocumentTree` reads back to the same tree. */
@@ -257,7 +295,72 @@ export type CellFormat =
   | { type: 'date' }
   | { type: 'dateTime' }
   | { type: 'percent' }
-  | { type: 'decimals'; decimals: number };
+  | { type: 'decimals'; decimals: number }
+  /** An Excel number format code, `#,##0.00 "€"`, `dd mmmm yyyy`. */
+  | { type: 'code'; code: string };
+
+/** A border edge: its line, its width in eighths of a point and its colour as `RRGGBB`. */
+export interface Border {
+  style: 'none' | 'single' | 'double' | 'dotted' | 'dashed';
+  widthEighths: number;
+  colour?: string | null;
+}
+
+/** How a cell looks; `stylesJson` lists them and every cell names one by index. */
+export interface CellStyle {
+  font: {
+    family?: string | null;
+    /** In tenths of a point. */
+    sizeTenths?: number | null;
+    /** `RRGGBB`; unset is automatic. */
+    colour?: string | null;
+    bold: boolean;
+    italic: boolean;
+    underline: boolean;
+    strike: boolean;
+  };
+  /** `RRGGBB`. */
+  fill?: string | null;
+  borders: { top?: Border | null; right?: Border | null; bottom?: Border | null; left?: Border | null };
+  horizontal?: 'left' | 'center' | 'right' | 'justify' | null;
+  vertical?: 'top' | 'center' | 'bottom' | null;
+  wrap: boolean;
+  /** An Excel number format code; unset is General. */
+  numberFormat?: string | null;
+}
+
+/**
+ * A change to the look of cells: what is set changes, the rest stays. Colours are `RRGGBB` or
+ * `#RRGGBB`; an empty text, a size of 0, `general` or `bottom` go back to the default.
+ */
+export interface StylePatch {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  fontFamily?: string;
+  /** In points. */
+  fontSize?: number;
+  fontColour?: string;
+  fill?: string;
+  horizontal?: 'general' | 'left' | 'center' | 'right' | 'justify';
+  vertical?: 'bottom' | 'center' | 'top';
+  wrap?: boolean;
+  /** An Excel number format code, `#,##0.00 "€"`; empty is General. */
+  numberFormat?: string;
+}
+
+/** Which edges of a window a border goes on. */
+export type BorderPlacement = 'all' | 'outline' | 'inside' | 'top' | 'bottom' | 'left' | 'right';
+
+/** A merged range, zero-based and inclusive; its top-left cell shows the content. */
+export interface CellRange {
+  firstRow: number;
+  firstColumn: number;
+  lastRow: number;
+  lastColumn: number;
+}
+
 
 /** A zero-based, inclusive rectangle of cells. */
 export interface CellWindow {
@@ -274,6 +377,8 @@ export interface SheetSummary {
   columns: number;
   /** `[column, width in characters]` for the columns not of the default width. */
   columnWidths: [number, number][];
+  /** `[row, height in points]` for the rows that set one; 0 is hidden. */
+  rowHeights: [number, number][];
 }
 
 export interface SheetCell {
@@ -285,6 +390,8 @@ export interface SheetCell {
   display: string;
   kind: 'number' | 'text' | 'bool' | 'error' | 'empty';
   format: CellFormat;
+  /** The index of the cell's look in `styles()`, 0 for the default. */
+  style: number;
 }
 
 export interface SheetOptions {
@@ -298,7 +405,7 @@ export interface SheetOptions {
  */
 export interface SheetDocument {
   sheets(): SheetSummary[];
-  /** The cells with content in a window, at most 250,000 cells. */
+  /** The cells with content or a look of their own in a window, at most 250,000 cells. */
   cells(sheet: number, window: CellWindow): SheetCell[];
   input(sheet: number, row: number, column: number): string;
   /** Type into a cell: `=` starts a formula; an empty text clears the cell. */
@@ -308,7 +415,22 @@ export interface SheetDocument {
   setFormat(sheet: number, row: number, column: number, format: CellFormat): void;
   /** A width in characters; null restores the default. */
   setColumnWidth(sheet: number, column: number, width: number | null): void;
+  /** Empty a window; its look stays. */
   clearRange(sheet: number, window: CellWindow): void;
+  /** Change the look of a window, at most 1,000,000 cells. */
+  setStyle(sheet: number, window: CellWindow, patch: StylePatch): void;
+  /** Put a border on the edges of a window a placement names, or take it off with null. */
+  setBorders(sheet: number, window: CellWindow, placement: BorderPlacement, border: Border | null): void;
+  clearStyles(sheet: number, window: CellWindow): void;
+  /** The looks the cells name by index; the first is the default. */
+  styles(): CellStyle[];
+  merges(sheet: number): CellRange[];
+  /** Merge a window into one cell, keeping the content of its top-left cell. */
+  mergeCells(sheet: number, window: CellWindow): void;
+  /** Split the merged ranges a window overlaps. */
+  unmergeCells(sheet: number, window: CellWindow): void;
+  /** A height in points, 0 hiding the row; null lets it fit its content. */
+  setRowHeight(sheet: number, row: number, height: number | null): void;
   /** Copy a window so its top-left lands on (row, column); relative references move with it. */
   copyRange(sheet: number, window: CellWindow, targetSheet: number, row: number, column: number): void;
   insertRows(sheet: number, at: number, count?: number): void;

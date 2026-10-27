@@ -270,6 +270,44 @@ test('edits a spreadsheet and saves it as xlsx', () => {
   }
 });
 
+test('styles, merges and sizes the cells of a spreadsheet', () => {
+  const sheet = office.createSheet({ locale: 'it' });
+  try {
+    const title = { top: 0, left: 0, bottom: 0, right: 2 };
+    sheet.setInput(0, 0, 0, 'Preventivo');
+    sheet.setStyle(0, title, { bold: true, fill: '#1F4E79', fontColour: 'FFFFFF', horizontal: 'center' });
+    sheet.setBorders(0, title, 'outline', { style: 'single', widthEighths: 4, colour: 'FF0000' });
+    sheet.mergeCells(0, title);
+    sheet.setRowHeight(0, 0, 30);
+    sheet.setInput(0, 1, 0, '1234,5');
+    sheet.setFormat(0, 1, 0, { type: 'code', code: '#,##0.00 "€"' });
+    const cells = sheet.cells(0, { top: 0, left: 0, bottom: 1, right: 2 });
+    assert.equal(cells.length, 4);
+    assert.equal(cells[3].display, '1.234,50 €');
+    const look = sheet.styles()[cells[0].style];
+    assert.equal(look.font.bold, true);
+    assert.equal(look.fill, '1F4E79');
+    assert.deepEqual(sheet.merges(0), [{ firstRow: 0, firstColumn: 0, lastRow: 0, lastColumn: 2 }]);
+    assert.deepEqual(sheet.sheets()[0].rowHeights, [[0, 30]]);
+    assert.throws(() => sheet.setStyle(0, title, { fill: 'giallo' }), (error) => error.code === 'INVALID_STYLE');
+    const opened = office.openSheet(sheet.save(), 'preventivo.xlsx', { locale: 'it' });
+    try {
+      const reopened = opened.cells(0, { top: 0, left: 0, bottom: 1, right: 0 });
+      assert.equal(opened.styles()[reopened[0].style].fill, '1F4E79');
+      assert.equal(reopened[1].display, '1.234,50 €');
+      assert.equal(opened.merges(0).length, 1);
+      opened.unmergeCells(0, title);
+      opened.clearStyles(0, title);
+      assert.equal(opened.merges(0).length, 0);
+      assert.equal(opened.cells(0, title).length, 1);
+    } finally {
+      opened.free();
+    }
+  } finally {
+    sheet.free();
+  }
+});
+
 test('survives many calls without leaking handles', () => {
   for (let round = 0; round < 200; round += 1) {
     office.readDocumentTree(docx);

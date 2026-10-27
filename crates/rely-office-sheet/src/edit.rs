@@ -95,6 +95,39 @@ impl Shift {
     }
 }
 
+/// Move what a sheet keeps beside its cells: styles go with their cells, merged ranges and
+/// column widths or row heights with their rows and columns; a merge left a single cell ends.
+fn move_looks(sheet: &mut Sheet, shift: Shift) {
+    sheet.styles = std::mem::take(&mut sheet.styles)
+        .into_iter()
+        .filter_map(|(cell, style)| shift.cell(cell).map(|cell| (cell, style)))
+        .collect();
+    sheet.merges = std::mem::take(&mut sheet.merges)
+        .into_iter()
+        .filter_map(|mut merge| {
+            if shift.rows() {
+                (merge.first_row, merge.last_row) = shift.span(merge.first_row, merge.last_row)?;
+            } else {
+                (merge.first_column, merge.last_column) =
+                    shift.span(merge.first_column, merge.last_column)?;
+            }
+            (merge.first_row != merge.last_row || merge.first_column != merge.last_column)
+                .then_some(merge)
+        })
+        .collect();
+    if shift.rows() {
+        sheet.row_heights = std::mem::take(&mut sheet.row_heights)
+            .into_iter()
+            .filter_map(|(row, height)| shift.index(row).map(|row| (row, height)))
+            .collect();
+    } else {
+        sheet.column_widths = std::mem::take(&mut sheet.column_widths)
+            .into_iter()
+            .filter_map(|(column, width)| shift.index(column).map(|column| (column, width)))
+            .collect();
+    }
+}
+
 /// Move the cells of a sheet and make every formula of the workbook follow them.
 pub(crate) fn shift(sheets: &mut [Sheet], target: usize, shift: Shift) -> Result<(), EditError> {
     if let Shift::InsertRows { count, .. } | Shift::InsertColumns { count, .. } = shift {
@@ -115,13 +148,7 @@ pub(crate) fn shift(sheets: &mut [Sheet], target: usize, shift: Shift) -> Result
         .filter_map(|(cell, content)| shift.cell(cell).map(|cell| (cell, content)))
         .collect();
     sheets[target].cells = moved;
-    if !shift.rows() {
-        let widths = std::mem::take(&mut sheets[target].column_widths);
-        sheets[target].column_widths = widths
-            .into_iter()
-            .filter_map(|(column, width)| shift.index(column).map(|column| (column, width)))
-            .collect();
-    }
+    move_looks(&mut sheets[target], shift);
 
     let target_name = sheets[target].name.to_lowercase();
     for (index, sheet) in sheets.iter_mut().enumerate() {

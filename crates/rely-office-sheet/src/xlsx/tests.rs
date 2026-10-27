@@ -162,3 +162,87 @@ fn refuses_what_is_not_a_spreadsheet_or_too_large() {
 fn escapes_text_for_xml() {
     assert_eq!(escape("a<b>&\"c\u{1}\td"), "a&lt;b&gt;&amp;&quot;c\td");
 }
+
+#[test]
+fn reads_back_the_styles_merges_and_heights_it_writes() {
+    use crate::{BorderPlacement, StylePatch};
+    let locale = Locale::Italian;
+    let mut workbook = Workbook::new();
+    let header = StylePatch {
+        bold: Some(true),
+        font_size: Some(14.0),
+        font_family: Some("Arial".to_owned()),
+        font_colour: Some("FFFFFF".to_owned()),
+        fill: Some("1F4E79".to_owned()),
+        horizontal: Some("center".to_owned()),
+        vertical: Some("center".to_owned()),
+        ..StylePatch::default()
+    };
+    workbook.set_input(0, cell("A1"), "Titolo", locale).unwrap();
+    workbook
+        .set_style(0, (cell("A1"), cell("C1")), &header)
+        .unwrap();
+    workbook.merge_cells(0, (cell("A1"), cell("C1"))).unwrap();
+    workbook.set_input(0, cell("A2"), "1234,5", locale).unwrap();
+    workbook
+        .set_style(
+            0,
+            (cell("A2"), cell("A2")),
+            &StylePatch {
+                number_format: Some("#,##0.00 \"€\";[Red]-#,##0.00 \"€\"".to_owned()),
+                italic: Some(true),
+                wrap: Some(true),
+                ..StylePatch::default()
+            },
+        )
+        .unwrap();
+    workbook.set_input(0, cell("B2"), "0,5", locale).unwrap();
+    workbook
+        .set_format(0, cell("B2"), NumberFormat::Decimals(3))
+        .unwrap();
+    let border = Border {
+        style: BorderStyle::Single,
+        width_eighths: 8,
+        colour: Some("FF0000".to_owned()),
+    };
+    workbook
+        .set_borders(
+            0,
+            (cell("A4"), cell("B5")),
+            BorderPlacement::Outline,
+            Some(&border),
+        )
+        .unwrap();
+    workbook.set_row_height(0, 0, Some(30.0)).unwrap();
+    workbook.set_row_height(0, 9, Some(0.0)).unwrap();
+
+    let read = read_spreadsheet(
+        &write_xlsx(&workbook).unwrap(),
+        None,
+        &Limits::default(),
+        locale,
+    )
+    .unwrap();
+    assert_eq!(read.style(0, cell("A1")), workbook.style(0, cell("A1")));
+    assert_eq!(
+        read.style(0, cell("C1")),
+        workbook.style(0, cell("C1")),
+        "a styled empty cell"
+    );
+    assert_eq!(read.merges(0), workbook.merges(0));
+    assert_eq!(read.display(0, cell("A2"), locale), "1.234,50 €");
+    assert!(read.style(0, cell("A2")).font.italic);
+    assert!(read.style(0, cell("A2")).wrap);
+    assert_eq!(read.display(0, cell("B2"), locale), "0,500");
+    assert_eq!(
+        read.sheets()[0].cell(cell("B2")).unwrap().format,
+        NumberFormat::Decimals(3)
+    );
+    let corner = &read.style(0, cell("A4")).borders;
+    assert_eq!(corner.top, Some(border.clone()));
+    assert_eq!(corner.left, Some(border.clone()));
+    assert_eq!(corner.bottom, None);
+    assert_eq!(read.style(0, cell("B5")).borders.right, Some(border));
+    assert_eq!(read.sheets()[0].row_heights.get(&0), Some(&30.0));
+    assert_eq!(read.sheets()[0].row_heights.get(&9), Some(&0.0));
+}

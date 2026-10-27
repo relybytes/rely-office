@@ -7,7 +7,11 @@
 import type { DocumentBytes, ErrorCode, SheetDocument, SheetOptions } from '../index';
 
 export type {
+  Border,
+  BorderPlacement,
   CellFormat,
+  CellRange,
+  CellStyle,
   CellWindow,
   DocumentBytes,
   ErrorCode,
@@ -15,6 +19,7 @@ export type {
   SheetDocument,
   SheetOptions,
   SheetSummary,
+  StylePatch,
 } from '../index';
 
 export class RelyOfficeError extends Error {

@@ -204,8 +204,9 @@ fn write_tables(source: &mut String, sheet: &Sheet, text_width: f64, font_size: 
                     .ok()
                     .zip(u32::try_from(origin.1).ok())
                     .and_then(|(row, column)| layout.style_of(row, column));
+                let colour = sheet.value_colours.get(&origin).copied();
                 source.push(' ');
-                source.push_str(&cell_markup(value, style, spans));
+                source.push_str(&cell_markup(value, style, colour, spans));
                 source.push(',');
             }
         }
@@ -294,7 +295,12 @@ fn placement(
 
 /// One cell as table content: its text with the font of its format, its fill, borders and
 /// alignment; a number aligns right unless the format says otherwise.
-fn cell_markup(value: &str, style: Option<&CellStyle>, spans: Option<(usize, usize)>) -> String {
+fn cell_markup(
+    value: &str,
+    style: Option<&CellStyle>,
+    value_colour: Option<&str>,
+    spans: Option<(usize, usize)>,
+) -> String {
     let mut arguments = Vec::new();
     if let Some((columns, rows)) = spans {
         if columns > 1 {
@@ -366,7 +372,8 @@ fn cell_markup(value: &str, style: Option<&CellStyle>, spans: Option<(usize, usi
             if font.italic {
                 text_arguments.push("style: \"italic\"".to_owned());
             }
-            if let Some(colour) = &font.colour {
+            // The colour of a number format outdoes the font's, as in a spreadsheet.
+            if let Some(colour) = value_colour.or(font.colour.as_deref()) {
                 text_arguments.push(format!("fill: rgb(\"#{colour}\")"));
             }
             if !text_arguments.is_empty() {
@@ -378,6 +385,11 @@ fn cell_markup(value: &str, style: Option<&CellStyle>, spans: Option<(usize, usi
             if font.strike {
                 text = format!("strike({text})");
             }
+        }
+        if style.is_none()
+            && let Some(colour) = value_colour
+        {
+            text = format!("text(fill: rgb(\"#{colour}\"), {text})");
         }
         if style.is_some_and(|style| style.wrap) {
             text
@@ -607,6 +619,7 @@ mod tests {
 
     fn sheet(name: &str, rows: &[&[&str]]) -> Sheet {
         Sheet {
+            value_colours: std::collections::HashMap::new(),
             name: name.to_owned(),
             rows: rows
                 .iter()
@@ -761,6 +774,17 @@ mod tests {
         assert!(source.contains(r#"table.cell(colspan: 2, rowspan: 2, box("b"))"#));
         assert!(!source.contains(r#""f""#), "a covered cell is not drawn");
         assert!(source.contains(r#"table.cell(align: top, box("d"))"#));
+
+        let mut negative = sheet("Saldo", &[&["-5"]]);
+        negative.value_colours.insert((0, 0), "FF0000");
+        let source = workbook_source(&Workbook {
+            format: DocumentFormat::Xlsx,
+            sheets: vec![negative],
+        });
+        assert!(
+            source.contains(r##"box(text(fill: rgb("#FF0000"), "-5"))"##),
+            "{source}"
+        );
     }
 
     #[test]
