@@ -7,36 +7,31 @@
 //! The text of a Word 97-2003 document ([MS-DOC]): the piece table (`Clx`) in the table stream
 //! says where each run of characters lies in the `WordDocument` stream and how it is encoded.
 
+mod fib;
+mod fkp;
+mod fonts;
+mod lists;
+mod pictures;
+mod properties;
+mod sections;
+mod sprm;
+mod styles;
+#[cfg(test)]
+mod test_doc;
+mod tree;
+
+pub(crate) use tree::read_doc_tree;
+
 use crate::compound::{open_compound_file, read_stream, u16_at, u32_at};
 use crate::text::TextBuffer;
 use crate::{Limits, OfficeError};
+use fib::{Fib, pair};
 
-const FIB_IDENTIFIER: u16 = 0xA5EC;
-/// The first `nFib` of Word 97; earlier versions (Word 6 and 95) store text another way.
-const FIRST_WORD_97_FIB: u16 = 0x00C0;
-const FLAG_ENCRYPTED: u16 = 0x0100;
-const FLAG_TABLE_ONE: u16 = 0x0200;
-/// `fcClx` is the 34th pair of `FibRgFcLcb97`.
-const CLX_PAIR_INDEX: usize = 33;
-/// The `ccp*` counts of `FibRgLw97`, in order: main text, footnotes, headers, comments, endnotes,
-/// text boxes and header text boxes.
-const STORY_COUNT_INDEXES: [usize; 7] = [3, 4, 5, 7, 8, 9, 10];
 const COMPRESSED_FLAG: u32 = 0x4000_0000;
 const FC_MASK: u32 = 0x3FFF_FFFF;
 
-/// What the File Information Block says about the text.
-#[derive(Debug)]
-struct FileInformation {
-    encrypted: bool,
-    table_stream: &'static str,
-    clx_offset: usize,
-    clx_length: usize,
-    /// Every story's characters together: the main text, then notes, headers, comments, boxes.
-    total_characters: usize,
-}
-
 /// One piece of the piece table: characters `[start, end)` stored from `offset`.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Piece {
     start: usize,
     end: usize,
@@ -54,28 +49,27 @@ pub(crate) fn extract_doc_text(
     let mut compound_file = open_compound_file(bytes)?;
     let word_document = read_stream(&mut compound_file, "/WordDocument", limits.max_member_bytes)?
         .ok_or_else(|| unreadable("the file has no WordDocument stream"))?;
-    let information = read_file_information(&word_document)?;
-    if information.encrypted {
+    let fib = Fib::read(&word_document)?;
+    if fib.encrypted {
         return Err(OfficeError::Encrypted);
     }
     let table = read_stream(
         &mut compound_file,
-        information.table_stream,
+        fib.table_stream,
         limits.max_member_bytes,
     )?
     .ok_or_else(|| unreadable("the file has no table stream"))?;
-    let clx = information
-        .clx_offset
-        .checked_add(information.clx_length)
-        .and_then(|end| table.get(information.clx_offset..end))
+    let clx = fib
+        .slice(&table, pair::PIECE_TABLE)
         .ok_or_else(|| unreadable("the piece table lies outside the table stream"))?;
+    let total_characters = fib.stories.total();
 
     let mut filter = SpecialCharacterFilter::default();
     for piece in read_piece_table(clx)? {
-        if piece.start >= information.total_characters {
+        if piece.start >= total_characters {
             break;
         }
-        let count = piece.end.min(information.total_characters) - piece.start;
+        let count = piece.end.min(total_characters) - piece.start;
         for character in decode_piece(&word_document, &piece, count)? {
             if let Some(character) = filter.translate(character) {
                 buffer.push(character);
@@ -90,58 +84,6 @@ pub(crate) fn extract_doc_text(
 
 fn unreadable(reason: &str) -> OfficeError {
     OfficeError::UnreadableDocument(reason.to_owned())
-}
-
-fn read_file_information(word_document: &[u8]) -> Result<FileInformation, OfficeError> {
-    let short = || unreadable("the File Information Block is cut short");
-    if u16_at(word_document, 0) != Some(FIB_IDENTIFIER) {
-        return Err(unreadable(
-            "the WordDocument stream is not a Word 97-2003 document",
-        ));
-    }
-    let fib_version = u16_at(word_document, 2).ok_or_else(short)?;
-    if fib_version < FIRST_WORD_97_FIB {
-        return Err(unreadable("documents older than Word 97 are not read"));
-    }
-    let flags = u16_at(word_document, 10).ok_or_else(short)?;
-
-    let short_count = usize::from(u16_at(word_document, 32).ok_or_else(short)?);
-    let long_count_offset = 34 + short_count * 2;
-    let long_count = usize::from(u16_at(word_document, long_count_offset).ok_or_else(short)?);
-    let longs_offset = long_count_offset + 2;
-    let read_long = |index: usize| -> Option<usize> {
-        if index >= long_count {
-            return None;
-        }
-        u32_at(word_document, longs_offset + index * 4).map(|value| value as usize)
-    };
-    let main_characters = read_long(STORY_COUNT_INDEXES[0]).ok_or_else(short)?;
-    let total_characters = STORY_COUNT_INDEXES
-        .iter()
-        .map(|index| read_long(*index).unwrap_or(0))
-        .fold(0_usize, usize::saturating_add)
-        .max(main_characters);
-
-    let pair_count_offset = longs_offset + long_count * 4;
-    let pair_count = usize::from(u16_at(word_document, pair_count_offset).ok_or_else(short)?);
-    if pair_count <= CLX_PAIR_INDEX {
-        return Err(short());
-    }
-    let clx_pair = pair_count_offset + 2 + CLX_PAIR_INDEX * 8;
-    let clx_offset = u32_at(word_document, clx_pair).ok_or_else(short)? as usize;
-    let clx_length = u32_at(word_document, clx_pair + 4).ok_or_else(short)? as usize;
-
-    Ok(FileInformation {
-        encrypted: flags & FLAG_ENCRYPTED != 0,
-        table_stream: if flags & FLAG_TABLE_ONE == 0 {
-            "/0Table"
-        } else {
-            "/1Table"
-        },
-        clx_offset,
-        clx_length,
-        total_characters,
-    })
 }
 
 /// The `Clx`: property runs (`Prc`, skipped) followed by the piece table (`Pcdt`).
@@ -381,7 +323,7 @@ mod tests {
         ));
 
         let mut word_95 = vec![0_u8; 64];
-        word_95[0..2].copy_from_slice(&FIB_IDENTIFIER.to_le_bytes());
+        word_95[0..2].copy_from_slice(&0xA5EC_u16.to_le_bytes());
         word_95[2..4].copy_from_slice(&0x0065_u16.to_le_bytes());
         let bytes = build_compound_file(&[("/WordDocument", word_95.as_slice())]);
         assert!(matches!(

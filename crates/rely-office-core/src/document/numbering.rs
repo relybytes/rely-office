@@ -309,7 +309,7 @@ pub(crate) fn bullet_label(bullet: &str, font: Option<&str>) -> String {
 }
 
 /// A number written in a level's format; a format with no rule of its own is decimal.
-fn format_number(number: u32, format: &str) -> String {
+pub(crate) fn format_number(number: u32, format: &str) -> String {
     match format {
         "lowerLetter" => alphabetic(number),
         "upperLetter" => alphabetic(number).to_ascii_uppercase(),
@@ -324,7 +324,7 @@ fn format_number(number: u32, format: &str) -> String {
 
 /// A label character as it shows: the private-use glyphs of the symbol fonts become the bullets
 /// they draw there, and the `o` of Courier New a white bullet.
-fn bullet_character(character: char, font: Option<&str>) -> char {
+pub(crate) fn bullet_character(character: char, font: Option<&str>) -> char {
     match character {
         '\u{f0a7}' | '\u{f06e}' | '\u{f0a8}' => '\u{25aa}',
         '\u{f0d8}' | '\u{f0e8}' => '\u{27a2}',

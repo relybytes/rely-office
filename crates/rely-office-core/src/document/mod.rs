@@ -32,7 +32,7 @@ pub use media::sniff_image_type;
 pub use write::write_docx;
 
 pub(crate) use convert::{plain_text, push_block};
-pub(crate) use numbering::{bullet_label, number_label};
+pub(crate) use numbering::{bullet_character, bullet_label, format_number, number_label};
 
 const MAIN_PART: &str = "word/document.xml";
 /// A page side shorter than an inch is damaged; one longer than 22 inches is Word's own maximum.
@@ -443,6 +443,9 @@ pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree,
     let format = detect_format(bytes, None);
     if format == DocumentFormat::Odt {
         return crate::opendocument::read_odt_tree(bytes, limits);
+    }
+    if format == DocumentFormat::Doc {
+        return crate::doc::read_doc_tree(bytes, limits);
     }
     if format != DocumentFormat::Docx {
         return Err(OfficeError::UnsupportedFormat(format));

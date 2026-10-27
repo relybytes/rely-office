@@ -161,7 +161,7 @@ fn source_with(
 ) -> Result<TypstSource, RenderError> {
     let format = detect_format(bytes, file_name);
     match format {
-        DocumentFormat::Docx | DocumentFormat::Odt => {
+        DocumentFormat::Docx | DocumentFormat::Odt | DocumentFormat::Doc => {
             let tree = read_document_tree(bytes, limits)?;
             let truncated = tree.report.truncated;
             let (source, files) = docx::document_source(&tree, with_images, lines);
@@ -205,7 +205,7 @@ fn source_with(
                 truncated,
             })
         }
-        DocumentFormat::Doc | DocumentFormat::Ppt => {
+        DocumentFormat::Ppt => {
             let extracted = extract_text(bytes, file_name, limits)?;
             Ok(TypstSource {
                 format,
