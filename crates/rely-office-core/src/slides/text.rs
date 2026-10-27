@@ -7,8 +7,8 @@
 //! The text properties of slides: a paragraph and run style that each level of a list style,
 //! a placeholder or a master gives, merged nearest first.
 
-use super::colour::{Theme, colour_in};
 use crate::document::Alignment;
+use crate::theme::{Theme, colour_in};
 use crate::xml_tree::{Element, Namespace};
 
 const A: Namespace = Namespace::Drawing;

@@ -9,7 +9,6 @@
 //! from its layout, then its master, then the master's text styles and the theme, as
 //! `PowerPoint` resolves it, so every value here is the one the slide shows.
 
-mod colour;
 mod read;
 mod text;
 

@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use rely_office_core::{CellRange, CellStyle};
+use rely_office_core::{CarriedDrawing, CarriedPart, CellRange, CellStyle};
 
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS};
 use crate::evaluate;
@@ -57,6 +57,9 @@ pub struct Sheet {
     /// [`Workbook::styles`].
     pub(crate) styles: BTreeMap<CellRef, u32>,
     pub(crate) merges: Vec<CellRange>,
+    /// The pictures and charts of the file the sheet was read from, written back as they were:
+    /// they stay anchored to the cells they had, whatever rows or columns move.
+    pub(crate) drawing: Option<CarriedDrawing>,
 }
 
 impl Sheet {
@@ -120,6 +123,8 @@ pub struct Workbook {
     /// Every style the cells use, each once; the first is the default look.
     pub(crate) styles: Vec<CellStyle>,
     pub(crate) style_index: HashMap<CellStyle, u32>,
+    /// The theme of the file the workbook was read from, written back for its charts.
+    pub(crate) theme: Option<CarriedPart>,
 }
 
 impl Default for Workbook {
@@ -159,6 +164,7 @@ impl Workbook {
             today: None,
             styles,
             style_index,
+            theme: None,
         };
         workbook.recalculate();
         workbook

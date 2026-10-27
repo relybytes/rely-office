@@ -11,16 +11,17 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use super::colour::{Theme, colour_in};
 use super::text::{BulletStyle, LEVELS, LevelStyle, list_styles, number_label};
 use super::{
     Bullet, Frame, Presentation, ShapeContent, ShapeGeometry, ShapeLine, Slide, SlideParagraph,
     SlideRun, SlideShape, SlideTable, SlideTableCell, SlideTableRow, TextAnchor, TextBody,
 };
 use crate::archive::{ZipPackage, open_package, read_member_bytes, read_text_member};
+use crate::chart::{chart_picture, no_cells};
 use crate::document::{Alignment, Media, sniff_image_type};
 use crate::presentation::slide_parts;
 use crate::relationships::{Relationship, main_part_path, read_relationships};
+use crate::theme::{Theme, colour_in};
 use crate::xml_tree::{Element, Namespace, parse_tree};
 use crate::{DocumentFormat, Limits, OfficeError, detect_format};
 
@@ -333,7 +334,9 @@ impl Reader<'_, '_> {
                     }
                 }
                 (P, "graphicFrame") => {
-                    if let Some(shape) = self.graphic_frame(element, context, transform) {
+                    if let Some(shape) =
+                        self.graphic_frame(element, relationships, context, transform)
+                    {
                         shapes.push(shape);
                     }
                 }
@@ -521,10 +524,23 @@ impl Reader<'_, '_> {
     fn graphic_frame(
         &mut self,
         frame: &Element,
+        relationships: &[Relationship],
         context: &Context,
         transform: &Transform,
     ) -> Option<SlideShape> {
         let (bounds, _, _) = frame.child(P, "xfrm").and_then(read_frame)?;
+        if let Some(chart) = frame.descendant(Namespace::Chart, "chart") {
+            let bounds = transform.apply(bounds);
+            let media = self.chart(chart.attribute(R, "id")?, relationships, context, bounds)?;
+            return Some(SlideShape {
+                frame: bounds,
+                rotation: 0.0,
+                geometry: ShapeGeometry::Rectangle,
+                fill: None,
+                line: None,
+                content: ShapeContent::Picture { media },
+            });
+        }
         let table = frame.descendant(A, "tbl")?;
         let column_widths_emu: Vec<i64> = table
             .child(A, "tblGrid")
@@ -839,6 +855,40 @@ impl Reader<'_, '_> {
             });
         }
         runs
+    }
+
+    /// A chart of a slide drawn as an SVG image the size of its frame.
+    fn chart(
+        &mut self,
+        id: &str,
+        relationships: &[Relationship],
+        context: &Context,
+        frame: Frame,
+    ) -> Option<usize> {
+        let target = relationships
+            .iter()
+            .find(|relationship| relationship.id == id && !relationship.external)?
+            .target
+            .clone();
+        let xml = read_text_member(self.package, &target, self.limits)
+            .ok()
+            .flatten()?;
+        let (bytes, _) = chart_picture(&xml, &context.theme, frame.width, frame.height, &no_cells)?;
+        if self.media.len() >= self.limits.max_images {
+            self.truncated = true;
+            return None;
+        }
+        let size = bytes.len() as u64;
+        if self.media_bytes.saturating_add(size) > self.limits.max_total_image_bytes {
+            self.truncated = true;
+            return None;
+        }
+        self.media_bytes += size;
+        self.media.push(Media {
+            content_type: "image/svg+xml",
+            bytes,
+        });
+        Some(self.media.len() - 1)
     }
 
     /// The media index of an image of a part, loading it the first time.

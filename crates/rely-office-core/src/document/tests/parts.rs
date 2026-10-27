@@ -495,3 +495,63 @@ fn labels_list_paragraphs_and_numbered_headings_as_the_numbering_part_says() {
     assert_eq!(labels[5].suffix, LabelSuffix::Tab);
     assert!(matches!(read.blocks[0], Block::Heading { level: 1, .. }));
 }
+
+#[test]
+fn draws_a_chart_as_an_image_in_the_colours_of_the_theme() {
+    const CHART: &str = concat!(
+        r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" "#,
+        r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart>"#,
+        r#"<c:title><c:tx><c:rich><a:p><a:r><a:t>Fatturato</a:t></a:r></a:p></c:rich></c:tx></c:title>"#,
+        r#"<c:plotArea><c:barChart><c:ser><c:idx val="0"/><c:val><c:numLit><c:ptCount val="1"/>"#,
+        r#"<c:pt idx="0"><c:v>4</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#
+    );
+    const THEME: &str = concat!(
+        r#"<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:themeElements>"#,
+        r#"<a:clrScheme name="T"><a:accent1><a:srgbClr val="ABCDEF"/></a:accent1></a:clrScheme></a:themeElements></a:theme>"#
+    );
+    let drawing = |id: &str| {
+        format!(
+            concat!(
+                r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="3810000" cy="2540000"/><wp:docPr id="1" name="G"/>"#,
+                r#"<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">"#,
+                r#"<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="{}"/>"#,
+                "</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"
+            ),
+            id
+        )
+    };
+    let relationships = rels_xml(&[
+        ("rId1", "chart", "charts/chart1.xml", false),
+        ("rId2", "theme", "theme/theme1.xml", false),
+        ("rId3", "chart", "charts/missing.xml", false),
+    ]);
+    let body = [drawing("rId1"), drawing("rId3"), drawing("rId9")].concat();
+    let read = tree_with(
+        &body,
+        &[
+            (RELS_PART, relationships.as_bytes()),
+            ("word/charts/chart1.xml", CHART.as_bytes()),
+            ("word/theme/theme1.xml", THEME.as_bytes()),
+        ],
+    );
+    assert_eq!(read.report.charts, 3, "every chart is counted");
+    assert_eq!(read.media.len(), 1, "only the readable one is drawn");
+    assert_eq!(read.media[0].content_type, "image/svg+xml");
+    let svg = String::from_utf8(read.media[0].bytes.clone()).unwrap();
+    assert!(
+        svg.contains("fill=\"#ABCDEF\""),
+        "the theme first accent: {svg}"
+    );
+    let Block::Paragraph { content, .. } = &read.blocks[0] else {
+        panic!("{:?}", read.blocks[0]);
+    };
+    assert_eq!(
+        content[0],
+        Inline::Image {
+            media: 0,
+            alt: Some("Fatturato".to_owned()),
+            width: Some(400),
+            height: Some(267),
+        }
+    );
+}

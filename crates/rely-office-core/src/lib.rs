@@ -17,6 +17,7 @@
 //! function panics on malformed bytes.
 
 mod archive;
+mod chart;
 mod compound;
 mod doc;
 mod document;
@@ -29,10 +30,12 @@ mod ppt;
 mod presentation;
 mod relationships;
 mod sheet;
+mod sheet_drawings;
 mod sheet_layout;
 mod sheet_styles;
 mod slides;
 mod text;
+mod theme;
 mod word;
 mod xml_text;
 mod xml_tree;
@@ -54,7 +57,11 @@ pub use number_format::{
     is_date_code,
 };
 pub use sheet::{Sheet, Workbook, read_workbook, read_workbook_in};
-pub use sheet_layout::{CellRange, MergePlace, SheetLayout, read_xlsx_layouts};
+pub use sheet_drawings::{CarriedDrawing, CarriedPart, SheetDrawing};
+pub use sheet_layout::{
+    CellRange, MergePlace, SheetLayout, read_xlsx_drawing_parts, read_xlsx_layouts,
+    read_xlsx_theme_part,
+};
 pub use sheet_styles::{CellBorders, CellFont, CellStyle, HorizontalAlignment};
 pub use slides::{
     Bullet, Frame, Presentation, ShapeContent, ShapeGeometry, ShapeLine, Slide, SlideParagraph,

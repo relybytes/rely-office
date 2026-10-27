@@ -27,6 +27,8 @@ pub(crate) enum Namespace {
     WordDrawing,
     Drawing,
     Presentation,
+    Chart,
+    SpreadsheetDrawing,
     Picture,
     Math,
     MarkupCompatibility,
@@ -48,6 +50,10 @@ impl Namespace {
             | "http://purl.oclc.org/ooxml/drawingml/main" => Self::Drawing,
             "http://schemas.openxmlformats.org/presentationml/2006/main"
             | "http://purl.oclc.org/ooxml/presentationml/main" => Self::Presentation,
+            "http://schemas.openxmlformats.org/drawingml/2006/chart"
+            | "http://purl.oclc.org/ooxml/drawingml/chart" => Self::Chart,
+            "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+            | "http://purl.oclc.org/ooxml/drawingml/spreadsheetDrawing" => Self::SpreadsheetDrawing,
             "http://schemas.openxmlformats.org/drawingml/2006/picture"
             | "http://purl.oclc.org/ooxml/drawingml/picture" => Self::Picture,
             "http://schemas.openxmlformats.org/officeDocument/2006/math"

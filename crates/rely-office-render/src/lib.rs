@@ -180,6 +180,7 @@ fn source_with(
         | DocumentFormat::Tsv => {
             // Sheets show their numbers and dates in Italian, the language the pages are set in.
             let workbook = read_workbook_in(bytes, file_name, limits, NumberLocale::Italian)?;
+            let (source, files) = sheet::workbook_source(&workbook, with_images);
             let truncated = workbook.sheets.iter().any(|sheet| {
                 sheet.total_rows > sheet.rows.len()
                     || sheet.total_columns > sheet.rows.first().map_or(0, Vec::len)
@@ -187,8 +188,8 @@ fn source_with(
             Ok(TypstSource {
                 format,
                 fidelity: Fidelity::Layout,
-                source: sheet::workbook_source(&workbook),
-                files: Vec::new(),
+                source,
+                files,
                 truncated,
             })
         }

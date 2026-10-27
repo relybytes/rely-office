@@ -9,15 +9,15 @@
 //! cells and sheet names. Writing stores each formula with its computed value, so a viewer that
 //! does not recalculate still shows the results, and asks Excel to recalculate on opening.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::{Cursor, Write};
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use rely_office_core::{
-    Border, BorderStyle, CellBorders, CellFont, CellStyle, DocumentFormat, HorizontalAlignment,
-    Limits, OfficeError, SheetLayout, VerticalAlignment, detect_format, read_workbook,
-    read_xlsx_layouts,
+    Border, BorderStyle, CarriedPart, CellBorders, CellFont, CellStyle, DocumentFormat,
+    HorizontalAlignment, Limits, OfficeError, SheetLayout, VerticalAlignment, detect_format,
+    read_workbook, read_xlsx_drawing_parts, read_xlsx_layouts, read_xlsx_theme_part,
 };
 use zip::write::SimpleFileOptions;
 
@@ -53,10 +53,12 @@ pub fn read_spreadsheet(
             let mut sheets = read_binary(bytes)?;
             if format == DocumentFormat::Xlsx {
                 let mut layouts = read_xlsx_layouts(bytes, limits);
+                let mut drawings = read_xlsx_drawing_parts(bytes, limits);
                 for sheet in &mut sheets {
                     if let Some(layout) = layouts.remove(&sheet.name) {
                         apply_layout(sheet, &layout, &mut styles);
                     }
+                    sheet.drawing = drawings.remove(&sheet.name);
                 }
             }
             sheets
@@ -79,7 +81,11 @@ pub fn read_spreadsheet(
     if cells > MAX_CELLS {
         return Err(too_large("cells", MAX_CELLS));
     }
-    Ok(Workbook::from_parts(sheets, styles.styles))
+    let mut workbook = Workbook::from_parts(sheets, styles.styles);
+    if format == DocumentFormat::Xlsx {
+        workbook.theme = read_xlsx_theme_part(bytes, limits);
+    }
+    Ok(workbook)
 }
 
 /// The styles of the cells of a file, each kept once.
@@ -341,13 +347,20 @@ pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
             .map_err(|error| OfficeError::DamagedContainer(error.to_string()))
     };
     let count = workbook.sheets.len();
-    add("[Content_Types].xml", content_types(count).as_bytes())?;
+    let carried = carried_parts(workbook);
+    add(
+        "[Content_Types].xml",
+        content_types(count, &carried, workbook.theme.is_some()).as_bytes(),
+    )?;
     add("_rels/.rels", PACKAGE_RELATIONSHIPS.as_bytes())?;
     add("xl/workbook.xml", workbook_part(workbook).as_bytes())?;
     add(
         "xl/_rels/workbook.xml.rels",
-        workbook_relationships(count).as_bytes(),
+        workbook_relationships(count, workbook.theme.is_some()).as_bytes(),
     )?;
+    if let Some(theme) = &workbook.theme {
+        add(THEME_PART, &theme.bytes)?;
+    }
     add("xl/styles.xml", styles.xml.as_bytes())?;
     for (index, sheet) in workbook.sheets.iter().enumerate() {
         let xml = sheet_part(sheet, &workbook.values[index], &styles);
@@ -355,6 +368,15 @@ pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
             &format!("xl/worksheets/sheet{}.xml", index + 1),
             xml.as_bytes(),
         )?;
+        if let Some(drawing) = &sheet.drawing {
+            add(
+                &format!("xl/worksheets/_rels/sheet{}.xml.rels", index + 1),
+                sheet_relationships(&drawing.drawing_part).as_bytes(),
+            )?;
+        }
+    }
+    for part in &carried {
+        add(&part.name, &part.bytes)?;
     }
     package
         .finish()
@@ -700,6 +722,9 @@ fn sheet_part(sheet: &Sheet, values: &HashMap<CellRef, Value>, styles: &Styles) 
         }
         xml.push_str("</mergeCells>");
     }
+    if sheet.drawing.is_some() {
+        let _ = write!(xml, r#"<drawing r:id="{DRAWING_RELATIONSHIP}"/>"#);
+    }
     xml.push_str("</worksheet>");
     xml
 }
@@ -791,7 +816,10 @@ fn workbook_part(workbook: &Workbook) -> String {
     xml
 }
 
-fn workbook_relationships(sheets: usize) -> String {
+/// Where the carried theme is written, whatever its name in the file it came from.
+const THEME_PART: &str = "xl/theme/theme1.xml";
+
+fn workbook_relationships(sheets: usize, theme: bool) -> String {
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
     );
@@ -803,13 +831,64 @@ fn workbook_relationships(sheets: usize) -> String {
     }
     let _ = write!(
         xml,
-        r#"<Relationship Id="rId{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#,
+        r#"<Relationship Id="rId{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>"#,
         sheets + 1
     );
+    if theme {
+        let _ = write!(
+            xml,
+            r#"<Relationship Id="rId{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>"#,
+            sheets + 2
+        );
+    }
+    xml.push_str("</Relationships>");
     xml
 }
 
-fn content_types(sheets: usize) -> String {
+/// The parts the drawings of the sheets carry, each once; none can take the place of a part the
+/// writer makes itself.
+fn carried_parts(workbook: &Workbook) -> Vec<&CarriedPart> {
+    let mut names = HashSet::new();
+    workbook
+        .sheets
+        .iter()
+        .filter_map(|sheet| sheet.drawing.as_ref())
+        .flat_map(|drawing| drawing.parts.iter())
+        .filter(|part| {
+            let name = part.name.to_ascii_lowercase();
+            !name.starts_with("xl/worksheets/")
+                && !name.starts_with("xl/_rels/")
+                && !name.starts_with("_rels/")
+                && !name.starts_with('[')
+                && name != "xl/workbook.xml"
+                && name != "xl/styles.xml"
+                && name != THEME_PART
+                && names.insert(name)
+        })
+        .collect()
+}
+
+/// The relationships of a worksheet: its drawing.
+fn sheet_relationships(drawing_part: &str) -> String {
+    format!(
+        concat!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+            r#"<Relationship Id="{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="{}"/>"#,
+            "</Relationships>"
+        ),
+        DRAWING_RELATIONSHIP,
+        escape(&drawing_part.strip_prefix("xl/").map_or_else(
+            || format!("/{drawing_part}"),
+            |inside| format!("../{inside}")
+        ))
+    )
+}
+
+/// The relationship a worksheet names its drawing by.
+const DRAWING_RELATIONSHIP: &str = "rIdDrawing1";
+
+fn content_types(sheets: usize, carried: &[&CarriedPart], theme: bool) -> String {
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">"#,
@@ -822,6 +901,22 @@ fn content_types(sheets: usize) -> String {
         let _ = write!(
             xml,
             r#"<Override PartName="/xl/worksheets/sheet{index}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>"#
+        );
+    }
+    if theme {
+        let _ = write!(
+            xml,
+            r#"<Override PartName="/{THEME_PART}" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>"#
+        );
+    }
+    for part in carried.iter().filter(|part| {
+        part.content_type != "application/vnd.openxmlformats-package.relationships+xml"
+    }) {
+        let _ = write!(
+            xml,
+            r#"<Override PartName="/{}" ContentType="{}"/>"#,
+            escape(&part.name),
+            escape(&part.content_type)
         );
     }
     xml.push_str("</Types>");

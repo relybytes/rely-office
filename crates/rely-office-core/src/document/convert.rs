@@ -19,8 +19,10 @@ use super::styles::{
 use super::{
     Block, ImportReport, Inline, Mark, Media, Note, NoteKind, TableCell, TableRow, sniff_image_type,
 };
-use crate::archive::{ZipPackage, read_member_bytes};
+use crate::archive::{ZipPackage, read_member_bytes, read_text_member};
+use crate::chart::{chart_picture, no_cells};
 use crate::relationships::Relationship;
+use crate::theme::Theme;
 use crate::xml_tree::{Element, Namespace};
 use crate::{Limits, OfficeError};
 
@@ -147,6 +149,11 @@ pub(super) struct Converter<'a, 'p> {
     notes: Vec<Note>,
     notes_by_id: HashMap<(NoteKind, String), usize>,
     reading_note: bool,
+    /// The theme part the document's charts take their colours from, read on the first chart.
+    theme_target: Option<String>,
+    theme: Option<Theme>,
+    /// The description of each chart image, by media index, taken as it is placed.
+    media_titles: HashMap<usize, String>,
 }
 
 impl<'a, 'p> Converter<'a, 'p> {
@@ -180,6 +187,12 @@ impl<'a, 'p> Converter<'a, 'p> {
             notes: Vec::new(),
             notes_by_id: HashMap::new(),
             reading_note: false,
+            theme_target: relationships
+                .iter()
+                .find(|relationship| !relationship.external && relationship.is_kind("theme"))
+                .map(|relationship| relationship.target.clone()),
+            theme: None,
+            media_titles: HashMap::new(),
         }
     }
 
@@ -816,6 +829,33 @@ impl<'a, 'p> Converter<'a, 'p> {
             });
         } else if uri.contains("chart") {
             self.report.charts += 1;
+            let extent = frame.child(Namespace::WordDrawing, "extent");
+            let emus = |name: &str| {
+                extent
+                    .and_then(|extent| extent.attribute(Namespace::None, name))
+                    .and_then(|emus| emus.parse::<i64>().ok())
+                    .filter(|emus| *emus > 0)
+            };
+            let (Some(width), Some(height)) = (emus("cx"), emus("cy")) else {
+                return;
+            };
+            let Some(index) = graphic_data
+                .and_then(|data| data.descendant(Namespace::Chart, "chart"))
+                .and_then(|chart| chart.attribute(Namespace::Relationships, "id"))
+                .and_then(|id| self.chart(id, width, height))
+            else {
+                return;
+            };
+            let pixels = |emus: i64| {
+                u32::try_from((emus.unsigned_abs() + EMUS_PER_PIXEL / 2) / EMUS_PER_PIXEL).ok()
+            };
+            let alt = self.media_titles.remove(&index);
+            content.push(Inline::Image {
+                media: index,
+                alt,
+                width: pixels(width),
+                height: pixels(height),
+            });
         } else if uri.contains("/diagram") {
             self.report.smart_art += 1;
         } else if let Some(text_box) = frame.descendant(W, "txbxContent") {
@@ -902,6 +942,51 @@ impl<'a, 'p> Converter<'a, 'p> {
         let loaded = self.load_image(&target);
         self.media_by_target.insert(target, loaded);
         loaded
+    }
+
+    /// A chart part drawn as an SVG image, its title kept for the image's description.
+    fn chart(&mut self, relationship_id: &str, width_emu: i64, height_emu: i64) -> Option<usize> {
+        let target = self
+            .relationships
+            .get(relationship_id)
+            .filter(|relationship| !relationship.external)
+            .map(|relationship| relationship.target.clone())?;
+        if self.theme.is_none() {
+            let theme = self
+                .theme_target
+                .clone()
+                .and_then(|target| {
+                    read_text_member(self.package, &target, self.limits)
+                        .ok()
+                        .flatten()
+                })
+                .map(|xml| Theme::parse(&xml))
+                .unwrap_or_default();
+            self.theme = Some(theme);
+        }
+        let xml = read_text_member(self.package, &target, self.limits)
+            .ok()
+            .flatten()?;
+        let theme = self.theme.as_ref()?;
+        let (bytes, title) = chart_picture(&xml, theme, width_emu, height_emu, &no_cells)?;
+        if self.media.len() >= self.limits.max_images {
+            self.report.images_over_limit += 1;
+            return None;
+        }
+        let size = bytes.len() as u64;
+        if self.media_bytes.saturating_add(size) > self.limits.max_total_image_bytes {
+            self.report.images_over_limit += 1;
+            return None;
+        }
+        self.media_bytes += size;
+        self.media.push(Media {
+            content_type: "image/svg+xml",
+            bytes,
+        });
+        let index = self.media.len() - 1;
+        self.media_titles
+            .insert(index, title.unwrap_or_else(|| "Grafico".to_owned()));
+        Some(index)
     }
 
     fn load_image(&mut self, target: &str) -> Option<usize> {

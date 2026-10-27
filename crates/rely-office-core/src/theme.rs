@@ -17,7 +17,7 @@ const PERCENT: f64 = 100_000.0;
 
 /// The colours and fonts of a theme.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Theme {
+pub(crate) struct Theme {
     colours: HashMap<String, String>,
     pub major_font: String,
     pub minor_font: String,
@@ -53,7 +53,7 @@ impl Default for Theme {
 
 impl Theme {
     /// A theme part; what it does not hold keeps Office's defaults.
-    pub(super) fn parse(xml: &str) -> Self {
+    pub(crate) fn parse(xml: &str) -> Self {
         let mut theme = Self::default();
         let Ok(root) = parse_tree(xml, |_, _| false) else {
             return theme;
@@ -93,7 +93,7 @@ impl Theme {
 
     /// A theme colour by its name, the master's colour map applied to the aliases of text and
     /// background.
-    pub(super) fn scheme(&self, name: &str) -> Option<String> {
+    pub(crate) fn scheme(&self, name: &str) -> Option<String> {
         let name = match name {
             // A placeholder colour stands for the shape's own text colour; dark is the default.
             "tx1" | "phClr" => "dk1",
@@ -106,7 +106,7 @@ impl Theme {
     }
 
     /// A typeface that may name a theme font: `+mj-lt` the major, `+mn-lt` the minor.
-    pub(super) fn typeface(&self, typeface: &str) -> String {
+    pub(crate) fn typeface(&self, typeface: &str) -> String {
         match typeface {
             "+mj-lt" | "+mj-ea" | "+mj-cs" => self.major_font.clone(),
             "+mn-lt" | "+mn-ea" | "+mn-cs" => self.minor_font.clone(),
@@ -117,14 +117,14 @@ impl Theme {
 
 /// The colour an element holding one colour child shows: `a:solidFill`, `a:fgClr`, a gradient
 /// stop.
-pub(super) fn colour_in(parent: &Element, theme: &Theme) -> Option<String> {
+pub(crate) fn colour_in(parent: &Element, theme: &Theme) -> Option<String> {
     parent
         .elements()
         .find_map(|colour| colour_element(colour, theme))
 }
 
 /// The colour of one colour element, with its modifiers.
-pub(super) fn colour_element(colour: &Element, theme: &Theme) -> Option<String> {
+pub(crate) fn colour_element(colour: &Element, theme: &Theme) -> Option<String> {
     if colour.namespace != A {
         return None;
     }

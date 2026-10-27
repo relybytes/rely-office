@@ -246,3 +246,61 @@ fn reads_back_the_styles_merges_and_heights_it_writes() {
     assert_eq!(read.sheets()[0].row_heights.get(&0), Some(&30.0));
     assert_eq!(read.sheets()[0].row_heights.get(&9), Some(&0.0));
 }
+
+#[test]
+fn writes_back_the_pictures_and_charts_of_the_file() {
+    const PNG: [u8; 70] = [
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0x64,
+        0x60, 0xf8, 0x5f, 0x0f, 0x00, 0x02, 0x87, 0x01, 0x80, 0xeb, 0x47, 0xba, 0x92, 0x00, 0x00,
+        0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+    let mut writer = rust_xlsxwriter::Workbook::new();
+    let sheet = writer.add_worksheet().set_name("Vendite").unwrap();
+    sheet.write(0, 0, 10).unwrap();
+    sheet.write(1, 0, 20).unwrap();
+    let mut chart = rust_xlsxwriter::Chart::new(rust_xlsxwriter::ChartType::Line);
+    chart.add_series().set_values("Vendite!$A$1:$A$2");
+    sheet.insert_chart(3, 1, &chart).unwrap();
+    sheet
+        .insert_image(
+            0,
+            4,
+            &rust_xlsxwriter::Image::new_from_buffer(&PNG).unwrap(),
+        )
+        .unwrap();
+    writer.add_worksheet().set_name("Vuoto").unwrap();
+    let bytes = writer.save_to_buffer().unwrap();
+
+    let mut read = read_spreadsheet(&bytes, None, &Limits::default(), Locale::Italian).unwrap();
+    assert!(read.sheets()[0].drawing.is_some());
+    assert!(read.sheets()[1].drawing.is_none());
+    read.set_input(0, cell("A3"), "30", Locale::Italian)
+        .unwrap();
+    let written = write_xlsx(&read).unwrap();
+
+    let layouts = rely_office_core::read_xlsx_layouts(&written, &Limits::default());
+    let mut drawings = layouts["Vendite"].drawings.clone();
+    drawings.sort_by_key(|drawing| drawing.column);
+    assert_eq!(
+        drawings.len(),
+        2,
+        "the chart and the picture are still there"
+    );
+    assert_eq!(drawings[0].content_type, "image/svg+xml");
+    assert_eq!(drawings[1].bytes, PNG);
+    assert_eq!(layouts["Vuoto"].drawings, Vec::new());
+    let again = read_spreadsheet(&written, None, &Limits::default(), Locale::Italian).unwrap();
+    assert_eq!(again.value(0, cell("A3")), Value::Number(30.0));
+    assert_eq!(
+        again.sheets()[0].drawing,
+        read.sheets()[0].drawing,
+        "carried unchanged"
+    );
+    assert!(read.theme.is_some());
+    assert_eq!(
+        again.theme, read.theme,
+        "the theme its charts take their colours from"
+    );
+}

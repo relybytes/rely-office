@@ -167,6 +167,7 @@ fn presentation_with(
         ("rId1", "slideLayout", "../slideLayouts/slideLayout1.xml"),
         ("rId2", "image", "../media/image1.png"),
         ("rId3", "image", "../media/missing.png"),
+        ("rId4", "chart", "../charts/chart1.xml"),
     ]);
     let slide_parts: Vec<(String, String)> = slides
         .iter()
@@ -213,6 +214,7 @@ fn presentation_with(
         ),
         ("ppt/theme/theme1.xml", THEME.as_bytes()),
         ("ppt/media/image1.png", PNG),
+        ("ppt/charts/chart1.xml", CHART.as_bytes()),
     ];
     for ((path, xml), relationship_path) in slide_parts.iter().zip(&slide_relationship_parts) {
         members.push((path, xml.as_bytes()));
@@ -220,6 +222,12 @@ fn presentation_with(
     }
     build_zip(&members)
 }
+
+const CHART: &str = concat!(
+    r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea>"#,
+    r#"<c:pieChart><c:ser><c:val><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt>"#,
+    r#"<c:pt idx="1"><c:v>3</c:v></c:pt></c:numLit></c:val></c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>"#
+);
 
 const WIDE: &str = r#"<p:sldSz cx="12192000" cy="6858000"/>"#;
 
@@ -584,4 +592,34 @@ fn maps_group_coordinates_and_reads_frames() {
     assert!((rotation + 90.0).abs() < f64::EPSILON);
     assert!(flipped);
     assert!(read_frame(&xfrm(r#"><a:off x="1" y="2"/>"#)).is_none());
+}
+
+#[test]
+fn draws_the_charts_of_a_slide_in_the_theme_of_its_master() {
+    let frame = |id: &str| {
+        format!(
+            concat!(
+                r#"<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="2" name="G"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>"#,
+                r#"<p:xfrm><a:off x="0" y="0"/><a:ext cx="3810000" cy="2540000"/></p:xfrm><a:graphic>"#,
+                r#"<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">"#,
+                r#"<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="{}"/></a:graphicData></a:graphic></p:graphicFrame>"#
+            ),
+            id
+        )
+    };
+    let slide = format!(
+        "<p:cSld>{}</p:cSld>",
+        tree(&[frame("rId4"), frame("rId9")].concat())
+    );
+    let presentation = read(&[&slide]);
+    let shapes = &presentation.slides[0].shapes[1..];
+    assert_eq!(shapes.len(), 1, "the chart without a part is left out");
+    assert_eq!(shapes[0].content, ShapeContent::Picture { media: 0 });
+    assert_eq!(shapes[0].frame.width, 3_810_000);
+    assert_eq!(presentation.media[0].content_type, "image/svg+xml");
+    let svg = String::from_utf8(presentation.media[0].bytes.clone()).unwrap();
+    assert!(
+        svg.contains("fill=\"#2F5597\""),
+        "the master theme's first accent: {svg}"
+    );
 }

@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use rely_office_core::{
-    Border, BorderStyle, CellRange, CellStyle, HorizontalAlignment, Sheet, SheetLayout,
-    VerticalAlignment, Workbook,
+    Border, BorderStyle, CellRange, CellStyle, HorizontalAlignment, Sheet, SheetDrawing,
+    SheetLayout, VerticalAlignment, Workbook,
 };
 
 use crate::fonts::body_fonts;
@@ -37,19 +37,74 @@ const DEFAULT_FONT_POINTS: f64 = 11.0;
 const ROW_HEIGHT_PER_FONT_POINT: f64 = 1.28;
 const CELL_INSET_X_POINTS: f64 = 2.0;
 const GRID_STROKE: &str = "0.4pt + luma(190)";
+const EMU_PER_POINT: f64 = 12_700.0;
 
-pub(crate) fn workbook_source(workbook: &Workbook) -> String {
+/// The source of a workbook and the image files of its drawings. With `with_images` false the
+/// drawings are left out, for a workbook whose images Typst cannot decode.
+pub(crate) fn workbook_source(
+    workbook: &Workbook,
+    with_images: bool,
+) -> (String, Vec<(String, Vec<u8>)>) {
     let mut source = String::new();
+    let mut files = Vec::new();
     for (index, sheet) in workbook.sheets.iter().enumerate() {
         if index > 0 {
             source.push_str("#pagebreak(weak: true)\n");
         }
-        write_sheet(&mut source, sheet);
+        let text_width = write_sheet(&mut source, sheet);
+        if with_images {
+            write_drawings(&mut source, &mut files, index, sheet, text_width);
+        }
     }
-    source
+    (source, files)
 }
 
-fn write_sheet(source: &mut String, sheet: &Sheet) {
+/// The pictures and charts of a sheet, after its cells, each at its anchor's size and never
+/// wider than the page.
+fn write_drawings(
+    source: &mut String,
+    files: &mut Vec<(String, Vec<u8>)>,
+    sheet_index: usize,
+    sheet: &Sheet,
+    text_width: f64,
+) {
+    let mut drawings: Vec<&SheetDrawing> = sheet.layout.drawings.iter().collect();
+    drawings.sort_by_key(|drawing| (drawing.row, drawing.column));
+    for (index, drawing) in drawings.into_iter().enumerate() {
+        let Some(extension) = image_extension(drawing.content_type) else {
+            continue;
+        };
+        #[expect(clippy::cast_precision_loss, reason = "drawing sizes fit in f64")]
+        let (width, height) = (
+            drawing.width_emu as f64 / EMU_PER_POINT,
+            drawing.height_emu as f64 / EMU_PER_POINT,
+        );
+        let scale = (text_width / width).min(1.0);
+        let path = format!("/media/sheets/{sheet_index}-{index}.{extension}");
+        let _ = writeln!(
+            source,
+            "#block(above: 12pt, breakable: false, image({}, width: {}, height: {}, fit: \"stretch\"))",
+            string_literal(&path),
+            points(width * scale),
+            points(height * scale)
+        );
+        files.push((path, drawing.bytes.clone()));
+    }
+}
+
+fn image_extension(content_type: &str) -> Option<&'static str> {
+    match content_type {
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        "image/svg+xml" => Some("svg"),
+        _ => None,
+    }
+}
+
+/// Write a sheet's page and its cells, and give back the width of the text area.
+fn write_sheet(source: &mut String, sheet: &Sheet) -> f64 {
     let layout = &sheet.layout;
     let (width, height) = if layout.landscape {
         (A4_POINTS.1, A4_POINTS.0)
@@ -115,6 +170,7 @@ fn write_sheet(source: &mut String, sheet: &Sheet) {
     source.push_str("#set par(leading: 0.1em)\n");
 
     write_tables(source, sheet, width - left - right, font_size);
+    width - left - right
 }
 
 /// What a cell of a printed group of columns is: drawn alone, the first cell of the part of a
@@ -632,6 +688,48 @@ mod tests {
     }
 
     #[test]
+    fn places_the_drawings_of_a_sheet_after_its_cells_within_the_page() {
+        let drawing = |row: u32, width_emu: i64, content_type: &'static str| SheetDrawing {
+            row,
+            column: 0,
+            width_emu,
+            height_emu: 1_270_000,
+            content_type,
+            bytes: vec![u8::try_from(row).unwrap()],
+            description: None,
+        };
+        let mut drawn = sheet("Vendite", &[&["a"]]);
+        drawn.layout.drawings = vec![
+            drawing(9, 12_700_000, "image/svg+xml"),
+            drawing(2, 127_000_000, "image/png"),
+            drawing(5, 12_700, "image/x-emf"),
+        ];
+        let workbook = Workbook {
+            format: DocumentFormat::Xlsx,
+            sheets: vec![drawn],
+        };
+        let (source, files) = workbook_source(&workbook, true);
+        assert_eq!(
+            files,
+            vec![
+                ("/media/sheets/0-0.png".to_owned(), vec![2]),
+                ("/media/sheets/0-2.svg".to_owned(), vec![9]),
+            ],
+            "in the order of their anchors, an image Typst cannot read left out"
+        );
+        let first = source.find("0-0.png").unwrap();
+        let second = source.find("0-2.svg").unwrap();
+        assert!(source.find("\"a\"").unwrap() < first && first < second);
+        assert!(
+            source.contains("0-2.svg\", width: 494.48pt, height: 49.45pt"),
+            "never wider than the page: {source}"
+        );
+        let (without, files) = workbook_source(&workbook, false);
+        assert_eq!(files, Vec::<(String, Vec<u8>)>::new());
+        assert!(!without.contains("/media/"));
+    }
+
+    #[test]
     fn prints_a_sheet_with_the_defaults_of_excel() {
         let workbook = Workbook {
             format: DocumentFormat::Csv,
@@ -643,7 +741,7 @@ mod tests {
                 sheet("Vuoto", &[]),
             ],
         };
-        let source = workbook_source(&workbook);
+        let source = workbook_source(&workbook, true).0;
         assert!(source.starts_with(
             "#set page(width: 595.28pt, height: 841.89pt, margin: (top: 54pt, right: 50.4pt, bottom: 54pt, left: 50.4pt), header: none, footer: none)\n"
         ));
@@ -675,10 +773,13 @@ mod tests {
             font_size_tenths: Some(100),
             ..SheetLayout::default()
         };
-        let source = workbook_source(&Workbook {
-            format: DocumentFormat::Xlsx,
-            sheets: vec![printed],
-        });
+        let (source, _) = workbook_source(
+            &Workbook {
+                format: DocumentFormat::Xlsx,
+                sheets: vec![printed],
+            },
+            true,
+        );
         assert!(source.starts_with(
             "#set page(width: 841.89pt, height: 595.28pt, margin: (top: 72pt, right: 36pt, bottom: 72pt, left: 36pt), header: context grid("
         ));
@@ -758,10 +859,13 @@ mod tests {
             CellRange::parse("B3:C4").unwrap(),
             CellRange::parse("Z99:Z100").unwrap(),
         ];
-        let source = workbook_source(&Workbook {
-            format: DocumentFormat::Xlsx,
-            sheets: vec![printed],
-        });
+        let (source, _) = workbook_source(
+            &Workbook {
+                format: DocumentFormat::Xlsx,
+                sheets: vec![printed],
+            },
+            true,
+        );
         assert!(source.contains("rows: (30pt, auto, auto, ),"), "{source}");
         assert!(!source.contains("nascosta"), "a hidden row is left out");
         assert!(source.contains(concat!(
@@ -777,10 +881,13 @@ mod tests {
 
         let mut negative = sheet("Saldo", &[&["-5"]]);
         negative.value_colours.insert((0, 0), "FF0000");
-        let source = workbook_source(&Workbook {
-            format: DocumentFormat::Xlsx,
-            sheets: vec![negative],
-        });
+        let (source, _) = workbook_source(
+            &Workbook {
+                format: DocumentFormat::Xlsx,
+                sheets: vec![negative],
+            },
+            true,
+        );
         assert!(
             source.contains(r##"box(text(fill: rgb("#FF0000"), "-5"))"##),
             "{source}"

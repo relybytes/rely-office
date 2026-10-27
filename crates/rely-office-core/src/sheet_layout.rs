@@ -14,9 +14,14 @@ use std::collections::{BTreeMap, HashMap};
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
-use crate::archive::{open_package, read_text_member};
+use crate::archive::{open_package, read_member_bytes, read_text_member};
 use crate::relationships::{main_part_path, read_relationships};
+use crate::sheet_drawings::{
+    CarriedDrawing, CarriedPart, ContentTypes, ImageBudget, SheetDrawing, WorkbookCells,
+    carried_drawing, sheet_drawings,
+};
 use crate::sheet_styles::{CellStyle, cell_styles, default_theme, theme_colours};
+use crate::theme::Theme;
 use crate::xml_text::attribute_value;
 use crate::{Limits, OfficeError};
 
@@ -116,6 +121,8 @@ pub struct SheetLayout {
     pub row_heights: BTreeMap<u32, u32>,
     /// The height of the other rows, in twentieths of a point.
     pub default_row_height: Option<u32>,
+    /// The pictures and charts placed on the sheet.
+    pub drawings: Vec<SheetDrawing>,
 }
 
 impl SheetLayout {
@@ -188,14 +195,19 @@ fn read_layouts(
         .map(|target| read_text_member(&mut package, &target, limits))
         .transpose()?
         .flatten();
-    let theme = part("theme")
-        .and_then(|target| {
-            read_text_member(&mut package, &target, limits)
-                .ok()
-                .flatten()
-        })
-        .and_then(|xml| theme_colours(&xml))
+    let theme_xml = part("theme").and_then(|target| {
+        read_text_member(&mut package, &target, limits)
+            .ok()
+            .flatten()
+    });
+    let theme = theme_xml
+        .as_deref()
+        .and_then(theme_colours)
         .unwrap_or_else(default_theme);
+    let chart_theme = theme_xml.as_deref().map(Theme::parse).unwrap_or_default();
+    let mut budget = ImageBudget::of(limits);
+    let workbook_cells = WorkbookCells::new(bytes);
+    let cells = |formula: &str| workbook_cells.cells(formula);
     let (font_family, font_size_tenths) =
         styles_xml.as_deref().map(default_font).unwrap_or_default();
     let styles = styles_xml
@@ -215,12 +227,77 @@ fn read_layouts(
             continue;
         };
         let mut layout = sheet_layout(&sheet)?;
+        drop(sheet);
+        layout.drawings = sheet_drawings(
+            &mut package,
+            &relationship.target,
+            &layout,
+            &chart_theme,
+            limits,
+            &mut budget,
+            &cells,
+        )
+        .unwrap_or_default();
         layout.font_family.clone_from(&font_family);
         layout.font_size_tenths = font_size_tenths;
         layout.styles.clone_from(&styles);
         layouts.insert(name, layout);
     }
     Ok(layouts)
+}
+
+/// The drawing of every sheet of an xlsx that has one, by sheet name, with each part it leads to,
+/// for a writer to put back unchanged; a package it cannot read gives none.
+#[must_use]
+pub fn read_xlsx_drawing_parts(bytes: &[u8], limits: &Limits) -> HashMap<String, CarriedDrawing> {
+    read_drawing_parts(bytes, limits).unwrap_or_default()
+}
+
+fn read_drawing_parts(
+    bytes: &[u8],
+    limits: &Limits,
+) -> Result<HashMap<String, CarriedDrawing>, OfficeError> {
+    let mut package = open_package(bytes)?;
+    let types = read_text_member(&mut package, "[Content_Types].xml", limits)?
+        .map(|xml| ContentTypes::parse(&xml))
+        .unwrap_or_default();
+    let workbook_part = main_part_path(&mut package, limits, WORKBOOK_PART)?;
+    let Some(workbook) = read_text_member(&mut package, &workbook_part, limits)? else {
+        return Ok(HashMap::new());
+    };
+    let relationships = read_relationships(&mut package, &workbook_part, limits)?;
+    let mut drawings = HashMap::new();
+    for (name, relationship_id) in sheet_entries(&workbook)? {
+        let Some(relationship) = relationships
+            .iter()
+            .find(|relationship| relationship.id == relationship_id && !relationship.external)
+        else {
+            continue;
+        };
+        if let Some(drawing) = carried_drawing(&mut package, &relationship.target, limits, &types) {
+            drawings.insert(name, drawing);
+        }
+    }
+    Ok(drawings)
+}
+
+/// The theme part of an xlsx, which its charts take their colours from, for a writer to put back
+/// unchanged.
+#[must_use]
+pub fn read_xlsx_theme_part(bytes: &[u8], limits: &Limits) -> Option<CarriedPart> {
+    let mut package = open_package(bytes).ok()?;
+    let workbook_part = main_part_path(&mut package, limits, WORKBOOK_PART).ok()?;
+    let target = read_relationships(&mut package, &workbook_part, limits)
+        .ok()?
+        .into_iter()
+        .find(|relationship| !relationship.external && relationship.is_kind("theme"))?
+        .target;
+    let bytes = read_member_bytes(&mut package, &target, limits.max_member_bytes).ok()??;
+    Some(CarriedPart {
+        name: target,
+        content_type: "application/vnd.openxmlformats-officedocument.theme+xml".to_owned(),
+        bytes,
+    })
 }
 
 /// The name and relationship id of each `sheet` of the workbook part.
