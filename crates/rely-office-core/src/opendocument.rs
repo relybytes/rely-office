@@ -4,6 +4,11 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
+mod styles;
+mod text_tree;
+
+pub(crate) use text_tree::read_odt_tree;
+
 use crate::archive::{open_package, read_text_member};
 use crate::text::TextBuffer;
 use crate::xml_text::{TextRules, append_xml_text};

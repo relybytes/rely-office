@@ -10,13 +10,13 @@
 //! fonts the caller hands in: nothing is read from the file system or the network, so the same
 //! input and fonts give the same pages everywhere, WebAssembly included.
 //!
-//! - docx is laid out from its document tree, with the page size, margins and body font of the
-//!   document ([`Fidelity::Layout`]);
+//! - docx and odt are laid out from their document tree, with the page size, margins and body
+//!   font of the document ([`Fidelity::Layout`]);
 //! - xlsx, xls, ods, csv and tsv are laid out as tables, one sheet after the other, the columns
 //!   split across pages when they do not fit ([`Fidelity::Layout`]);
 //! - pptx is drawn slide by slide, one page each at the slide's size, its shapes placed where
 //!   the slide, its layout and its master put them ([`Fidelity::Layout`]);
-//! - odt, odp, doc and ppt are set as their text, on A4 ([`Fidelity::Text`]).
+//! - odp, doc and ppt are set as their text, on A4 ([`Fidelity::Text`]).
 
 mod docx;
 mod fonts;
@@ -161,7 +161,7 @@ fn source_with(
 ) -> Result<TypstSource, RenderError> {
     let format = detect_format(bytes, file_name);
     match format {
-        DocumentFormat::Docx => {
+        DocumentFormat::Docx | DocumentFormat::Odt => {
             let tree = read_document_tree(bytes, limits)?;
             let truncated = tree.report.truncated;
             let (source, files) = docx::document_source(&tree, with_images, lines);
@@ -205,7 +205,7 @@ fn source_with(
                 truncated,
             })
         }
-        DocumentFormat::Odt | DocumentFormat::Odp | DocumentFormat::Doc | DocumentFormat::Ppt => {
+        DocumentFormat::Odp | DocumentFormat::Doc | DocumentFormat::Ppt => {
             let extracted = extract_text(bytes, file_name, limits)?;
             Ok(TypstSource {
                 format,

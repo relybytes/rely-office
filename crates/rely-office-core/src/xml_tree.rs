@@ -34,6 +34,15 @@ pub(crate) enum Namespace {
     MarkupCompatibility,
     Vml,
     VmlOffice,
+    OdfOffice,
+    OdfText,
+    OdfTable,
+    OdfStyle,
+    OdfFo,
+    OdfDraw,
+    OdfSvg,
+    OdfPresentation,
+    XLink,
     Other,
 }
 
@@ -63,6 +72,15 @@ impl Namespace {
             }
             "urn:schemas-microsoft-com:vml" => Self::Vml,
             "urn:schemas-microsoft-com:office:office" => Self::VmlOffice,
+            "urn:oasis:names:tc:opendocument:xmlns:office:1.0" => Self::OdfOffice,
+            "urn:oasis:names:tc:opendocument:xmlns:text:1.0" => Self::OdfText,
+            "urn:oasis:names:tc:opendocument:xmlns:table:1.0" => Self::OdfTable,
+            "urn:oasis:names:tc:opendocument:xmlns:style:1.0" => Self::OdfStyle,
+            "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" => Self::OdfFo,
+            "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" => Self::OdfDraw,
+            "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" => Self::OdfSvg,
+            "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" => Self::OdfPresentation,
+            "http://www.w3.org/1999/xlink" => Self::XLink,
             _ => Self::Other,
         }
     }

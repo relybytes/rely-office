@@ -262,7 +262,7 @@ fn says_a_sheet_was_cut_to_the_limits() {
 }
 
 #[test]
-fn sets_the_text_of_a_format_with_no_layout_reader() {
+fn lays_out_an_odt_from_its_document_tree() {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     writer.start_file("mimetype", stored).unwrap();
@@ -284,8 +284,12 @@ fn sets_the_text_of_a_format_with_no_layout_reader() {
     let bytes = writer.finish().unwrap().into_inner();
 
     let source = typst_source(&bytes, Some("verbale.odt"), &render_limits()).unwrap();
-    assert_eq!(source.fidelity, Fidelity::Text);
-    assert!(source.source.contains(r#"#par("Verbale #1 [bozza]")"#));
+    assert_eq!(source.fidelity, Fidelity::Layout);
+    assert!(
+        source.source.contains(r#""Verbale #1 [bozza]""#),
+        "{}",
+        source.source
+    );
     let rendered = RENDERER
         .render(&bytes, Some("verbale.odt"), &RenderRequest::default())
         .unwrap();

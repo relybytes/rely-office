@@ -28,6 +28,9 @@ pub use look::{LabelSuffix, LineSpacing, ListLabel, PageField, ParagraphLook, Ru
 pub use media::sniff_image_type;
 pub use write::write_docx;
 
+pub(crate) use convert::{plain_text, push_block};
+pub(crate) use numbering::{bullet_label, number_label};
+
 const MAIN_PART: &str = "word/document.xml";
 /// A page side shorter than an inch is damaged; one longer than 22 inches is Word's own maximum.
 const MIN_PAGE_TWIPS: u32 = 1_440;
@@ -405,6 +408,10 @@ pub struct ImportReport {
 /// [`OfficeError::UnsupportedFormat`] for anything but a docx, [`OfficeError::TooLarge`] past the
 /// input or member limits, [`OfficeError::DamagedContainer`] and [`OfficeError::MalformedXml`] for
 /// a damaged package, [`OfficeError::UnreadableDocument`] when the main part has no body.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the parts of a docx are read in the order the tree needs them"
+)]
 pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree, OfficeError> {
     if bytes.len() as u64 > limits.max_input_bytes {
         return Err(OfficeError::TooLarge {
@@ -413,6 +420,9 @@ pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree,
         });
     }
     let format = detect_format(bytes, None);
+    if format == DocumentFormat::Odt {
+        return crate::opendocument::read_odt_tree(bytes, limits);
+    }
     if format != DocumentFormat::Docx {
         return Err(OfficeError::UnsupportedFormat(format));
     }

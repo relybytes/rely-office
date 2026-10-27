@@ -288,6 +288,26 @@ fn read_level(level: &Element) -> Level {
     }
 }
 
+/// A number in an `OpenDocument` list's format: `1`, `a`, `A`, `i` or `I`.
+pub(crate) fn number_label(number: u32, format: &str) -> String {
+    let format = match format {
+        "a" => "lowerLetter",
+        "A" => "upperLetter",
+        "i" => "lowerRoman",
+        "I" => "upperRoman",
+        _ => "decimal",
+    };
+    format_number(number, format)
+}
+
+/// A bullet as it shows, its symbol-font glyph made the bullet it draws there.
+pub(crate) fn bullet_label(bullet: &str, font: Option<&str>) -> String {
+    bullet.chars().next().map_or_else(
+        || "\u{2022}".to_owned(),
+        |character| bullet_character(character, font).to_string(),
+    )
+}
+
 /// A number written in a level's format; a format with no rule of its own is decimal.
 fn format_number(number: u32, format: &str) -> String {
     match format {

@@ -1250,7 +1250,7 @@ fn has_text(element: &Element) -> bool {
 }
 
 /// Merge a code block into the code block before it, a quote into the quote before it.
-fn push_block(blocks: &mut Vec<Block>, block: Block) {
+pub(crate) fn push_block(blocks: &mut Vec<Block>, block: Block) {
     match block {
         Block::CodeBlock { text } => {
             if let Some(Block::CodeBlock { text: previous }) = blocks.last_mut() {
@@ -1272,7 +1272,7 @@ fn push_block(blocks: &mut Vec<Block>, block: Block) {
 }
 
 /// The text of inline content, line breaks as newlines; images have no text.
-fn plain_text(content: &[Inline]) -> String {
+pub(crate) fn plain_text(content: &[Inline]) -> String {
     let mut text = String::new();
     for inline in content {
         match inline {
