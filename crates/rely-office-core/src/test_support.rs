@@ -479,7 +479,9 @@ pub(crate) fn build_doc_with(pieces: &[(&str, bool)], options: DocOptions) -> Ve
 
 /// A compound file holding these streams.
 pub(crate) fn build_compound_file(streams: &[(&str, &[u8])]) -> Vec<u8> {
-    let mut compound_file = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
+    // Version 3, 512-byte sectors, as Office writes them.
+    let mut compound_file =
+        cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new())).unwrap();
     for (name, content) in streams {
         let mut stream = compound_file.create_stream(name).unwrap();
         stream.write_all(content).unwrap();

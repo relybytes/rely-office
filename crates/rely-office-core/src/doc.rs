@@ -20,6 +20,7 @@ mod styles;
 #[cfg(test)]
 mod test_doc;
 mod tree;
+mod word6;
 
 pub(crate) use tree::read_doc_tree;
 
@@ -50,6 +51,22 @@ pub(crate) fn extract_doc_text(
     let mut compound_file = open_compound_file(bytes)?;
     let word_document = read_stream(&mut compound_file, "/WordDocument", limits.max_member_bytes)?
         .ok_or_else(|| unreadable("the file has no WordDocument stream"))?;
+    if word6::is_word6(&word_document) {
+        let fib = word6::Word6Fib::read(&word_document)?;
+        if fib.encrypted {
+            return Err(OfficeError::Encrypted);
+        }
+        let mut filter = SpecialCharacterFilter::default();
+        for character in word6::text(&word_document, &fib).0 {
+            if let Some(character) = filter.translate(character) {
+                buffer.push(character);
+            }
+            if buffer.is_truncated() {
+                break;
+            }
+        }
+        return Ok(());
+    }
     let fib = Fib::read(&word_document)?;
     if fib.encrypted {
         return Err(OfficeError::Encrypted);

@@ -24,7 +24,7 @@ use super::pictures::{Drawings, ShapeAnchor, ShapeContent, inline_picture, shape
 use super::properties::{Character, Paragraph, Row, colour_reference};
 use super::sections::{SectionLayout, read_sections};
 use super::styles::StyleSheet;
-use super::{decode_piece, read_piece_table, unreadable};
+use super::{decode_piece, read_piece_table, unreadable, word6};
 use crate::compound::{open_compound_file, read_stream, u16_at, u32_at};
 use crate::document::{
     Alignment, Anchor, AnchorAlign, AnchorBase, AnchorPosition, Block, Borders, Comment,
@@ -84,6 +84,9 @@ pub(crate) fn read_doc_tree(
     let mut compound_file = open_compound_file(bytes)?;
     let word_document = read_stream(&mut compound_file, "/WordDocument", limits.max_member_bytes)?
         .ok_or_else(|| unreadable("the file has no WordDocument stream"))?;
+    if word6::is_word6(&word_document) {
+        return read_word6_tree(&word_document, limits, options);
+    }
     let fib = Fib::read(&word_document)?;
     if fib.encrypted {
         return Err(OfficeError::Encrypted);
@@ -189,6 +192,65 @@ pub(crate) fn read_doc_tree(
         &read_sections(&word_document, structure(pair::SECTIONS)),
         &positions(structure(pair::HEADERS)),
         document_properties,
+    ))
+}
+
+/// Read a Word 6 or Word 95 document: its structures rewritten as Word 97 stores them, then the
+/// same conversion. Comments, drawings and pictures, stored another way, are left out.
+fn read_word6_tree(
+    word_document: &[u8],
+    limits: &Limits,
+    options: TreeOptions,
+) -> Result<DocumentTree, OfficeError> {
+    let fib = word6::Word6Fib::read(word_document)?;
+    if fib.encrypted {
+        return Err(OfficeError::Encrypted);
+    }
+    let (text, offsets) = word6::text(word_document, &fib);
+    let structure = |index: usize| fib.structure(word_document, index);
+    let converter = Converter {
+        text: &text,
+        offsets: &offsets,
+        characters: word6::character_runs(word_document, &fib),
+        paragraphs: word6::paragraph_runs(word_document, &fib),
+        styles: StyleSheet::read(&word6::style_sheet(structure(pair::STYLES))),
+        fonts: word6::font_names(structure(pair::FONTS)),
+        lists: Lists::read(&[], None, None),
+        data: &[],
+        word_document,
+        drawings: Drawings::read(&[], &[]),
+        anchors: HashMap::new(),
+        footnotes: references(
+            structure(pair::FOOTNOTE_REFERENCES),
+            structure(pair::FOOTNOTE_TEXTS),
+            fib.stories.footnotes_start(),
+        ),
+        endnotes: HashMap::new(),
+        text_boxes: HashMap::new(),
+        stories: fib.stories,
+        limits,
+        report: ImportReport::default(),
+        stored_comments: Vec::new(),
+        comments: Vec::new(),
+        reviewers: Vec::new(),
+        tracked_changes: options.tracked_changes,
+        media: Vec::new(),
+        media_bytes: 0,
+        pictures: HashMap::new(),
+        notes: Vec::new(),
+        built_notes: HashMap::new(),
+        floating: Vec::new(),
+        next_frame: 0,
+        numbers: HashMap::new(),
+        remaining: limits.max_text_chars,
+        style_properties: HashMap::new(),
+        page_break_pending: false,
+        in_note: false,
+    };
+    Ok(converter.convert(
+        &word6::sections(word_document, &fib),
+        &positions(structure(pair::HEADERS)),
+        structure(pair::DOCUMENT_PROPERTIES),
     ))
 }
 
