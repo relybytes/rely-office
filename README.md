@@ -3,8 +3,8 @@
 Office documents without an office suite, in safe Rust: format detection, text for search, sheets
 as tables, a `.docx`, `.doc` or `.odt` as a document tree for a rich-text editor, rendering to
 PDF and PNG through Typst, writing `.docx` back from that tree and `.pptx` from slides, so a Word
-or PowerPoint 97-2003 file converts to the new format, and an editable spreadsheet with formulas
-that opens and saves xlsx. It runs natively and, compiled to WebAssembly, in process from Node and in the
+or PowerPoint 97-2003 file converts to the new format, slides edited as JSON, and an editable
+spreadsheet with formulas, conditional formats and validation that saves xlsx and ods. It runs natively and, compiled to WebAssembly, in process from Node and in the
 browser.
 
 rely-office is built and maintained by [RelyBytes Consulting](https://relybytes.com) for the Drive
@@ -15,15 +15,15 @@ files a team stores, and is published under the Mozilla Public License 2.0 so th
 
 | Format | Detect | Text for search | Sheets as tables | Document tree | Render | Write | Edit |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| docx | yes | body, headers, footers, notes | - | yes | layout, with sections, headers, footers, notes, floating objects, drawn shapes, metafiles and charts | yes | through the tree |
-| doc (97-2003) | yes | every story | - | yes | layout, as a docx | as docx | through the tree |
+| docx | yes | body, headers, footers, notes | - | yes, with comments, tracked changes, equations and embedded objects | layout, with sections, headers, footers, notes, floating objects with text around their outline, drawn shapes, metafiles, charts, SmartArt and equations | yes | through the tree |
+| doc (97-2003, Word 6 and 95) | yes | every story | - | yes | layout, as a docx | as docx | through the tree |
 | odt | yes | body with headers and footers | - | yes | layout, as a docx | as docx | through the tree |
-| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings, cell formats, merges, and pictures and charts over their cells | yes | yes, its styles, merges, pictures and charts kept |
-| ods | yes | every sheet | yes | - | layout, as an xlsx | as xlsx | yes |
+| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings, cell formats, conditional formats, merges, and pictures and charts over their cells | yes | yes, its styles, merges, rules, pictures, charts and pivot tables kept |
+| ods | yes | every sheet | yes | - | layout, as an xlsx | as ods or xlsx | yes |
 | xls | yes | every sheet | yes | - | layout | as xlsx | yes |
 | csv, tsv | by name, text only | yes | yes, UTF-8 or Windows-1252, `;` or `,` | - | layout | as xlsx | yes |
-| pptx, odp | yes | slides and pages with their notes | - | - | slides, with their masters, shapes, gradient and picture fills, tables, pictures and charts | as pptx | - |
-| ppt (97-2003) | yes | every text atom outside the masters | - | - | slides, with their masters, shapes, fills, tables and pictures | as pptx | - |
+| pptx, odp | yes | slides and pages with their notes | - | slides | slides, with their masters, shapes, gradient and picture fills, tables, pictures, charts and SmartArt | as pptx | as slides, with notes, transitions and animations |
+| ppt (97-2003) | yes | every text atom outside the masters | - | slides | slides, with their masters, shapes, fills, tables and pictures | as pptx | as slides |
 
 The format comes from the bytes, never from the file name alone. Every input is bounded by
 [`Limits`](crates/rely-office-core/src/limits.rs): the input size, each decompressed archive
@@ -68,7 +68,8 @@ entry, `@relybytes/rely-office/web`, for an editor.
 const office = require('@relybytes/rely-office');
 
 office.extractText(bytes, 'contratto.docx');            // { format, text, truncated }
-office.readDocumentTree(bytes);                         // { blocks, media, report }
+office.readDocumentTree(bytes);                         // { blocks, media, report, comments?, objects? }
+office.readPresentation(pptx);                          // { slides, media, ... }, back with writePptx
 office.render(bytes, 'contratto.docx', { thumbnailWidth: 320 }); // { pdf, thumbnail, ... }
 office.writeDocx({ blocks, media });                    // Uint8Array
 office.convertToDocx(doc);                              // a Word 97-2003 file as docx
@@ -90,6 +91,7 @@ cargo run -p rely-office-cli -- rewrite contract.docx   # through the tree and b
 cargo run -p rely-office-cli -- rewrite relazione.doc   # a doc converted to docx
 cargo run -p rely-office-cli -- rewrite riunione.ppt    # a ppt converted to pptx
 cargo run -p rely-office-cli -- rewrite sales.xlsx      # through the editable model and back
+cargo run -p rely-office-cli -- ods sales.xlsx          # a spreadsheet saved as ods
 ```
 
 Renders use the fonts of the folder `RELY_OFFICE_FONTS` names, by default `./fonts`.
@@ -110,15 +112,15 @@ SOFFICE=soffice node scripts/corpus.mjs           # pages compared with LibreOff
 
 | Path | Purpose |
 | --- | --- |
-| [`crates/rely-office-core`](crates/rely-office-core) | detection, text, sheet tables and print settings, the document tree and its looks, the docx writer |
+| [`crates/rely-office-core`](crates/rely-office-core) | detection, text, sheet tables, print settings and rules, the document tree and its looks, the slide model, the docx and pptx writers |
 | [`crates/rely-office-render`](crates/rely-office-render) | documents to Typst source, typeset to PDF and PNG |
-| [`crates/rely-office-sheet`](crates/rely-office-sheet) | the editable spreadsheet: formulas, recalculation, edits, xlsx in and out |
+| [`crates/rely-office-sheet`](crates/rely-office-sheet) | the editable spreadsheet: formulas, recalculation, edits, conditional formats and validation, xlsx and ods out |
 | [`crates/rely-office-cli`](crates/rely-office-cli) | the `rely-office` command |
 | [`crates/rely-office-wasm`](crates/rely-office-wasm), [`-render-wasm`](crates/rely-office-render-wasm), [`-sheet-wasm`](crates/rely-office-sheet-wasm) | the WebAssembly fronts |
 | [`crates/rely-office-corpus`](crates/rely-office-corpus) | the page comparison with LibreOffice |
 | [`packages/rely-office-node`](packages/rely-office-node) | the npm package `@relybytes/rely-office` |
 | [`corpus/`](corpus) and [`scripts/corpus.mjs`](scripts/corpus.mjs) | the Italian documents of the comparison |
-| [`fonts/`](fonts) | the metric-compatible fonts the package ships, SIL Open Font License 1.1 |
+| [`fonts/`](fonts) | the fonts the package ships: metric-compatible text faces under the SIL Open Font License 1.1, and DejaVu Math TeX Gyre for equations |
 | [`fuzz/`](fuzz) | cargo-fuzz targets |
 
 The design is in [docs/](docs/README.md): [architecture](docs/architecture.md),
@@ -131,7 +133,7 @@ Mozilla Public License 2.0, see [LICENSE](LICENSE). In short: you may use rely-o
 software, open or closed; changes to the files of rely-office itself must be published under the
 same licence, and the copyright notices of RelyBytes Consulting must be kept. See [NOTICE](NOTICE)
 for the attribution and for the licences of the dependencies; the fonts in `fonts/` carry their own
-OFL licence texts.
+licence texts.
 
 ## Contributing
 

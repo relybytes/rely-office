@@ -10,10 +10,10 @@ WebAssembly included.
 
 | Format | Fidelity | How |
 | --- | --- | --- |
-| docx, odt, doc | `layout` | the document tree with its looks: each section's page size, orientation, margins and columns, headers and footers with their first and even variants, page numbers, body font, paragraph spacing, line spacing, indents, tabs with their leaders, alignment, borders and shading, page breaks, run fonts, sizes, colours and highlights, list labels in the numbering's own formats, tables with their style's regions, per-cell borders, fills and vertical alignment, tables nested in cells, footnotes and endnotes, text boxes, images and drawn shapes where they float, EMF and WMF pictures, charts |
-| xlsx, ods | `layout` | every sheet with its print settings and its cells' formats: orientation, margins, column widths and row heights, hidden rows and columns, header and footer, grid lines, number formats, fonts, fills, borders, alignment and wrapping, merged cells; its pictures and charts over the cells they are anchored in |
+| docx, odt, doc | `layout` | the document tree with its looks: each section's page size, orientation, margins and columns, headers and footers with their first and even variants, page numbers, body font, paragraph spacing, line spacing, indents, tabs with their leaders, alignment, borders and shading, page breaks, run fonts, sizes, colours and highlights, list labels in the numbering's own formats, tables with their style's regions, per-cell borders, fills and vertical alignment, tables nested in cells, footnotes and endnotes, text boxes and the shapes they are drawn as, images and drawn shapes where they float with the text flowing around their outline, EMF and WMF pictures, charts, SmartArt, equations, embedded objects as their picture |
+| xlsx, ods | `layout` | every sheet with its print settings and its cells' formats: orientation, margins, column widths and row heights, hidden rows and columns, header and footer, grid lines, number formats, fonts, fills, borders, alignment and wrapping, merged cells, conditional formats (fills, fonts, data bars, icon sets); its pictures and charts over the cells they are anchored in |
 | xls, csv, tsv | `layout` | the sheets with Excel's print defaults (portrait A4, 0.7 and 0.75 inch margins, 8.43 character columns, no grid) |
-| pptx, odp, ppt | `layout` | one page per slide at the slide's size: background, the shapes of the master and layout behind the slide's own, placeholders placed and styled as their layout and master say, text frames, every `DrawingML` preset shape, custom and free-form outlines, lines, groups, rotations, solid, gradient and picture fills, tables, pictures and charts |
+| pptx, odp, ppt | `layout` | one page per slide at the slide's size: background, the shapes of the master and layout behind the slide's own, placeholders placed and styled as their layout and master say, text frames, every `DrawingML` preset shape, custom and free-form outlines, lines, groups, rotations, solid, gradient and picture fills, tables, pictures, charts and SmartArt |
 | doc, ppt that cannot be read | `text` | the extracted text, one paragraph per line, on A4 |
 
 `Rendered::fidelity` says which of the two a render had, so a viewer can tell a laid-out preview
@@ -23,15 +23,19 @@ from a text one.
 
 The rules follow Word, the program most docx files come from, rather than Typst's defaults:
 
-- **Spacing adds up.** The space after a paragraph and the space before the next are summed, as
-  Word does. Every block is set with no spacing of its own and the gap is written as a weak `v`,
-  which disappears at the top of a page; the space before the first block of the document or of a
-  cell stays.
-- **Line height comes from the font.** Word's single line is the larger of the font's Windows
-  ascent plus descent and its typographic line with the line gap. Typst sets a line between its
-  ascender and descender, so the leading is the difference, computed per family from the fonts the
-  renderer holds (`metrics.rs`). Word also adds that extra height below the last line of a
-  paragraph, so it goes into the space after.
+- **The larger space wins.** Between two paragraphs the larger of the space after the first and
+  the space before the second is kept, as Word does since 2007 and LibreOffice does. The two add up
+  only where the document asks for Word 2003's rule (`PageLayout::spacing_adds_up`): a docx that
+  sets `doNotUseHTMLParagraphAutoSpacing` or a compatibility mode below 12, a doc, and an odt whose
+  `AddParaTableSpacing` is on, as it is by default. Every block is set with no spacing of its own
+  and the gap is written as a weak `v`, which disappears at the top of a page; the space before the
+  first block of the document or of a cell stays.
+- **A line is the office suite's single line.** Word's single line is the larger of the font's
+  Windows ascent plus descent and its typographic line with the line gap (`metrics.rs`, per family
+  from the fonts the renderer holds). A paragraph's text is set with that line as its box, through
+  Typst's `top-edge` and `bottom-edge`, so a paragraph of one line, a table cell among them, is as
+  tall as Word makes it; the leading carries only what a larger line spacing adds, under every line
+  but the last.
 - **Lines fill greedily** (`linebreaks: "simple"`), as office suites break them, not with Typst's
   optimized breaking.
 - **Fonts are substituted by metrics**: Calibri by Carlito, Cambria by Caladea, Arial and Helvetica
@@ -47,16 +51,31 @@ The rules follow Word, the program most docx files come from, rather than Typst'
   first-page header is chosen against the page its marker lands on.
 - **Floating objects stand where their anchor puts them**, the nearest Typst can: an object in
   front of or behind the text is placed at its point of the page (measured from the page, the
-  margins, the column or the paragraph); one the text goes around is set beside its paragraph on
-  its side; one with text above and below on a line of its own. Typst sets no text around a shape,
-  so text that would wrap a picture's outline lines up beside its box instead. A text box draws its
-  own fill and outline at its anchored size.
+  margins, the column or the paragraph); one with text above and below on a line of its own. A
+  picture the text goes around is set at its side and the paragraph is broken line by line, each
+  line as wide as the room the picture leaves at its height, then the rest of the words at the full
+  width below it, justified as the paragraph is (`rely-flow` in the generated source). A square wrap
+  leaves the picture's rectangle; a tight or through wrap keeps its polygon as an outline of sixteen
+  bands (`WrapOutline`), which the lines follow. A text box draws its own fill and outline at its
+  anchored size, in the outline of the preset its shape names.
 - **Drawn shapes are pictures.** A docx `wps` shape or `wpg` group, an odt rectangle, ellipse,
   line, polygon, path or custom shape, and a doc's OfficeArt shape become an SVG picture of their
   frame (`geometry/picture.rs`): the outline of their geometry, their fill and line, and the text
   they carry centred in them. The picture is anchored where the shape floats; a group is one
-  picture, its shapes placed through the group's child frame. The text of a shape is not
-  editable in the tree, as Word draws it and an editor has no node for it.
+  picture, its shapes placed through the group's child frame. A shape that holds a text box (a
+  docx shape with `wps:txbx`, an odt shape whose geometry names a preset, a doc shape with text)
+  is a text box instead, whose `TextFrame::shape` names the preset: its text stays in the tree,
+  where an editor changes it, and the outline is drawn behind it.
+- **SmartArt is drawn from the drawing Office keeps of it.** A docx or pptx SmartArt names, in its
+  data model, the diagram drawing Office saved beside it (or its part relates to only one); its
+  `dsp` shapes and groups, with their outlines, fills, lines and text, become one SVG picture at the
+  frame's size. The layout algorithm of the diagram is not run, so a SmartArt saved without its
+  drawing is left out.
+- **Equations are Typst math.** An equation of the tree, LaTeX read from Office Math or MathML, is
+  set as Typst math, in the line or on a line of its own, with DejaVu Math TeX Gyre; no text of the
+  formula becomes syntax.
+- **An embedded object is its picture.** An OLE object (a workbook in a document, a package) is
+  drawn as the replacement picture Office saved with it, which is what Word shows too.
 
 Text only ever enters the generated source as a Typst string literal, so no document content can
 become markup or code.
@@ -70,6 +89,12 @@ page order does. Cells never wrap: text longer than its column runs over the nex
 read as numbers are aligned right. The header and footer codes `&L &C &R`, `&A` (sheet name), `&P`
 (page), `&N` (pages), `&&`, `&"font,style"` and a font size are drawn; other codes are dropped. A
 number wider than its column shows as `#` signs filling it, as a spreadsheet shows it.
+
+Conditional formats are drawn as Excel draws them: the rules of each range in priority order give
+a cell its fill and font, a colour scale its blended fill, a data bar a bar from the cell's left
+edge, an icon set its icon before the value. The looks are computed through the editable sheet
+model of `rely-office-sheet`, from the values the cells hold, so the preview and the editor never
+disagree.
 
 An ods is read into the same layout as an xlsx (`opendocument/spreadsheet.rs`): column widths,
 row heights, hidden rows and columns, the cell styles with their data styles turned into Excel
@@ -142,17 +167,21 @@ LibreOffice notes each range it copied. It is drawn as SVG in the look of Office
 style: columns and bars clustered, stacked or to a whole, lines with or without markers, areas,
 pies, doughnuts, scatter and bubble charts, radar charts outlined, marked or filled, and stock
 charts with their high-low lines, up-down bars and close ticks, with the title, legend, axis
-titles, gridlines, data labels and a secondary value axis. Axis steps are round numbers (1, 2 or
-5 times a power of ten) unless the file fixes them. The SVG becomes an image of the document tree
-in a docx or an odt, a picture of the slide in a pptx or an odp, and a drawing over the cells of
-an xlsx or ods sheet. Surface charts are left out, and so are the newer `chartex` charts
-(waterfall, treemap).
+titles, gridlines, data labels and a secondary value axis. A surface chart is drawn from above,
+each cell of its grid shaded by the band of the value axis it falls in, with a legend of the
+bands. The chart kinds of Office 2016, a `cx:chartSpace` found under `cx:chart` in the first
+choice of an `mc:AlternateContent`, are drawn too: waterfall, funnel, treemap, sunburst,
+histogram, Pareto and box and whisker. Axis steps are round numbers (1, 2 or 5 times a power of
+ten) unless the file fixes them. The SVG becomes an image of the document tree in a docx or an
+odt, a picture of the slide in a pptx or an odp, and a drawing over the cells of an xlsx or ods
+sheet.
 
 ## Fonts
 
-The npm package ships 18 faces under the SIL Open Font License 1.1, in `fonts/` with their licence
-texts: Carlito and Caladea (four styles each), Liberation Sans and Liberation Serif (four styles
-each), Liberation Mono (regular and bold). `Renderer::new` takes any TrueType or OpenType files;
+The npm package ships 19 faces, in `fonts/` with their licence texts: under the SIL Open Font
+License 1.1, Carlito and Caladea (four styles each), Liberation Sans and Liberation Serif (four
+styles each) and Liberation Mono (regular and bold); under the licence of Bitstream Vera Fonts,
+DejaVu Math TeX Gyre for equations. `Renderer::new` takes any TrueType or OpenType files;
 the CLI reads the folder `RELY_OFFICE_FONTS` names, by default `./fonts`.
 
 ## The corpus and the pixel comparison
@@ -173,19 +202,11 @@ a missing paragraph, table or image. A page passes at 0.03 or less; pages of dif
 pages one side has and the other has not, fail. The report lands in `target/corpus/report.json`,
 our pages in `target/corpus/ours/`.
 
-Measured on 2026-10-28 with LibreOffice on Windows and Ghostscript as rasterizer: **10 of 11 pages pass (90.9%)**. Every sheet
-page passes, and every docx has the page count LibreOffice prints. The page that fails, the
-meeting minutes, has a table with double borders, which LibreOffice draws as two lines that make
-each row about a point taller.
-
-Two rules make the docx pages line up. Between two paragraphs the larger of the space after the
-first and the space before the second is kept, as Word does since 2007 and LibreOffice does; the
-two add up only in a document in Word 2003's compatibility, one that sets
-`doNotUseHTMLParagraphAutoSpacing`, a `.doc`, and an odt whose `AddParaTableSpacing` is on, as it
-is by default. And a line's box is the office suite's single line, the font's Windows ascent and
-descent (or its typographic line with the gap, when taller), set through Typst's `top-edge` and
-`bottom-edge`, so a paragraph of one line, a table cell among them, is as tall as Word makes it and
-the leading carries only what a larger spacing adds.
+Measured on 2026-10-28 with LibreOffice on Windows and Ghostscript as rasterizer: **11 of 11 pages
+pass (100%)**, the worst at 0.023. Every docx has the page count LibreOffice prints. What lines the
+docx pages up is the spacing rule and the single line above, and the room a table row gives the
+double rule under it: two lines and the gap between them, three times the border's width, which
+Word and LibreOffice add to the row's height.
 
 CI runs the comparison on every push with a regression floor of 40%, below the local figure since
 the Linux LibreOffice and Poppler differ; the job uploads the report and both sets of pages.
@@ -215,16 +236,24 @@ SOFFICE=soffice node scripts/corpus.mjs                 # the corpus comparison
 
 ## Known gaps
 
-- Text does not flow around a floating picture's outline, only beside its box; a picture the text
-  goes around is set beside its whole paragraph.
+- Text flows around one picture of a paragraph. A paragraph with a tab, with more than one
+  picture the text goes around, or with one wider than most of the column has the picture set
+  beside the whole paragraph.
 - A drawing anchored in a sheet is placed at its anchor cell and offset at its own size; it does
   not stretch with the cells of a two-cell anchor.
 - A table cell's fill is a solid colour; gradients and pictures fill shapes and backgrounds only.
-- A doc's OLE objects are drawn as their replacement picture and its shapes take the preset of
-  their type with no adjust values. Word 6 and 95 files are not read.
+- A Word 6 or Word 95 document is read for its text, styles, formatting, tables, sections and
+  footnotes; its comments, drawings and pictures, stored another way, are left out.
+- An OLE object is drawn as its replacement picture, as Word draws it; nothing runs the program
+  that made it. An odt's embedded ODF document other than a chart or a formula is its picture too.
 - EMF+ drawings are drawn from the plain EMF records beside them, so what only EMF+ holds
   (antialiased gradients, GDI+ text effects) is lost.
-- A ppt's preset shapes are drawn with their default adjust values, and its notes, animations and
-  slide transitions are left out. LibreOffice writes the shapes it exports to ppt from `DrawingML`
-  with guide constants cut to sixteen bits, so those outlines come out wrong; LibreOffice cannot
-  draw them back either.
+- A ppt's shape takes the adjust values it sets for the types whose handles map onto a
+  `DrawingML` preset (rounded rectangle, plaque, triangle, moon, parallelogram, hexagon, octagon,
+  plus, cube, can, donut, bevel, the wedge callouts, the four arrows, the home plate and the
+  chevron); other types are drawn with the preset's defaults. LibreOffice writes the shapes it
+  exports to ppt from `DrawingML` as free forms with guide constants cut to sixteen bits, so those
+  outlines come out wrong; LibreOffice cannot draw them back either.
+- A preview draws the slides, not their speaker notes, transitions or animations, which the slide
+  model carries for an editor (see `editing.md`).
+- A SmartArt saved without the drawing Office keeps of it is left out: its layout is not computed.

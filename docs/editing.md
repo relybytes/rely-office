@@ -1,13 +1,15 @@
 # Editing
 
-rely-office edits in two ways, one per kind of document:
+rely-office edits in three ways, one per kind of document:
 
 - **Text documents** are edited as a document tree. `read_document_tree` turns a docx, a doc or an
   odt into neutral blocks an editor maps onto its own schema; `write_docx` turns the tree back into
   a docx, so a doc or an odt edited this way is saved as a docx. The library has no editor of its
   own for text: the tree is the contract with the editor.
+- **Presentations** are edited as slides. `read_presentation` turns a pptx, an odp or a ppt into
+  the slide model, serializable as JSON like the tree; `write_pptx` writes it back as a pptx.
 - **Spreadsheets** are edited through `rely-office-sheet`, a workbook model with formulas that an
-  editor drives cell by cell, and that opens and saves xlsx.
+  editor drives cell by cell, and that opens xlsx, xls, ods, csv and tsv and saves xlsx and ods.
 
 The old binary formats are converted, not edited in place: a doc becomes a docx and a ppt a pptx
 through the same structures the new formats are read into, so nothing downstream knows the old
@@ -32,23 +34,34 @@ this crate read the file the same way:
 | page number and page count runs | `fldSimple` with `PAGE` and `NUMPAGES` |
 | `hardBreak`, tabs | `w:br`, `w:tab` |
 | `image` | an inline drawing of its size, cut to the text width, the image stored once in `word/media/`; EMF and WMF pictures are kept as they are |
+| an `image` an embedded object names | a `w:object` with a VML shape of the picture and an `o:OLEObject` naming the object, stored in `word/embeddings/` as a package (`relationships/package`) or an OLE compound file (`relationships/oleObject`, `.bin`) |
+| `math` | Office Math, `m:oMath` in the line or `m:oMathPara` on a line of its own |
+| `comment` marks, `commentAnchor` and `comments` | `w:commentRangeStart`, `w:commentRangeEnd` and `w:commentReference`, the comments in `comments.xml` and their replies and done states in `commentsExtended.xml` |
+| `insertion` and `deletion` marks | `w:ins` and `w:del` with their author and date, a deleted run as `w:delText` |
 | `noteReference` and `notes` | `w:footnoteReference` and `w:endnoteReference`, the notes in `footnotes.xml` and `endnotes.xml` with their separators |
 | `headersFooters` | header and footer parts with their own relationships, `w:titlePg` for a first page, `w:evenAndOddHeaders` in `settings.xml` for even pages |
 | the looks (Rust) | paragraph borders, shading, tabs, spacing and indents; table widths, borders and cell margins; cell fills, borders and vertical alignment; a numbered heading keeps its label as text |
 | the layout's page | `w:sectPr` with the page size, orientation, margins, columns and the default tab stop |
 | `sections` | a `w:sectPr` in the paragraph that ends each section, with its own page, headers and footers and `w:type` `continuous` when it goes on on the same page |
-| a floating image's `anchor` | a `wp:anchor` with its position, size and wrapping, instead of `wp:inline` |
-| a floating text box's `frame` | a `wps:wsp` text box at its anchor, with its fill and outline, holding its blocks |
+| a floating image's `anchor` | a `wp:anchor` with its position, size and wrapping, instead of `wp:inline`; a tight wrap with its outline as `wp:wrapPolygon` |
+| a floating text box's `frame` | a `wps:wsp` text box at its anchor, with its fill, outline and the `prstGeom` of its shape, holding its blocks |
+| the spacing rule of the layout | `w:doNotUseHTMLParagraphAutoSpacing` in `settings.xml` when the spaces between paragraphs add up |
 
 An image whose bytes are not a type Word shows is left out, its alternative text kept as text.
 Text is escaped, and the characters XML 1.0 cannot hold are dropped. Reading the written file
 gives back the same blocks, marks, alignment, spans, images and page (tested in
 `document/write/tests.rs`); list ids are renumbered, as numbering instances are the file's own.
 
-From JavaScript: `writeDocx({ blocks, media, page, notes, headersFooters, sections })`, where
-`media` lists the bytes of each image in the order `image.media` indexes them, and `page` is
-`{ widthTwips, heightTwips, marginsTwips }`. `convertToDocx(bytes)` reads a doc, an odt or a docx
-and writes it as a docx in one call.
+What an editor changes is all in the tree: the text of a shape is the blocks of its text box, an
+equation its LaTeX, a comment its blocks, a tracked change the mark on its run. An embedded object
+is not edited, only kept: its picture moves with the text and its bytes are written back as they
+were read.
+
+From JavaScript: `writeDocx({ blocks, media, page, notes, headersFooters, sections, comments,
+objects })`, where `media` lists the bytes of each image in the order `image.media` indexes them,
+`objects` the embedded objects as `readDocumentTree` gave them, and `page` is `{ widthTwips,
+heightTwips, marginsTwips }`. `convertToDocx(bytes)` reads a doc, an odt or a docx and writes it
+as a docx in one call.
 
 ## Writing a pptx
 
@@ -67,11 +80,27 @@ and layout and every shape on the slide itself:
 | `Text` | a `p:txBody` with its insets, anchor and wrapping; each paragraph's level, alignment, indents, line spacing, spacing and bullet or numbering; runs with size, bold, italic, underline, strike, colour and font, line breaks as `a:br` |
 | `Picture` | `p:pic` with the image stored once in `ppt/media/`, EMF and WMF included; an image PowerPoint does not show (unknown bytes) is left out |
 | `Table` | a `graphicFrame` holding an `a:tbl` with column widths, row heights, cell text and fills, `gridSpan`, `rowSpan`, and `hMerge` on a covered cell |
+| `notes` | a notes slide over a notes master, the text in its body placeholder |
+| `hidden` | `show="0"` on the slide |
+| `transition` | `p:transition` with its effect, direction, speed, `advClick` and `advTm` |
+| `animations` | `p:timing` with one effect per shape in order, its class, preset, subtype, trigger, delay, duration and motion path |
+| a shape's `id` | its `p:cNvPr` id, which the animations name |
 
 A shape with neither fill, line nor content draws nothing and is left out; a presentation with no
-slides gets one blank slide. Reading the written file gives back the same slides (tested in
-`slides/write/tests.rs`). From JavaScript: `convertToPptx(bytes)` reads a ppt, an odp or a pptx and
-writes it as a pptx.
+slides gets one blank slide. A colour that is not six hex digits is written as black, since the
+JSON can come from outside the library. Reading the written file gives back the same slides
+(tested in `slides/write/tests.rs`).
+
+The slides are read with their show: the speaker notes, whether the slide is hidden, its
+transition and the effects of its shapes come from the pptx timing tree and notes slides, from
+the odp animation tree, drawing-page style and notes page, and from the ppt slide show atom,
+notes pages, PowerPoint 2002 timeline and PowerPoint 97 builds. Each shape keeps its id; one drawn
+from the layout or the master is marked `inherited`, so an editor can show it locked.
+
+From JavaScript: `readPresentation(bytes, limits?)` returns `{ widthEmu, heightEmu, slides, media,
+truncated }`, the slides tagged by `type` like the tree's blocks, and `writePptx({ widthEmu,
+heightEmu, slides, media })` writes them; `convertToPptx(bytes)` reads a ppt, an odp or a pptx and
+writes it as a pptx in one call.
 
 ## The spreadsheet model
 
@@ -98,6 +127,27 @@ Styles are kept once in the workbook and cells point at them.
 
 Row and column edits move styles, merges, row heights and column widths with the cells. A range
 can style at most 1,000,000 cells at once and a sheet hold 2,000,000 styled cells.
+
+### Conditional formats and validation
+
+Each sheet holds its conditional formats and data validations (`sheet_rules` in
+`rely-office-core`, the model the renderer shares):
+
+- `set_conditional_formats(sheet, formats)` replaces the formats of a sheet, each a list of ranges
+  and rules: a cell value against one or two values, a formula, a colour scale of two or three
+  points, a data bar, an icon set, the top or bottom ranks, above or below the average, text that
+  contains, starts or ends with, duplicates and unique values, blanks, errors and date periods,
+  each with its differential look (font, fill, borders, number format) and its stop flag.
+- `conditional_looks(sheet)` computes the look each cell takes from the current values, rules in
+  priority order, so an editor draws what Excel draws.
+- `set_validations(sheet, validations)` replaces the validations: whole and decimal numbers, a
+  list (inline or from a range), dates, times, text length or a formula, with the input and error
+  messages and their style. `validation_at`, `is_valid`, `invalid_cells` and `validation_items`
+  (the items a list offers) answer an editor checking a cell.
+
+Ranges move with inserted and deleted rows and columns, and the formulas of rules follow the cells
+they read, sheets renamed and removed included. A rule's formula must parse; a sheet holds at most
+10,000 formats and 10,000 validations (`MAX_RULES`).
 
 ### Typing
 
@@ -158,19 +208,29 @@ kept, clearing the target first, as a spreadsheet's paste does.
 ### Opening and saving
 
 `read_spreadsheet(bytes, name, limits, locale)` opens xlsx, xls, ods, csv and tsv: every formula
-and value, dates as dates, column widths and sheet names, and from an xlsx the cell styles, merged
-cells and row heights. A CSV holds values, not formulas, so a
+and value, dates as dates, column widths and sheet names, and from an xlsx and an ods the cell
+styles, merged cells, row heights, conditional formats and validations. An ods's formulas are
+read from OpenFormula and its ISO dates and durations become serial numbers. A CSV holds values,
+not formulas, so a
 leading `=` stays text; its numbers are read in the locale. `write_xlsx` saves each formula with
 its computed value cached, so a viewer that does not recalculate (this crate's own previews
 included) shows the results, and asks Excel to recalculate on opening; numbers, inline text,
 booleans, number formats, styles, merged cells, column widths and row heights are kept. The
 pictures and charts of each sheet, and the workbook's theme they take their colours from, are
 written back exactly as the file had them: they stay anchored to the cells they had, so rows
-inserted above a chart leave it where it was. LibreOffice opens and recalculates the files
-(checked by hand on the corpus); the round trip is tested in `xlsx/tests.rs`.
+inserted above a chart leave it where it was. Conditional formats are written with their
+differential formats, validations with their messages, and pivot tables are carried with their
+caches: the cells they show are ordinary cells, which a refresh in Excel rebuilds. LibreOffice
+opens and recalculates the files (checked by hand on the corpus); the round trip is tested in
+`xlsx/tests.rs`.
 
-Not kept: comments, data validation, conditional formatting, defined names, pivot tables, and
-formulas with functions outside the list, which show `#NAME?` after an edit recalculates them.
+`write_ods` saves the workbook as an ods: cells with their computed values, formulas in
+OpenFormula, styles with data styles built from the number formats, merges, column widths and row
+heights, conditional formats and validations as LibreOffice writes them. Pictures, charts and
+pivot tables are kept by `write_xlsx` only. An xls is always saved as xlsx.
+
+Not kept: comments, defined names, and formulas with functions outside the list, which show
+`#NAME?` after an edit recalculates them.
 
 ## From JavaScript
 
@@ -180,9 +240,11 @@ editor asks for the cells of the window it shows (`cells(sheet, { top, left, bot
 each with its `input`, `display`, `kind` and `format`) and sends each action as a call: `setInput`,
 `setInputs`, `setFormat`, `setColumnWidth`, `setRowHeight`, `setStyle`, `setBorders`,
 `clearStyles`, `mergeCells`, `unmergeCells`, `clearRange`, `copyRange`, `insertRows`, `deleteRows`,
-`insertColumns`, `deleteColumns`, `addSheet`, `renameSheet`, `removeSheet`, `setToday`, `save`;
-`stylesJson` and `mergesJson` give the styles and merges to draw. A cell of `cells` carries its
-`style`.
+`insertColumns`, `deleteColumns`, `addSheet`, `renameSheet`, `removeSheet`,
+`setConditionalFormats`, `setValidations`, `setToday`, `save`, `saveOds`; `stylesJson` and
+`mergesJson` give the styles and merges to draw, `conditionalFormats`, `validations`,
+`conditionalLooks`, `validation` and `invalidCells` the rules and what they make of the cells. A
+cell of `cells` carries its `style`.
 Undo is the editor's: it keeps what it changed. Failures throw a `RelyOfficeError` with a stable
 code (`INVALID_FORMULA`, `NO_SUCH_SHEET`, `DUPLICATE_SHEET_NAME`, `INVALID_SHEET_NAME`,
 `LAST_SHEET`, `OUT_OF_BOUNDS`, `INVALID_INPUT`, `INVALID_LOCALE`, `INVALID_STYLE`, and the

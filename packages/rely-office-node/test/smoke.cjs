@@ -336,6 +336,23 @@ test('writes a docx it reads back', () => {
   );
 });
 
+test('writes an embedded object it reads back', () => {
+  const picture = office.readDocumentTree(docx).media[0].bytes;
+  const workbook = Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]);
+  const written = office.writeDocx({
+    blocks: [{ type: 'paragraph', content: [{ type: 'image', media: 0, width: 80, height: 40 }] }],
+    media: [picture],
+    objects: [{ media: 0, name: 'Foglio.xlsx', program: 'Excel.Sheet.12', bytes: workbook }],
+  });
+  const read = office.readDocumentTree(written);
+  assert.equal(read.objects.length, 1);
+  assert.equal(read.objects[0].media, read.blocks[0].content[0].media);
+  assert.equal(read.objects[0].program, 'Excel.Sheet.12');
+  assert.equal(read.objects[0].package, true);
+  assert.deepEqual([...read.objects[0].bytes], [...workbook]);
+  assert.equal(office.readDocumentTree(docx).objects, undefined);
+});
+
 test('writes comments and tracked changes it reads back', () => {
   const text = (words, marks = []) => ({ type: 'text', text: words, marks });
   const written = office.writeDocx({

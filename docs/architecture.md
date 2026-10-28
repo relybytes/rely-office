@@ -26,9 +26,9 @@ spreadsheet features past values, formulas, number formats and column widths.
 
 | Crate or package | Role | Depends on |
 | --- | --- | --- |
-| `rely-office-core` | detection, text extraction, sheet tables and print settings, the document tree with its looks, the docx writer | `zip`, `quick-xml`, `calamine`, `cfb`, `encoding_rs`, `thiserror`; `serde` behind the `serde` feature |
-| `rely-office-render` | documents written as Typst source and typeset to PDF and PNG, see [rendering.md](rendering.md) | `rely-office-core`, `typst`, `typst-layout`, `typst-pdf`, `typst-render`, `comemo` |
-| `rely-office-sheet` | the editable spreadsheet: formulas, recalculation, edits, xlsx in and out, see [editing.md](editing.md) | `rely-office-core`, `calamine`, `quick-xml`, `zip`, `thiserror` |
+| `rely-office-core` | detection, text extraction, sheet tables, print settings and rules, the document tree with its looks, the slide model, the docx and pptx writers | `zip`, `quick-xml`, `calamine`, `cfb`, `encoding_rs`, `thiserror`; `serde` behind the `serde` feature |
+| `rely-office-render` | documents written as Typst source and typeset to PDF and PNG, see [rendering.md](rendering.md) | `rely-office-core`, `rely-office-sheet` (for the looks of conditional formats), `typst`, `typst-layout`, `typst-pdf`, `typst-render`, `comemo` |
+| `rely-office-sheet` | the editable spreadsheet: formulas, recalculation, edits, conditional formats and validation, xlsx and ods out, see [editing.md](editing.md) | `rely-office-core`, `calamine`, `quick-xml`, `zip`, `thiserror` |
 | `rely-office-cli` | the `rely-office` command for trying files by hand | the three crates above |
 | `rely-office-wasm`, `rely-office-render-wasm`, `rely-office-sheet-wasm` | the WebAssembly fronts for JavaScript, not published as crates | `wasm-bindgen`, `serde`, `serde_json` |
 | `rely-office-corpus` | the page comparison with LibreOffice, not published | `rely-office-render`, `tiny-skia` |
@@ -44,16 +44,18 @@ spreadsheet features past values, formulas, number formats and column widths.
 | `xml_text` | a streaming walk from XML to search text, configured per format by a `TextRules` |
 | `xml_tree` | a small element tree with resolved namespaces, depth-capped, for structural reads |
 | `word`, `presentation`, `opendocument` | the text of docx, pptx, odt and odp; `opendocument` also reads an odt into the document tree, an odp into slides and an ods into a sheet layout, through its style resolver |
-| `doc`, `ppt` | the text of the binary formats, a doc as the document tree and a ppt as slides |
+| `doc`, `ppt` | the text of the binary formats, a doc as the document tree and a ppt as slides; `doc/word6` rewrites the structures of a Word 6 or 95 file as Word 97 stores them |
 | `office_art` | the drawing records doc and ppt share: shapes, their properties and the pictures of the blip store |
 | `geometry` | shape outlines as paths: the `DrawingML` presets (the ones `presets.rs` writes in guide language, the rest generated into `enhanced_presets.rs`) and custom geometries, `OpenDocument` enhanced geometries, polygons and SVG paths; `picture` draws the shapes of a document as an SVG picture |
 | `metafile` | EMF and WMF pictures played on a device context and written as SVG |
 | `sheet` | spreadsheets as tables, through calamine, and delimited text |
 | `sheet_layout`, `sheet_styles`, `number_format` | the print settings, cell styles and merges of xlsx sheets, read as a stream that skips the cells, and Excel's number format codes |
-| `sheet_drawings` | the pictures and charts a sheet's drawing anchors to its cells, and the drawing parts an editor writes back unchanged |
-| `document` | the docx document tree: styles, table styles, numbering, notes, headers and footers, sections, floating anchors, conversion, looks, media sniffing, and the docx writer |
-| `slides`, `theme` | a pptx as slides over its layouts and masters, the pptx writer, and the colours and fonts of a `DrawingML` theme |
-| `chart` | `DrawingML` and `OpenDocument` charts, read from their cached values or cells and drawn as SVG |
+| `sheet_drawings` | the pictures and charts a sheet's drawing anchors to its cells, and the drawing and pivot table parts an editor writes back unchanged |
+| `sheet_rules` | the conditional formats and data validations of a sheet, the model the renderer and the editor share, read from xlsx and ods |
+| `document` | the docx document tree: styles, table styles, numbering, notes, comments, tracked changes, headers and footers, sections, floating anchors and wrap outlines, shapes and SmartArt (`convert/shapes`), embedded objects (`objects`), conversion, looks, media sniffing, and the docx writer |
+| `math` | one formula tree for equations: LaTeX read and written, Office Math and MathML read, Office Math and Typst math written |
+| `slides`, `theme` | a pptx as slides over its layouts and masters, their notes, transitions and animations (`show`), the pptx writer, and the colours and fonts of a `DrawingML` theme |
+| `chart` | `DrawingML` and `OpenDocument` charts, read from their cached values or cells and drawn as SVG, and the Office 2016 kinds of `cx:chartSpace` (`extended`) |
 
 ## Decisions
 
@@ -75,8 +77,13 @@ spreadsheet features past values, formulas, number formats and column widths.
 - **Word 97-2003 through the piece table.** The File Information Block names the table stream
   (`0Table` or `1Table`) and the `Clx` in it; each piece is either compressed (Windows-1252, at half
   its file offset) or UTF-16LE. Fields keep their result and drop their code, cell marks become
-  tabs. Word 6 and 95 files, an encrypted file, or a piece table pointing outside its streams are
-  refused with an error, never read past the end.
+  tabs. An encrypted file or a piece table pointing outside its streams is refused with an error,
+  never read past the end.
+- **Word 6 and 95 through Word 97's shapes.** A file whose `nFib` is below 192 has its File
+  Information Block, 8-bit text, formatting pages, style sheet, font table and sections rewritten
+  as Word 97 stores them, and its one-byte property modifiers turned into Word 97's two-byte ones,
+  so one converter reads both. A modifier this reader does not know ends its list, since its
+  length is unknown.
 - **PowerPoint 97-2003 through its records.** The `PowerPoint Document` stream is walked linearly:
   stepping into a container is moving past its header, so no recursion is needed. Text comes from
   `TextCharsAtom` (UTF-16LE) and `TextBytesAtom` (the low bytes of UTF-16); masters and handouts
@@ -124,9 +131,10 @@ glue crate:
 - a failure throws an `Error` whose message is `CODE: message`, and the wrapper rethrows it as a
   `RelyOfficeError` with that `code`;
 - bytes never travel inside the JSON: a render answers a handle the wrapper moves the PDF and the
-  PNGs out of, a docx writer takes its images one by one (`addMedia`), and `readDocumentTreeHandle` returns a
-  handle holding the JSON and the image bytes, the wrapper moves each image out as its own
-  `Uint8Array` (`takeMediaBytes`) and frees the handle;
+  PNGs out of, a docx writer takes its images and embedded objects one by one (`addMedia`,
+  `addObject`), and `readDocumentTreeHandle` returns a handle holding the JSON, the image bytes and
+  the object bytes, which the wrapper moves out each as its own `Uint8Array` (`takeMediaBytes`,
+  `takeObjectBytes`) before it frees the handle;
 - a spreadsheet is a handle that lives in the module's memory until `free`, asked for windows of
   cells and sent edits as calls.
 

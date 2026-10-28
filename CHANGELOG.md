@@ -26,12 +26,52 @@ below 1.0, a minor version may change the API.
 - A doc's nested tables are read as tables inside their cell.
 - Radar, bubble and stock charts, the last with high-low lines, up-down bars and close ticks; the
   chart of an ods reads the sheet ranges it names from its own copy of the cells.
+- Presentations edited as slides: the slide model serializes to JSON, npm `readPresentation` and
+  `writePptx`; each slide carries its speaker notes, `hidden`, its `Transition` and its
+  `Animation`s, read from pptx, odp and ppt and written back as notes slides, `p:transition` and
+  `p:timing`; shapes keep their `id` and are marked `inherited` when drawn from a layout or master.
+- Comments of docx, odt and doc in `DocumentTree::comments`, with replies and done states, marked
+  in the text by `Mark::Comment` and `Inline::CommentAnchor`; tracked changes kept as
+  `Mark::Insertion` and `Mark::Deletion` with `TreeOptions { tracked_changes: Keep }`. Both are
+  written back by `write_docx`.
+- Equations: `Inline::Math` holds LaTeX read from Office Math and MathML, set as Typst math and
+  written as Office Math; DejaVu Math TeX Gyre ships with the npm package.
+- SmartArt drawn from the drawing Office keeps of it, in docx and pptx.
+- The text of a shape stays editable: a shape with text is a text box whose `TextFrame::shape`
+  names its preset, drawn as its outline and written back as `prstGeom`.
+- Conditional formats and data validations of a sheet (`sheet_rules`): read from xlsx and ods,
+  drawn, edited (`set_conditional_formats`, `conditional_looks`, `set_validations`,
+  `validation_at`, `is_valid`, `invalid_cells`, `validation_items`) and written back; pivot tables
+  carried through an xlsx; `write_ods`, npm `saveOds` and the CLI's `ods` command.
+- Surface charts and the Office 2016 kinds of `cx:chartSpace`: waterfall, funnel, treemap,
+  sunburst, histogram, Pareto and box and whisker.
+- A ppt's shapes take the adjust values they set, for the shape types whose handles map onto a
+  DrawingML preset.
+- Text flows around a picture along its outline (`Wrap::Contour`, `WrapOutline`), a tight wrap
+  written back as `wp:wrapPolygon`.
+- Word 6 and Word 95 documents read into the document tree.
+- Embedded objects in `DocumentTree::objects` (`EmbeddedObject`): the package or OLE compound file
+  of a docx, the `draw:object-ole` of an odt and the object pool storage of a doc, each with the
+  picture that shows it, written back by `write_docx` under `word/embeddings`; npm
+  `readDocumentTree` returns them and `writeDocx` takes them.
 
 ### Changed
 
 - `SlideShape::fill` and `Slide::background` are an `Option<Paint>` instead of a colour.
 - `ImportReport::shapes` counts only the shapes that draw nothing; a shape that draws is a picture
   in `media`.
+- `DocumentTree` gains `comments` and `objects`, `Inline` the `Math` and `CommentAnchor` variants,
+  `Mark` the `Comment`, `Insertion` and `Deletion` variants, `TextFrame` its `shape`, `Wrap` the
+  `Contour` variant, `PageLayout` `spacing_adds_up`, and `Slide` and `SlideShape` their show and
+  identity fields: code that builds them field by field adds the new ones.
+- Between two paragraphs the renderer keeps the larger space, as Word since 2007 and LibreOffice
+  do, and adds them only for a document that asks for Word 2003's rule; a line's box is the office
+  suite's single line. The corpus comparison passes 11 of 11 pages.
+- A table row is taller by the double border under it.
+- A docx `w:object` is its replacement picture instead of being left out.
+- `rely-office-render` depends on `rely-office-sheet`, which computes the looks of conditional
+  formats.
+- Compound files built by the tests are version 3, as Office writes them.
 
 ## 0.5.0
 

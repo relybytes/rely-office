@@ -23,10 +23,10 @@ every platform, no native build in the Drive's image.
 
 **The 95% gate.** The gate was written to decide when the Drive could drop Gotenberg for previews.
 Gotenberg was dropped by decision on 2026-10-25, so the gate now measures quality rather than
-deciding anything. On 2026-10-27, 6 of 11 corpus pages pass the threshold (54.5%): every sheet
-page, and every docx with the page count LibreOffice prints; the docx pages that fail drift by a
-few pixels per heading, where LibreOffice and Word space paragraphs differently and the renderer
-follows Word. [rendering.md](rendering.md) has the method and the figures.
+deciding anything. On 2026-10-28, 11 of 11 corpus pages pass the threshold (100%), the worst at
+0.023: the drift per heading came from summing the spaces between paragraphs where Word since 2007
+and LibreOffice keep the larger, and the last page from the room a double border takes in a table
+row. [rendering.md](rendering.md) has the method and the figures.
 
 ## Phase 2: editing
 
@@ -76,10 +76,32 @@ a converted file is saved as docx or pptx.
 | 5.5 | The drawn shapes of docx, odt and doc as pictures where they float; nested doc tables | done (0.6.0) |
 | 5.6 | Radar, bubble and stock charts | done (0.6.0) |
 
+## Phase 6: the preview and the editing complete (0.6.0)
+
+| Step | Content | Status |
+| --- | --- | --- |
+| 6.1 | Presentations edited as slides in JSON, with their speaker notes, hidden slides, transitions and animations, read from pptx, odp and ppt and written back | done (0.6.0) |
+| 6.2 | Comments and tracked changes of docx, odt and doc kept in the tree and written back | done (0.6.0) |
+| 6.3 | Equations read as LaTeX from Office Math and MathML, drawn as Typst math, written as Office Math | done (0.6.0) |
+| 6.4 | SmartArt drawn from the drawing Office keeps of it, in documents and slides | done (0.6.0) |
+| 6.5 | The text of a shape kept editable in a text box of its shape | done (0.6.0) |
+| 6.6 | Conditional formats and data validation of a sheet: read, drawn, edited and written; pivot tables carried through an xlsx; a workbook saved as ods | done (0.6.0) |
+| 6.7 | Surface charts and the Office 2016 chart kinds (waterfall, funnel, treemap, sunburst, histogram, Pareto, box and whisker) | done (0.6.0) |
+| 6.8 | A ppt's shapes with the adjust values they set | done (0.6.0) |
+| 6.9 | Text flowing around a picture along its outline | done (0.6.0) |
+| 6.10 | Paragraph spacing and line heights as Word and LibreOffice set them | done (0.6.0) |
+| 6.11 | Word 6 and Word 95 documents read into the tree | done (0.6.0) |
+| 6.12 | Embedded objects kept with their picture and written back into a docx | done (0.6.0) |
+
+An xls is saved as xlsx after an edit, by the user's decision of 2026-10-27: nothing writes the
+binary formats.
+
 ## Next
 
-- The adjust values of a ppt's preset shapes, which OfficeArt gives in each shape's own units.
-- Surface charts and the `chartex` charts (waterfall, treemap, sunburst).
+- Text flowing around more than one picture of a paragraph, and around a picture in a paragraph
+  with tabs.
+- The comments, drawings and pictures of a Word 6 or 95 document.
+- The adjust values of the ppt shape types whose handles map onto no `DrawingML` preset.
 - A larger corpus with documents made by Word and pptx and odp pages, and the corpus figure as a
   CI gate once it is stable.
 - Publishing to the public npm registry (issue #1).
@@ -93,8 +115,9 @@ a converted file is saved as docx or pptx.
 - Typst pulls in crates that RustSEC lists as unmaintained (ttf-parser, rustybuzz, yaml and
   bincode crates); `deny.toml` records each with its reason, to revisit on every Typst upgrade.
 - The binary formats (doc, xls, ppt) are the long tail: xls is read through calamine; doc and ppt
-  are read from their own records, which a malformed file can only cut short, and Word 6 and 95
-  files are refused.
+  are read from their own records, which a malformed file can only cut short. Word 6 and 95 files
+  are read through a translation of their structures checked against LibreOffice on synthetic
+  files only, since no real sample was at hand.
 - calamine holds a sheet as a dense range from its first to its last used cell, so a workbook with
   two cells far apart costs memory in proportion to the rectangle between them, inside the input
   and member caps.

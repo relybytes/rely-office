@@ -1,6 +1,7 @@
 # The document tree
 
-`read_document_tree` (Rust) and `readDocumentTree` (Node) read a `.docx`, a `.doc` or an `.odt`
+`read_document_tree` (Rust) and `readDocumentTree` (Node) read a `.docx`, a `.doc` (Word 97-2003,
+and Word 6 and 95) or an `.odt`
 as a neutral tree for import into a rich-text editor. It is not HTML and not any editor's schema:
 the caller maps each block and mark onto its own. The JSON names below are those of the `serde`
 feature and of the npm package; the Rust names are the same in snake case. The sections below
@@ -12,7 +13,8 @@ structures.
 ```text
 {
   blocks: Block[], media: MediaItem[], report: ImportReport,
-  notes: Note[], headersFooters: HeadersFooters, page: PageSize, sections?: Section[]
+  notes: Note[], headersFooters: HeadersFooters, page: PageSize, sections?: Section[],
+  comments?: Comment[], objects?: EmbeddedObject[]
 }
 ```
 
@@ -28,6 +30,17 @@ structures.
   headers, and whether it goes on on the page the section before ends on. A section that names no
   header or footer of a kind keeps the one of the section before, as Word does; the tree carries
   each section's resolved parts. `writeDocx` writes the sections back.
+- `comments`: present when the document has any, each `{ author, initials?, date?, blocks,
+  parent?, resolved }`: `date` as the file stores it (ISO 8601), `parent` the index of the
+  comment it answers, `resolved` whether the discussion is done. The text a comment is on carries
+  a `comment` mark; a comment on a point is a `commentAnchor` inline. `writeDocx` writes them
+  back, with the replies and done states of `commentsExtended`.
+- `objects`: present when the document embeds any, each `{ media, program?, name, package,
+  bytes }`: an OLE object or an Office file inside the document, shown by the image whose `media`
+  it names (an `image` inline with that index is the object). `program` is its ProgID
+  (`Excel.Sheet.12`), `package` says whether `bytes` is an Office package (xlsx, docx, pptx)
+  rather than a compound file holding an OLE object. `writeDocx` writes each back under
+  `word/embeddings`, where Word and LibreOffice open it as the object again.
 
 ## Blocks
 
@@ -48,8 +61,9 @@ In Rust, paragraphs, headings, list items, tables and text runs also carry a `lo
 line spacing, indents, page breaks, fonts, sizes and colours, column widths, cell margins and
 borders, and the tree has a `layout` with the page size, margins and body font. A floating image
 carries its `anchor` (what its position is measured from, its offset or alignment, its size and
-how the text goes around it), and the blocks of a floating text box a `frame` with the same anchor
-and the box's fill and outline. The renderer lays
+how the text goes around it, a tight wrap with its outline), and the blocks of a floating text box
+a `frame` with the same anchor, the box's fill and outline and the preset shape it is drawn as.
+The renderer lays
 the document out from them; they are not serialized, since an editor has its own styles. The tree
 also deserializes from the same JSON, which is how `writeDocx` reads it.
 
@@ -77,6 +91,8 @@ The style chain (`w:basedOn`) is followed for up to 16 steps.
 | `hardBreak` | a line break inside the block (`w:br` without a type, `w:cr`) |
 | `image` | `media` (index into `media`), `alt`, `width`, `height` in CSS pixels (each left out when unknown) |
 | `noteReference` | `note`, the index of the note in `notes`; the number it shows is its position among the notes of its kind |
+| `math` | `latex`, `display`: an equation as LaTeX, in the line or, with `display`, on a line of its own |
+| `commentAnchor` | `comment`, the index of a comment on a point rather than on text |
 
 Adjacent runs with the same marks are merged. Tabs are `\t` in the text. A page number or a page
 count field is text whose look says which (`PAGE`, `NUMPAGES`, `text:page-number`), so a
@@ -85,10 +101,23 @@ renderer can draw the page it lands on.
 Marks, in this order: `bold`, `italic`, `underline`, `strike` (single or double), `code` (a
 monospace font or a character style named like code or verbatim), `superscript`, `subscript`,
 `textStyle` with the `fontFamily`, `fontSize` (`"14pt"`) and `color` (`"#1F3864"`) the run sets
-itself (the paragraph's own font is not repeated), `highlight` with its `color`, and `link` with
-`href`. A run's character style applies first and its own properties over it; the old
-formatting a tracked change keeps is ignored. A link's underline is not repeated as a mark, nor is
-the underline of a link that was dropped.
+itself (the paragraph's own font is not repeated), `highlight` with its `color`, `link` with
+`href`, `comment` with the index of the comment the text is under, and, only when changes are
+kept, `insertion` and `deletion` with the `author` and `date` of the change. A run's character
+style applies first and its own properties over it; the old formatting a tracked change keeps is
+ignored. A link's underline is not repeated as a mark, nor is the underline of a link that was
+dropped.
+
+Tracked changes are accepted by default: inserted text is in the tree, deleted text is not.
+`read_document_tree_with(bytes, limits, &TreeOptions { tracked_changes: TrackedChanges::Keep })`,
+or `readDocumentTree(bytes, limits, { trackedChanges: 'keep' })`, keeps both, each run marked with
+its change, from `w:ins` and `w:del`, the tracked-changes regions of an odt and the revision marks
+and reviewer table of a doc; `writeDocx` writes them back as `w:ins` and `w:del`.
+
+Equations are read as LaTeX, the language an editor's formula field takes: from the Office Math
+of a docx and from the MathML of an odt formula object, read before the picture that stands in for
+it. One formula tree sits under the conversions, so a formula read, edited and written back stays
+the same; `writeDocx` writes Office Math.
 
 Links come from `w:hyperlink` (an external relationship, with its anchor appended) and from
 `HYPERLINK` fields. Only `http:`, `https:` and `mailto:` targets are kept; anything else (internal
@@ -108,9 +137,11 @@ Rust `convert_metafile_to_svg` turns one into SVG for a caller that shows it els
 returned as it is and must be sanitized before a browser shows it.
 
 Images come from DrawingML pictures (`a:blip r:embed`) and from VML (`v:imagedata r:id`, sized by
-the shape's `width` and `height` in `pt` or `px`). A chart becomes an `image/svg+xml` image drawn
-from the values the chart stores, with its title as `alt`; written back, it stays a picture. A
-drawn shape or group with no text box of its own (a docx `wps` shape or `wpg` group, an odt
+the shape's `width` and `height` in `pt` or `px`). A chart, a surface chart and the Office 2016
+kinds included, becomes an `image/svg+xml` image drawn from the values the chart stores, with its
+title as `alt`; written back, it stays a picture. A SmartArt becomes an `image/svg+xml` image of
+the drawing Office keeps of it. An OLE object (`w:object`) is the image of its replacement picture,
+and its object goes to `objects`. A drawn shape or group with no text box of its own (a docx `wps` shape or `wpg` group, an odt
 rectangle, ellipse, line, polygon, path or custom shape, a doc's OfficeArt shape) becomes an
 `image/svg+xml` image of its outline, fill, line and text, anchored where the shape floats. An
 image is returned only within `maxImageBytes` each, `maxImages` in number and
@@ -125,19 +156,20 @@ Counts of what the tree leaves out or changes:
 | `truncated` | `true` when `maxTextChars` cut the document; the rest is left out |
 | `textBoxes` | DrawingML and VML text boxes; their content follows the paragraph that anchors them, an editor getting it in the flow |
 | `footnotes`, `endnotes` | note references; the notes are in `notes` |
-| `comments` | comment references; comments are left out, the commented text stays |
+| `comments` | comment references; the comments are in `comments` |
 | `headersAndFooters` | header and footer parts; their content is in `headersFooters` |
 | `fieldsKeptAsText` | fields kept as their result |
 | `charts` | charts, drawn as SVG images when their values can be read |
-| `smartArt`, `equations` | left out |
+| `smartArt` | SmartArt, drawn as SVG images when Office kept their drawing |
+| `equations` | equations, read as `math` inlines |
 | `shapes` | shapes and groups that draw nothing (no size, no fill and no line, or a geometry this reader does not know), left out |
-| `embeddedObjects` | OLE objects, left out |
+| `embeddedObjects` | OLE objects, shown as their picture and kept in `objects` when the object itself is in the file |
 | `unsupportedLinks` | links dropped by the target rule |
 | `oversizedImages` | images past `maxImageBytes` |
 | `imagesOverLimit` | images past `maxImages` or `maxTotalImageBytes` |
 | `missingImages` | images whose part is missing or linked from outside the package |
-| `trackedInsertions` | tracked insertions and moves in, accepted: their text is in the tree |
-| `trackedDeletions` | tracked deletions, moves out and deleted rows, accepted: their text is gone |
+| `trackedInsertions` | tracked insertions and moves in: accepted, their text is in the tree, or kept, marked `insertion` |
+| `trackedDeletions` | tracked deletions, moves out and deleted rows: accepted, their text is gone, or kept, marked `deletion` |
 | `hiddenRuns` | runs formatted as hidden, left out |
 
 ## Example
@@ -201,8 +233,11 @@ default style, the automatic styles of `content.xml` applying to the body and th
 | `blockquote`, `codeBlock` | the `Quotations` and `Preformatted Text` styles and their Italian names |
 
 Notes are `text:note`; images `draw:image` in a `draw:frame`; a text box's paragraphs follow the
-one that anchors it; a chart object (`draw:object`) is drawn as an SVG image from the table it
-carries; sections and indexes are read through. The page, columns, headers and footers come from
+one that anchors it, and a custom shape whose enhanced geometry names a preset is a text box of
+that shape; a chart object (`draw:object`) is drawn as an SVG image from the table it carries, a
+formula object is read as its MathML, and a `draw:object-ole` is its picture with the compound
+file kept in `objects`; comments are `office:annotation`, their ranges closed by
+`office:annotation-end`; sections and indexes are read through. The page, columns, headers and footers come from
 the master page of the first paragraph's style, else `Standard`: a header's height and spacing
 are added to the top margin, as the page lays it out.
 
@@ -225,8 +260,18 @@ Inline pictures are read from the Data stream (`PICF` and the drawing records th
 bytes); floating pictures and text boxes from the drawings the main text anchors, their position
 from the shape's own properties over its anchor's. Footnotes, endnotes, headers and footers come
 from their stories; fields keep their result, `HYPERLINK` makes a link and `PAGE` and `NUMPAGES`
-the page fields. Hidden text, deletions and the codes of fields are left out and counted. A doc is
-written as a docx with `writeDocx`, or in one call with `convertToDocx`.
+the page fields. Comments come from their reference and text tables, with their author from the
+owners table; an embedding field keeps its picture, and the storage of the object pool its
+separator names is kept in `objects` as a compound file of its own. Hidden text, deletions and the
+codes of fields are left out and counted. A doc is written as a docx with `writeDocx`, or in one
+call with `convertToDocx`.
+
+A Word 6 or Word 95 file (`nFib` below 192) is read into the same tree: its shorter File
+Information Block, its 8-bit text, its formatting pages with two-byte page numbers and seven-byte
+paragraph entries, its style sheet of 8-bit names and its one-byte property modifiers are each
+rewritten as Word 97 stores them, so the same converter builds the tree. Text, styles, headings,
+character and paragraph formatting, tables, sections and footnotes are read; comments, drawings
+and pictures, which Word 6 stores another way, are left out.
 
 ## Trying it
 

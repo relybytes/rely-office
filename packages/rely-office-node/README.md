@@ -2,9 +2,10 @@
 
 Office documents in Node and in the browser without an office suite, through
 [rely-office](https://github.com/relybytes/rely-office) compiled to WebAssembly: the format of a
-file, its text for a search index, the sheets of a spreadsheet as tables, a `.docx` as a neutral
-document tree for a rich-text editor and back, PDF and PNG pages through Typst, and an editable
-spreadsheet with formulas that opens and saves xlsx.
+file, its text for a search index, the sheets of a spreadsheet as tables, a `.docx`, `.doc` or
+`.odt` as a neutral document tree for a rich-text editor and back, a presentation as slides and
+back, PDF and PNG pages through Typst, and an editable spreadsheet with formulas, conditional
+formats and validation that saves xlsx and ods.
 
 Everything runs in process; there is no native addon to build and no external program to call.
 Every read is bounded by limits, so an uploaded file cannot exhaust memory.
@@ -54,9 +55,11 @@ A document is a `Uint8Array` (a Node `Buffer` is one), an `ArrayBuffer` or any t
 | `detectFormat(bytes, fileName?)` | anything | `'docx' \| 'xlsx' \| 'pptx' \| 'odt' \| 'ods' \| 'odp' \| 'doc' \| 'xls' \| 'ppt' \| 'csv' \| 'tsv' \| 'unknown'` |
 | `extractText(bytes, fileName?, limits?)` | every format above | `{ format, text, truncated }` |
 | `readSheets(bytes, fileName?, limits?)` | xlsx, xls, ods, csv, tsv | `{ format, sheets: [{ name, rows, totalRows, totalColumns }] }` |
-| `readDocumentTree(bytes, limits?)` | docx, doc, odt | `{ blocks, media, report, notes, headersFooters, page, sections? }` |
+| `readDocumentTree(bytes, limits?, options?)` | docx, doc (Word 97-2003, 6 and 95), odt | `{ blocks, media, report, notes, headersFooters, page, sections?, comments?, objects? }` |
+| `readPresentation(bytes, limits?)` | pptx, odp, ppt | `{ widthEmu, heightEmu, slides, media, truncated }` |
 | `render(bytes, fileName?, options?)` | docx, doc, odt, xlsx, xls, ods, csv, tsv, pptx, ppt, odp (layout); a doc or ppt that cannot be read (text) | `{ format, fidelity, pageCount, truncated, pdf, thumbnail, pageImages }` |
-| `writeDocx({ blocks, media?, page?, sections? })` | a document tree | the docx bytes |
+| `writeDocx({ blocks, media?, page?, sections?, comments?, objects? })` | a document tree | the docx bytes |
+| `writePptx({ widthEmu, heightEmu, slides, media? })` | slides | the pptx bytes |
 | `convertToDocx(bytes, limits?)` | doc, odt, docx | the docx bytes |
 | `convertToPptx(bytes, limits?)` | ppt, odp, pptx | the pptx bytes |
 | `createSheet(options?)`, `openSheet(bytes, fileName?, options?)` | xlsx, xls, ods, csv, tsv | a `SheetDocument` |
@@ -110,7 +113,7 @@ const rendered = office.render(bytes, 'contratto.docx', {
 
 The typesetter, 27 MB of WebAssembly, loads on the first call with the fonts the package ships
 (Carlito, Caladea and the Liberation fonts, matching Calibri, Cambria, Arial, Times New Roman and
-Courier New). `fidelity` is `text` for the formats set as their text on A4. Errors add
+Courier New, and DejaVu Math TeX Gyre for equations). `fidelity` is `text` for the formats set as their text on A4. Errors add
 `INVALID_OPTIONS`, `TYPESET_FAILED` and `EXPORT_FAILED` to the codes above.
 
 ## Writing a docx
@@ -125,7 +128,36 @@ const docx = office.writeDocx({
 ```
 
 `readDocumentTree` reads the written file back to the same blocks. A tree that is not one throws
-`INVALID_TREE`.
+`INVALID_TREE`. Pass `comments` and `objects` as `readDocumentTree` gave them to keep the
+comments and the embedded objects; read with `{ trackedChanges: 'keep' }` to keep tracked
+changes as marks, which `writeDocx` writes back as changes:
+
+```js
+const tree = office.readDocumentTree(bytes, undefined, { trackedChanges: 'keep' });
+const docx = office.writeDocx({
+  blocks: tree.blocks,
+  media: tree.media.map((item) => item.bytes),
+  sections: tree.sections,
+  comments: tree.comments,
+  objects: tree.objects,                         // each { media, program?, name, bytes }
+});
+```
+
+## Presentations
+
+```js
+const presentation = office.readPresentation(readFileSync('riunione.pptx'));
+presentation.slides[0].notes;                    // the speaker notes, a text body
+presentation.slides[0].transition;               // { effect: 'fade', durationMs: 500, ... }
+const pptx = office.writePptx(presentation);     // media can stay as readPresentation gave it
+```
+
+A slide holds its `background`, its `shapes` in drawing order (each with its `id`, `frame`,
+`rotation`, `geometry`, `fill`, `line` and `content`: text, a picture or a table), its `notes`,
+whether it is `hidden`, its `transition` and its `animations` (each naming its shape by index, its
+class, PowerPoint's preset number, its trigger, delay and duration). A shape drawn from the
+layout or the master is resolved onto the slide and marked `inherited`. A pptx, an odp or a ppt
+reads the same way; `writePptx` always writes a pptx.
 
 ## Spreadsheets
 
@@ -153,8 +185,16 @@ throw `INVALID_FORMULA`, `NO_SUCH_SHEET`, `DUPLICATE_SHEET_NAME`, `INVALID_SHEET
 `LAST_SHEET`, `OUT_OF_BOUNDS`, `INVALID_INPUT`, `INVALID_LOCALE` or `INVALID_STYLE`. Each cell of
 `cells` carries its `style`; `stylesJson` and `mergesJson` give the styles and merged ranges a grid
 draws, `clearStyles`, `unmergeCells` and `setRowHeight` complete the set. Saving keeps the styles,
-merges and row heights, and writes the pictures and charts of the file back as they were. The formulas, functions and
-edits are described in [docs/editing.md](https://github.com/relybytes/rely-office/blob/main/docs/editing.md).
+merges and row heights, and writes the pictures, charts and pivot tables of the file back as they
+were.
+
+`conditionalFormats` and `setConditionalFormats` read and replace the conditional formats of a
+sheet, `validations` and `setValidations` its data validations; `conditionalLooks` gives the fill,
+font, data bar or icon each cell takes from the current values, `validation(sheet, row, column)`
+what a cell accepts and the items of its list, and `invalidCells` the cells their validation
+refuses. `save()` writes an xlsx and `saveOds()` an ods, which keeps everything but the pictures,
+charts and pivot tables. The formulas, functions, rules and edits are described in
+[docs/editing.md](https://github.com/relybytes/rely-office/blob/main/docs/editing.md).
 
 ### In the browser
 
@@ -171,7 +211,7 @@ The browser entry is an ES module with the same `SheetDocument`, built with `was
 ## The document tree
 
 `readDocumentTree` returns blocks, not HTML, so the caller maps them onto its editor's schema. A
-docx and an odt give the same tree; `writeDocx` writes it back as a docx.
+docx, a doc and an odt give the same tree; `writeDocx` writes it back as a docx.
 
 - **Blocks**: `heading` (`level` 1 to 6, `align`), `paragraph` (`align`: `left`, `center`, `right`,
   `justify`, absent when unset), `listItem` (`ordered`, `level` from 0,
@@ -180,19 +220,27 @@ docx and an odt give the same tree; `writeDocx` writes it back as a docx.
   `codeBlock` (consecutive code paragraphs as lines of `text`), `horizontalRule`.
 - **Inline content**: `text` with optional `marks` (`bold`, `italic`, `underline`, `strike`,
   `code`, `superscript`, `subscript`, `textStyle` with `fontFamily`, `fontSize` and `color`,
-  `highlight` with `color`, `link` with `href`), `hardBreak`, `image` with the `media` index,
-  `alt`, `width` and `height` in CSS pixels (a chart is an SVG image), and `noteReference` with
-  the index of its note in `notes`.
+  `highlight` with `color`, `link` with `href`, `comment` with the index of its comment, and with
+  `trackedChanges: 'keep'` `insertion` and `deletion` with `author` and `date`), `hardBreak`,
+  `image` with the `media` index, `alt`, `width` and `height` in CSS pixels (a chart or a SmartArt
+  is an SVG image), `math` with its `latex` and whether it is on a line of its own (`display`),
+  `noteReference` with the index of its note in `notes`, and `commentAnchor` for a comment on a
+  point.
+- **Comments**: `comments`, each with its `author`, `initials`, `date`, `blocks`, the `parent` it
+  answers and whether it is `resolved`.
+- **Embedded objects**: `objects`, each the `media` index of the image that shows it, its
+  `program` (the ProgID, `Excel.Sheet.12`), its `name`, whether it is an Office `package`, and its
+  `bytes`.
 - **Around the body**: `notes` (footnotes and endnotes), `headersFooters` (with the first-page
   and even-page variants) and `page` (size and margins in twentieths of a point).
 - **Links** keep only `http:`, `https:` and `mailto:` targets; any other target is dropped (its
   text stays) and counted in the report.
 - **Media** holds each embedded image once, with the type sniffed from its bytes. An SVG is
   returned as it is: sanitize it before serving it to a browser.
-- **Report** counts what the tree leaves out or changes: `textBoxes`, `footnotes`, `endnotes`,
-  `comments`, `headersAndFooters`, `fieldsKeptAsText`, `charts`, `smartArt`, `equations`,
-  `shapes`, `embeddedObjects`, `unsupportedLinks`, `oversizedImages`, `imagesOverLimit`,
-  `missingImages`, `trackedInsertions` (taken), `trackedDeletions` (skipped), `hiddenRuns`, and
+- **Report** counts what the tree holds, leaves out or changes: `textBoxes`, `footnotes`,
+  `endnotes`, `comments`, `headersAndFooters`, `fieldsKeptAsText`, `charts`, `smartArt`,
+  `equations`, `shapes`, `embeddedObjects`, `unsupportedLinks`, `oversizedImages`,
+  `imagesOverLimit`, `missingImages`, `trackedInsertions`, `trackedDeletions`, `hiddenRuns`, and
   `truncated` when the text limit cut the document.
 
 ```json
