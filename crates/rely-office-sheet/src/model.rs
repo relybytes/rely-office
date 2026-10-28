@@ -11,8 +11,10 @@ use std::collections::{BTreeMap, HashMap};
 
 use rely_office_core::{
     CarriedDrawing, CarriedPart, CarriedPivot, CellRange, CellStyle, ConditionalFormat,
-    DataValidation,
+    DataValidation, SheetDrawing,
 };
+
+use crate::arrange::AutoFilter;
 
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS};
 use crate::evaluate;
@@ -68,6 +70,12 @@ pub struct Sheet {
     /// The pivot tables of the file the sheet was read from, written back as they were: the
     /// cells they show are the sheet's own, and a refresh in Excel rebuilds them.
     pub(crate) pivots: Vec<CarriedPivot>,
+    /// The rows and columns frozen at the top and the left, 0 when none are.
+    pub frozen_rows: u32,
+    pub frozen_columns: u32,
+    pub(crate) auto_filter: Option<AutoFilter>,
+    /// The pictures and charts of the file, drawn as it was opened, for an editor to show.
+    pub(crate) pictures: Vec<SheetDrawing>,
 }
 
 impl Sheet {
@@ -81,6 +89,18 @@ impl Sheet {
     #[must_use]
     pub fn validations(&self) -> &[DataValidation] {
         &self.validations
+    }
+
+    /// The filter buttons of the sheet, if it has them.
+    #[must_use]
+    pub fn auto_filter(&self) -> Option<&AutoFilter> {
+        self.auto_filter.as_ref()
+    }
+
+    /// The pictures and charts of the file the sheet was read from, as they were drawn then.
+    #[must_use]
+    pub fn pictures(&self) -> &[SheetDrawing] {
+        &self.pictures
     }
 
     /// How many pivot tables the sheet carries.

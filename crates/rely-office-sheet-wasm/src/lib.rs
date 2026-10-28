@@ -14,8 +14,8 @@
 use rely_office_core::{Limits, OfficeError};
 use rely_office_sheet::{
     Border, BorderPlacement, CellLook, CellRef, ConditionalFormat, DataValidation, EditError,
-    EditHistory, Input, Locale, MAX_COLUMNS, MAX_ROWS, NumberFormat, StylePatch, Value, Workbook,
-    read_spreadsheet, write_ods, write_xlsx,
+    EditHistory, Input, Locale, MAX_COLUMNS, MAX_ROWS, NumberFormat, SortKey, StylePatch, Value,
+    Workbook, function_names, read_spreadsheet, write_ods, write_xlsx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -94,6 +94,63 @@ struct SheetSummary<'a> {
     row_heights: Vec<(u32, f64)>,
     /// How many pivot tables the sheet carries from its file, written back unchanged.
     pivot_tables: usize,
+    frozen_rows: u32,
+    frozen_columns: u32,
+    auto_filter: Option<FilterSummary<'a>>,
+    /// How many pictures and charts [`SheetDocument::pictures_summary`] lists.
+    pictures: usize,
+}
+
+/// The filter buttons of a sheet.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FilterSummary<'a> {
+    top: u32,
+    left: u32,
+    bottom: u32,
+    right: u32,
+    /// The filtered columns, counted from `left`, and the keys of the values each shows.
+    columns: Vec<FilterColumnSummary<'a>>,
+    hidden_rows: Vec<u32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FilterColumnSummary<'a> {
+    column: u32,
+    shown: Vec<&'a str>,
+}
+
+#[derive(Serialize)]
+struct FilterChoice {
+    key: String,
+    label: String,
+}
+
+/// A picture or a chart of the sheet: the cell its corner is anchored in and its size.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PictureSummary<'a> {
+    row: u32,
+    column: u32,
+    offset_x_emu: i64,
+    offset_y_emu: i64,
+    width_emu: i64,
+    height_emu: i64,
+    content_type: &'a str,
+    description: Option<&'a str>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SortKeyInput {
+    column: u32,
+    #[serde(default)]
+    descending: bool,
+}
+
+fn invalid_input(error: impl std::fmt::Display) -> Failure {
+    Failure::new("INVALID_INPUT", error.to_string())
 }
 
 /// The look the conditional formats give one cell.
@@ -232,10 +289,127 @@ impl SheetDocument {
                         .map(|(row, height)| (*row, *height))
                         .collect(),
                     pivot_tables: sheet.pivot_count(),
+                    frozen_rows: sheet.frozen_rows,
+                    frozen_columns: sheet.frozen_columns,
+                    auto_filter: sheet.auto_filter().map(|filter| FilterSummary {
+                        top: filter.range.first_row,
+                        left: filter.range.first_column,
+                        bottom: filter.range.last_row,
+                        right: filter.range.last_column,
+                        columns: filter
+                            .filtered_columns()
+                            .map(|column| FilterColumnSummary {
+                                column,
+                                shown: filter
+                                    .shown(column)
+                                    .map(|shown| shown.iter().map(String::as_str).collect())
+                                    .unwrap_or_default(),
+                            })
+                            .collect(),
+                        hidden_rows: filter.hidden_rows().collect(),
+                    }),
+                    pictures: sheet.pictures().len(),
                 }
             })
             .collect();
         to_json(&sheets)
+    }
+
+    /// Sort the rows of a rectangle by `[{ column, descending }]`, columns of the sheet.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_INPUT` for JSON that is not a list of keys, or the error of the edit.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a rectangle, the keys and the heading flag, as flat values for JavaScript"
+    )]
+    pub fn sort_json(
+        &mut self,
+        sheet: usize,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+        keys_json: &str,
+        has_header: bool,
+    ) -> Result<(), Failure> {
+        let keys: Vec<SortKeyInput> = serde_json::from_str(keys_json).map_err(invalid_input)?;
+        let keys: Vec<SortKey> = keys
+            .into_iter()
+            .map(|key| SortKey {
+                column: key.column,
+                descending: key.descending,
+            })
+            .collect();
+        self.workbook
+            .sort_range(
+                sheet,
+                (CellRef::new(top, left), CellRef::new(bottom, right)),
+                &keys,
+                has_header,
+            )
+            .map_err(Into::into)
+    }
+
+    /// Choose the values a filter column shows, a JSON list of keys or `null` for all.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_INPUT` for JSON that is neither, or the error of the edit.
+    pub fn filter_column_json(
+        &mut self,
+        sheet: usize,
+        column: u32,
+        shown_json: &str,
+    ) -> Result<(), Failure> {
+        let shown: Option<Vec<String>> = serde_json::from_str(shown_json).map_err(invalid_input)?;
+        self.workbook
+            .set_filter_column(sheet, column, shown)
+            .map_err(Into::into)
+    }
+
+    /// `[{ key, label }]`, the values a filter column can show.
+    ///
+    /// # Errors
+    ///
+    /// The error of the workbook for a sheet without a filter or a column outside it.
+    pub fn filter_choices_summary(&self, sheet: usize, column: u32) -> Result<String, Failure> {
+        let choices: Vec<FilterChoice> = self
+            .workbook
+            .filter_choices(sheet, column, self.locale)?
+            .into_iter()
+            .map(|(key, label)| FilterChoice { key, label })
+            .collect();
+        to_json(&choices)
+    }
+
+    /// The pictures and charts of a sheet, as JSON, in the order `picture_bytes` takes them.
+    ///
+    /// # Errors
+    ///
+    /// `NO_SUCH_SHEET`.
+    pub fn pictures_summary(&self, sheet: usize) -> Result<String, Failure> {
+        let content = self
+            .workbook
+            .sheets()
+            .get(sheet)
+            .ok_or(EditError::NoSuchSheet(sheet))?;
+        let pictures: Vec<PictureSummary<'_>> = content
+            .pictures()
+            .iter()
+            .map(|picture| PictureSummary {
+                row: picture.row,
+                column: picture.column,
+                offset_x_emu: picture.offset_emu.0,
+                offset_y_emu: picture.offset_emu.1,
+                width_emu: picture.width_emu,
+                height_emu: picture.height_emu,
+                content_type: picture.content_type,
+                description: picture.description.as_deref(),
+            })
+            .collect();
+        to_json(&pictures)
     }
 
     /// The cells with content or a look of their own in a window, row by row.
@@ -1156,6 +1330,194 @@ impl SheetDocument {
     pub fn invalid_cells_json(&self, sheet: usize) -> Result<String, JsError> {
         self.invalid_cells_summary(sheet)
             .map_err(|failure| throw(&failure))
+    }
+
+    /// Continue the cells of a source rectangle over a target that holds it and reaches past it
+    /// on one side, as the fill handle does: numbers follow their trend, dates count days, a
+    /// text ending in a number counts on, month and weekday names follow the calendar.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = fillRange)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "two rectangles as flat numbers for JavaScript"
+    )]
+    pub fn fill_range(
+        &mut self,
+        sheet: usize,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+        target_top: u32,
+        target_left: u32,
+        target_bottom: u32,
+        target_right: u32,
+    ) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .workbook
+                .fill_range(
+                    sheet,
+                    (CellRef::new(top, left), CellRef::new(bottom, right)),
+                    (
+                        CellRef::new(target_top, target_left),
+                        CellRef::new(target_bottom, target_right),
+                    ),
+                )
+                .map_err(|error| throw(&error.into()))
+        })
+    }
+
+    /// Freeze the first rows and columns of a sheet; 0 and 0 unfreezes.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = setFrozen)]
+    pub fn set_frozen(&mut self, sheet: usize, rows: u32, columns: u32) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .workbook
+                .set_frozen(sheet, rows, columns)
+                .map_err(|error| throw(&error.into()))
+        })
+    }
+
+    /// Sort the rows of a rectangle by `[{ column, descending }]`, columns of the sheet; with
+    /// `hasHeader` the first row stays where it is.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = sortRange)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a rectangle, the keys and the heading flag, as flat values for JavaScript"
+    )]
+    pub fn sort_range(
+        &mut self,
+        sheet: usize,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+        keys_json: &str,
+        has_header: bool,
+    ) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .sort_json(sheet, top, left, bottom, right, keys_json, has_header)
+                .map_err(|failure| throw(&failure))
+        })
+    }
+
+    /// Put filter buttons on the first row of a rectangle; the rows an earlier filter hid come
+    /// back.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = setAutoFilter)]
+    pub fn set_auto_filter(
+        &mut self,
+        sheet: usize,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+    ) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .workbook
+                .set_auto_filter(
+                    sheet,
+                    Some((CellRef::new(top, left), CellRef::new(bottom, right))),
+                )
+                .map_err(|error| throw(&error.into()))
+        })
+    }
+
+    /// Take the filter off a sheet, showing every row it hid.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = clearAutoFilter)]
+    pub fn clear_auto_filter(&mut self, sheet: usize) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .workbook
+                .set_auto_filter(sheet, None)
+                .map_err(|error| throw(&error.into()))
+        })
+    }
+
+    /// Choose the values a filter column, counted from the filter's first, shows: a JSON list
+    /// of the keys `filterChoicesJson` gives, or `null` to show them all.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = setFilterColumn)]
+    pub fn set_filter_column(
+        &mut self,
+        sheet: usize,
+        column: u32,
+        shown_json: &str,
+    ) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .filter_column_json(sheet, column, shown_json)
+                .map_err(|failure| throw(&failure))
+        })
+    }
+
+    /// `[{ key, label }]`: the values a filter column can show, in sort order, as keys and as
+    /// the document's locale shows them; an empty key stands for the blank cells.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = filterChoicesJson)]
+    pub fn filter_choices_json(&self, sheet: usize, column: u32) -> Result<String, JsError> {
+        self.filter_choices_summary(sheet, column)
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// `[{ row, column, offsetXEmu, offsetYEmu, widthEmu, heightEmu, contentType, description }]`:
+    /// the pictures and charts of the file, charts drawn as SVG when it was opened.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = picturesJson)]
+    pub fn pictures_json(&self, sheet: usize) -> Result<String, JsError> {
+        self.pictures_summary(sheet)
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// The bytes of a picture or a chart, in the order `picturesJson` lists them; empty past
+    /// the end.
+    #[wasm_bindgen(js_name = pictureBytes)]
+    #[must_use]
+    pub fn picture_bytes(&self, sheet: usize, index: usize) -> Vec<u8> {
+        self.workbook
+            .sheets()
+            .get(sheet)
+            .and_then(|content| content.pictures().get(index))
+            .map(|picture| picture.bytes.clone())
+            .unwrap_or_default()
+    }
+
+    /// The names of the functions a formula can call, as the document's locale writes them,
+    /// in alphabetical order, as JSON.
+    #[wasm_bindgen(js_name = functionNamesJson)]
+    #[must_use]
+    pub fn function_names_json(&self) -> String {
+        serde_json::to_string(&function_names(self.locale)).unwrap_or_else(|_| "[]".to_owned())
     }
 
     /// Set today's date, as a serial day count, for `TODAY` and `NOW`; a negative one unsets it.

@@ -51,10 +51,11 @@ mod test_support;
 pub use document::{
     Alignment, Anchor, AnchorAlign, AnchorBase, AnchorPosition, Block, Border, BorderStyle,
     Borders, CellLook, Comment, DocumentTree, EmbeddedObject, HeadersFooters, ImportReport, Inline,
-    LabelSuffix, LineSpacing, ListLabel, Mark, Media, Note, NoteKind, OUTLINE_BANDS, PageField,
-    PageLayout, ParagraphLook, RunLook, Section, TabKind, TabLeader, TabStop, TableCell, TableLook,
-    TableRow, TextFrame, TrackedChanges, TreeOptions, VerticalAlignment, Wrap, WrapOutline,
-    read_document_tree, read_document_tree_with, sniff_image_type, write_docx,
+    LabelSuffix, LineSpacing, LineSpacingFormat, ListLabel, Mark, Media, NamedStyle, Note,
+    NoteKind, OUTLINE_BANDS, PageField, PageLayout, ParagraphFormat, ParagraphLook, RunLook,
+    Section, TabKind, TabLeader, TabStop, TableCell, TableLook, TableRow, TextFrame,
+    TrackedChanges, TreeOptions, VerticalAlignment, Wrap, WrapOutline, read_document_tree,
+    read_document_tree_with, sniff_image_type, write_docx,
 };
 pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};
@@ -70,8 +71,8 @@ pub use opendocument::excel_formula_from_odf;
 pub use sheet::{Sheet, Workbook, read_ods_sheet_layouts, read_workbook, read_workbook_in};
 pub use sheet_drawings::{CarriedDrawing, CarriedPart, CarriedPivot, SheetDrawing};
 pub use sheet_layout::{
-    CellRange, MergePlace, SheetLayout, read_xlsx_drawing_parts, read_xlsx_layouts,
-    read_xlsx_pivot_parts, read_xlsx_theme_part,
+    AutoFilterLayout, CellRange, MergePlace, SheetLayout, read_xlsx_drawing_parts,
+    read_xlsx_layouts, read_xlsx_pivot_parts, read_xlsx_theme_part,
 };
 pub use sheet_rules::{
     ComparisonOperator, Condition, ConditionalFormat, ConditionalRule, DataValidation,

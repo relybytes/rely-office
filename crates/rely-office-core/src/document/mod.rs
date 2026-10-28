@@ -10,6 +10,7 @@
 mod anchor;
 mod convert;
 mod edges;
+mod format;
 mod look;
 mod media;
 mod notes;
@@ -30,6 +31,7 @@ pub use anchor::{
 pub use edges::{
     Border, BorderStyle, Borders, CellLook, TabKind, TabLeader, TabStop, VerticalAlignment,
 };
+pub use format::{LineSpacingFormat, NamedStyle, ParagraphFormat};
 pub use look::{LabelSuffix, LineSpacing, ListLabel, PageField, ParagraphLook, RunLook, TableLook};
 pub(crate) use media::image_pixel_size;
 pub use media::sniff_image_type;
@@ -266,7 +268,15 @@ pub enum Block {
         content: Vec<Inline>,
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         align: Option<Alignment>,
-        #[cfg_attr(feature = "serde", serde(skip))]
+        #[cfg_attr(
+            feature = "serde",
+            serde(
+                rename = "format",
+                default,
+                skip_serializing_if = "format::look_as_format::is_empty",
+                with = "format::look_as_format"
+            )
+        )]
         look: ParagraphLook,
     },
     Paragraph {
@@ -274,7 +284,15 @@ pub enum Block {
         /// The alignment the paragraph or its style sets; `None` is the start of the line.
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         align: Option<Alignment>,
-        #[cfg_attr(feature = "serde", serde(skip))]
+        #[cfg_attr(
+            feature = "serde",
+            serde(
+                rename = "format",
+                default,
+                skip_serializing_if = "format::look_as_format::is_empty",
+                with = "format::look_as_format"
+            )
+        )]
         look: ParagraphLook,
     },
     /// One item of a list. Consecutive items with the same `list_id` belong to one list; `level`
@@ -284,12 +302,28 @@ pub enum Block {
         level: u8,
         list_id: u32,
         content: Vec<Inline>,
-        #[cfg_attr(feature = "serde", serde(skip))]
+        #[cfg_attr(
+            feature = "serde",
+            serde(
+                rename = "format",
+                default,
+                skip_serializing_if = "format::look_as_format::is_empty",
+                with = "format::look_as_format"
+            )
+        )]
         look: ParagraphLook,
     },
     Table {
         rows: Vec<TableRow>,
-        #[cfg_attr(feature = "serde", serde(skip))]
+        #[cfg_attr(
+            feature = "serde",
+            serde(
+                rename = "columnWidthsTwips",
+                default,
+                skip_serializing_if = "format::table_widths::is_empty",
+                with = "format::table_widths"
+            )
+        )]
         look: TableLook,
     },
     /// Consecutive quote paragraphs, together.

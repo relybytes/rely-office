@@ -23,6 +23,7 @@ use rely_office_core::{
 use zip::write::SimpleFileOptions;
 
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS, column_name};
+use crate::arrange::AutoFilter;
 use crate::dates::serial_from_date;
 use crate::formula::{Expr, PREFIXED_FUNCTIONS, number_text, parse_formula, print_formula};
 use crate::model::{Cell, MAX_CELLS, MAX_SHEETS, NumberFormat, Sheet, Workbook};
@@ -67,13 +68,25 @@ pub fn read_spreadsheet(
             }
             if format == DocumentFormat::Xlsx {
                 let mut layouts = read_xlsx_layouts(bytes, limits);
+                // The layout's view and pictures are taken after its looks are applied.
+                let mut layouts_for_view: HashMap<String, SheetLayout> = HashMap::new();
                 let mut drawings = read_xlsx_drawing_parts(bytes, limits);
                 let mut pivots = read_xlsx_pivot_parts(bytes, limits);
                 for sheet in &mut sheets {
                     if let Some(layout) = layouts.remove(&sheet.name) {
                         apply_layout(sheet, &layout, &mut styles);
+                        layouts_for_view.insert(sheet.name.clone(), layout);
                     }
                     sheet.drawing = drawings.remove(&sheet.name);
+                    if let Some(layout) = layouts_for_view.remove(&sheet.name) {
+                        sheet.frozen_rows = layout.frozen_rows;
+                        sheet.frozen_columns = layout.frozen_columns;
+                        sheet.auto_filter = layout
+                            .auto_filter
+                            .as_ref()
+                            .map(|filter| AutoFilter::from_layout(filter, &sheet.row_heights));
+                        sheet.pictures = layout.drawings;
+                    }
                     sheet.pivots = pivots.remove(&sheet.name).unwrap_or_default();
                 }
             }
@@ -758,6 +771,7 @@ fn sheet_part(
         r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" "#,
         r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#
     ));
+    xml.push_str(&sheet_views_xml(sheet));
     if !sheet.column_widths.is_empty() {
         xml.push_str("<cols>");
         for (column, width) in &sheet.column_widths {
@@ -807,6 +821,7 @@ fn sheet_part(
         xml.push_str("</row>");
     }
     xml.push_str("</sheetData>");
+    xml.push_str(&auto_filter_xml(sheet));
     if !sheet.merges.is_empty() {
         let _ = write!(xml, r#"<mergeCells count="{}">"#, sheet.merges.len());
         for merge in &sheet.merges {
@@ -828,6 +843,95 @@ fn sheet_part(
     }
     xml.push_str("</worksheet>");
     xml
+}
+
+/// The view of a sheet: its frozen rows and columns, when it has any.
+fn sheet_views_xml(sheet: &Sheet) -> String {
+    if sheet.frozen_rows == 0 && sheet.frozen_columns == 0 {
+        return String::new();
+    }
+    let mut pane = String::from("<pane");
+    if sheet.frozen_columns > 0 {
+        let _ = write!(pane, r#" xSplit="{}""#, sheet.frozen_columns);
+    }
+    if sheet.frozen_rows > 0 {
+        let _ = write!(pane, r#" ySplit="{}""#, sheet.frozen_rows);
+    }
+    let active = match (sheet.frozen_rows > 0, sheet.frozen_columns > 0) {
+        (true, true) => "bottomRight",
+        (true, false) => "bottomLeft",
+        _ => "topRight",
+    };
+    let _ = write!(
+        pane,
+        r#" topLeftCell="{}{}" activePane="{active}" state="frozen"/>"#,
+        column_name(sheet.frozen_columns),
+        sheet.frozen_rows + 1
+    );
+    format!(
+        r#"<sheetViews><sheetView workbookViewId="0">{pane}<selection pane="{active}"/></sheetView></sheetViews>"#
+    )
+}
+
+/// The filter buttons of a sheet and the values its filtered columns show.
+fn auto_filter_xml(sheet: &Sheet) -> String {
+    let Some(filter) = sheet.auto_filter() else {
+        return String::new();
+    };
+    let range = &filter.range;
+    let mut xml = format!(
+        r#"<autoFilter ref="{}{}:{}{}""#,
+        column_name(range.first_column),
+        range.first_row + 1,
+        column_name(range.last_column),
+        range.last_row + 1
+    );
+    let columns: Vec<u32> = filter.filtered_columns().collect();
+    if columns.is_empty() {
+        xml.push_str("/>");
+        return xml;
+    }
+    xml.push('>');
+    for column in columns {
+        let shown = filter.shown(column).cloned().unwrap_or_default();
+        let blank = if shown.contains("") {
+            r#" blank="1""#
+        } else {
+            ""
+        };
+        let _ = write!(xml, r#"<filterColumn colId="{column}"><filters{blank}>"#);
+        for value in shown.iter().filter(|value| !value.is_empty()) {
+            let _ = write!(xml, r#"<filter val="{}"/>"#, escape(value));
+        }
+        xml.push_str("</filters></filterColumn>");
+    }
+    xml.push_str("</autoFilter>");
+    xml
+}
+
+/// The hidden names Excel keeps for the range of each sheet's filter.
+fn defined_names_xml(workbook: &Workbook) -> String {
+    let names: Vec<String> = workbook
+        .sheets
+        .iter()
+        .enumerate()
+        .filter_map(|(index, sheet)| {
+            let range = sheet.auto_filter()?.range;
+            Some(format!(
+                r#"<definedName name="_xlnm._FilterDatabase" localSheetId="{index}" hidden="1">'{}'!${}${}:${}${}</definedName>"#,
+                escape(&sheet.name.replace('\'', "''")),
+                column_name(range.first_column),
+                range.first_row + 1,
+                column_name(range.last_column),
+                range.last_row + 1
+            ))
+        })
+        .collect();
+    if names.is_empty() {
+        String::new()
+    } else {
+        format!("<definedNames>{}</definedNames>", names.concat())
+    }
 }
 
 /// A formula with the functions newer than Excel 2007 named as a file names them.
@@ -913,7 +1017,9 @@ fn workbook_part(workbook: &Workbook) -> String {
             index + 1
         );
     }
-    xml.push_str(r#"</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/>"#);
+    xml.push_str("</sheets>");
+    xml.push_str(&defined_names_xml(workbook));
+    xml.push_str(r#"<calcPr calcId="191029" fullCalcOnLoad="1"/>"#);
     let caches = pivot_caches(workbook);
     if !caches.is_empty() {
         xml.push_str("<pivotCaches>");

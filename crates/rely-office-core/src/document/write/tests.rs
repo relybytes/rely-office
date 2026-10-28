@@ -777,3 +777,68 @@ fn keeps_whether_the_spaces_of_two_paragraphs_add_up() {
     original.layout.spacing_adds_up = true;
     assert!(round_trip(&original).layout.spacing_adds_up);
 }
+
+#[test]
+fn writes_and_reads_back_the_format_a_paragraph_sets_itself() {
+    let format = crate::document::ParagraphFormat {
+        style: Some(crate::document::NamedStyle::Title),
+        space_before_twips: Some(240),
+        space_after_twips: Some(0),
+        line_spacing: Some(crate::document::LineSpacingFormat::Auto(360)),
+        indent_left_twips: Some(720),
+        indent_right_twips: None,
+        indent_first_line_twips: Some(-360),
+        page_break_before: true,
+    };
+    let original = tree(
+        vec![
+            paragraph(vec![text("Prima", Vec::new())], None),
+            Block::Paragraph {
+                content: vec![text("Titolo", Vec::new())],
+                align: None,
+                look: format.to_look(),
+            },
+        ],
+        Vec::new(),
+    );
+
+    let read = round_trip(&original);
+
+    // The title of Word reads as a top heading that keeps its style.
+    let Block::Heading { level: 1, look, .. } = &read.blocks[1] else {
+        panic!("not a top heading: {:?}", read.blocks[1]);
+    };
+    assert_eq!(look.format, format);
+    let Block::Heading { look: again, .. } = &round_trip(&read).blocks[1] else {
+        panic!("the title did not stay a heading");
+    };
+    assert_eq!(again.format, format);
+}
+
+#[test]
+fn writes_and_reads_back_the_column_widths_of_a_table() {
+    let cell = |value: &str| TableCell {
+        col_span: 1,
+        row_span: 1,
+        blocks: vec![paragraph(vec![text(value, Vec::new())], None)],
+        look: CellLook::default(),
+    };
+    let original = tree(
+        vec![Block::Table {
+            rows: vec![crate::document::TableRow {
+                header: false,
+                cells: vec![cell("a"), cell("b")],
+            }],
+            look: TableLook {
+                column_widths_twips: vec![1_500, 4_500],
+                ..TableLook::default()
+            },
+        }],
+        Vec::new(),
+    );
+
+    let Block::Table { look, .. } = &round_trip(&original).blocks[0] else {
+        panic!("not a table");
+    };
+    assert_eq!(look.column_widths_twips, vec![1_500, 4_500]);
+}

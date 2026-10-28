@@ -31,6 +31,9 @@ use crate::theme::Theme;
 use crate::xml_text::attribute_value;
 use crate::{Limits, OfficeError};
 
+/// The filtered columns and the values of each read from a file, past which the rest is dropped.
+const MAX_FILTER_COLUMNS: usize = 1_024;
+const MAX_FILTER_VALUES: usize = 10_000;
 const WORKBOOK_PART: &str = "xl/workbook.xml";
 /// The most columns given a width; Excel's own limit is 16,384.
 const MAX_WIDTH_COLUMNS: u32 = 16_384;
@@ -43,7 +46,7 @@ const MAX_MERGES: usize = 100_000;
 const MAX_ROW_HEIGHT: u32 = 8_180;
 
 /// A rectangle of cells, rows and columns counted from 0, both ends included.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -131,6 +134,19 @@ pub struct SheetLayout {
     pub drawings: Vec<SheetDrawing>,
     pub conditional_formats: Vec<ConditionalFormat>,
     pub validations: Vec<DataValidation>,
+    /// The rows and columns frozen at the top and the left, 0 when none are.
+    pub frozen_rows: u32,
+    pub frozen_columns: u32,
+    pub auto_filter: Option<AutoFilterLayout>,
+}
+
+/// The filter buttons of a sheet: the range they head and the values each filtered column
+/// shows, an empty text standing for the blank cells.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AutoFilterLayout {
+    pub range: CellRange,
+    /// The column, counted from the first of the range, and the values it shows.
+    pub columns: Vec<(u32, Vec<String>)>,
 }
 
 impl SheetLayout {
@@ -497,6 +513,60 @@ fn sheet_layout(sheet: &str, theme: &ThemeColours) -> Result<ReadLayout, OfficeE
                     layout.grid_lines = attribute(&element, "gridLines")
                         .is_some_and(|value| value == "1" || value == "true");
                 }
+                "pane" => {
+                    let frozen = attribute(&element, "state")
+                        .is_some_and(|state| state == "frozen" || state == "frozenSplit");
+                    let split = |name: &str| {
+                        attribute(&element, name)
+                            .and_then(|value| value.parse::<u32>().ok())
+                            .map_or(0, |value| value.min(MAX_ROWS))
+                    };
+                    if frozen {
+                        layout.frozen_rows = split("ySplit");
+                        layout.frozen_columns = split("xSplit");
+                    }
+                }
+                "autoFilter" => {
+                    layout.auto_filter = attribute(&element, "ref")
+                        .and_then(|reference| CellRange::parse(&reference))
+                        .map(|range| AutoFilterLayout {
+                            range,
+                            columns: Vec::new(),
+                        });
+                }
+                "filterColumn" => {
+                    if let (Some(filter), Some(column)) = (
+                        layout.auto_filter.as_mut(),
+                        attribute(&element, "colId").and_then(|id| id.parse::<u32>().ok()),
+                    ) && filter.columns.len() < MAX_FILTER_COLUMNS
+                    {
+                        filter.columns.push((column, Vec::new()));
+                    }
+                }
+                "filters"
+                    if attribute(&element, "blank")
+                        .is_some_and(|value| value == "1" || value == "true") =>
+                {
+                    if let Some((_, shown)) = layout
+                        .auto_filter
+                        .as_mut()
+                        .and_then(|filter| filter.columns.last_mut())
+                    {
+                        shown.push(String::new());
+                    }
+                }
+                "filter" => {
+                    if let (Some((_, shown)), Some(value)) = (
+                        layout
+                            .auto_filter
+                            .as_mut()
+                            .and_then(|filter| filter.columns.last_mut()),
+                        attribute(&element, "val"),
+                    ) && shown.len() < MAX_FILTER_VALUES
+                    {
+                        shown.push(value);
+                    }
+                }
                 "oddHeader" => reading = Some(true),
                 "oddFooter" => reading = Some(false),
                 _ => {}
@@ -748,6 +818,39 @@ mod tests {
                 .unwrap();
         assert_eq!(layout, SheetLayout::default());
         assert!(layout_of("<worksheet><col").is_err());
+    }
+
+    #[test]
+    fn reads_frozen_panes_and_the_filter_with_its_values() {
+        let layout = layout_of(concat!(
+            r#"<worksheet><sheetViews><sheetView workbookViewId="0">"#,
+            r#"<pane xSplit="2" ySplit="1" topLeftCell="C2" state="frozen"/></sheetView></sheetViews>"#,
+            r#"<sheetData/><autoFilter ref="A1:D20"><filterColumn colId="1"><filters blank="1">"#,
+            r#"<filter val="Nord"/><filter val="Sud"/></filters></filterColumn>"#,
+            r#"<filterColumn colId="3"><filters><filter val="10"/></filters></filterColumn>"#,
+            "</autoFilter></worksheet>"
+        ))
+        .unwrap();
+        assert_eq!((layout.frozen_rows, layout.frozen_columns), (1, 2));
+        let filter = layout.auto_filter.unwrap();
+        assert_eq!(filter.range, CellRange::parse("A1:D20").unwrap());
+        assert_eq!(
+            filter.columns,
+            vec![
+                (1, vec![String::new(), "Nord".to_owned(), "Sud".to_owned()]),
+                (3, vec!["10".to_owned()]),
+            ]
+        );
+    }
+
+    #[test]
+    fn ignores_a_split_that_is_not_frozen() {
+        let layout = layout_of(
+            r#"<worksheet><sheetViews><sheetView><pane xSplit="2400" ySplit="1200"/></sheetView></sheetViews></worksheet>"#,
+        )
+        .unwrap();
+        assert_eq!((layout.frozen_rows, layout.frozen_columns), (0, 0));
+        assert_eq!(layout.auto_filter, None);
     }
 
     #[test]

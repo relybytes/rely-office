@@ -11,6 +11,7 @@ use super::anchor::TextFrame;
 use super::edges::{
     Borders, TabStop, hex_colour, highlight_colour, merge_tabs, parse_tabs, shading_fill,
 };
+use super::format::ParagraphFormat;
 use super::styles::on_off;
 use crate::xml_tree::{Element, Namespace};
 
@@ -155,6 +156,8 @@ pub struct ParagraphLook {
     pub list_label: Option<ListLabel>,
     /// The text box the paragraph is in.
     pub frame: Option<TextFrame>,
+    /// What the paragraph sets itself, the part an editor changes and the JSON tree carries.
+    pub format: ParagraphFormat,
 }
 
 /// What separates a list label from the text.
@@ -237,6 +240,8 @@ impl ParagraphLook {
             borders: self.borders.or(fallback.borders),
             list_label: self.list_label.or(fallback.list_label),
             frame: self.frame.or(fallback.frame),
+            // What a paragraph sets itself is its own: a style never sets it for it.
+            format: self.format,
         }
     }
 }

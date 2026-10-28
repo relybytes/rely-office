@@ -14,6 +14,7 @@
 //! formatting, so a document read and written again keeps its spacing, fonts and table colours;
 //! a tree from an editor has no looks and takes the styles' own.
 
+use super::format::NamedStyle;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 use std::io::{Cursor, Write};
@@ -387,7 +388,11 @@ impl DocxWriter<'_> {
                     align,
                     look,
                 } => {
-                    let style = format!("Heading{}", (*level).clamp(1, MAX_HEADING_LEVEL));
+                    // The title of Word reads as a top heading and is written back as its style.
+                    let style = look.format.style.map_or_else(
+                        || format!("Heading{}", (*level).clamp(1, MAX_HEADING_LEVEL)),
+                        |style| style.style_id().to_owned(),
+                    );
                     self.paragraph(xml, Some(&style), *align, None, content, look);
                 }
                 Block::Paragraph {
@@ -395,7 +400,9 @@ impl DocxWriter<'_> {
                     align,
                     look,
                 } => {
-                    self.paragraph(xml, paragraph_style, *align, None, content, look);
+                    // A named style is the paragraph's own: an intense quote stays one inside a quote.
+                    let style = look.format.style.map(NamedStyle::style_id).or(paragraph_style);
+                    self.paragraph(xml, style, *align, None, content, look);
                 }
                 Block::ListItem {
                     ordered,
@@ -1847,6 +1854,20 @@ const STYLES: &str = concat!(
     r#"<w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:qFormat/>"#,
     r#"<w:pPr><w:spacing w:before="200"/><w:ind w:left="864" w:right="864"/></w:pPr>"#,
     r#"<w:rPr><w:i/><w:color w:val="404040"/></w:rPr></w:style>"#,
+    r#"<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>"#,
+    r#"<w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:contextualSpacing/></w:pPr>"#,
+    r#"<w:rPr><w:rFonts w:ascii="Calibri Light" w:hAnsi="Calibri Light"/><w:spacing w:val="-10"/><w:kern w:val="28"/><w:sz w:val="56"/></w:rPr></w:style>"#,
+    r#"<w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>"#,
+    r#"<w:rPr><w:color w:val="5A5A5A"/><w:spacing w:val="15"/><w:sz w:val="22"/></w:rPr></w:style>"#,
+    r#"<w:style w:type="paragraph" w:styleId="IntenseQuote"><w:name w:val="Intense Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>"#,
+    r#"<w:pPr><w:pBdr><w:top w:val="single" w:sz="4" w:space="10" w:color="4472C4"/><w:bottom w:val="single" w:sz="4" w:space="10" w:color="4472C4"/></w:pBdr>"#,
+    r#"<w:spacing w:before="360" w:after="360"/><w:ind w:left="864" w:right="864"/><w:jc w:val="center"/></w:pPr>"#,
+    r#"<w:rPr><w:i/><w:color w:val="4472C4"/></w:rPr></w:style>"#,
+    r#"<w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="caption"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>"#,
+    r#"<w:pPr><w:spacing w:after="200" w:line="240" w:lineRule="auto"/></w:pPr>"#,
+    r#"<w:rPr><w:i/><w:color w:val="44546A"/><w:sz w:val="18"/></w:rPr></w:style>"#,
+    r#"<w:style w:type="paragraph" w:styleId="NoSpacing"><w:name w:val="No Spacing"/><w:qFormat/>"#,
+    r#"<w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:style>"#,
     r#"<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/>"#,
     r#"<w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style>"#,
     r#"<w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/>"#,

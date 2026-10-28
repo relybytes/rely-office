@@ -64,6 +64,7 @@ impl Evaluator<'_> {
             .or_else(|| self.lookups(sheet, name, arguments))
             .or_else(|| self.calendar(sheet, name, arguments))
             .or_else(|| self.finance(sheet, name, arguments))
+            .or_else(|| self.more(sheet, name, arguments))
     }
 
     fn optional_number(

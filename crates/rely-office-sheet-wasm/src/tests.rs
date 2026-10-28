@@ -44,7 +44,10 @@ fn edits_and_shows_a_window_of_cells() {
     let sheets = parse(&document.sheets_summary().unwrap());
     assert_eq!(
         sheets,
-        json!([{ "name": "Foglio1", "rows": 3, "columns": 2, "columnWidths": [], "rowHeights": [], "pivotTables": 0 }])
+        json!([{
+            "name": "Foglio1", "rows": 3, "columns": 2, "columnWidths": [], "rowHeights": [],
+            "pivotTables": 0, "frozenRows": 0, "frozenColumns": 0, "autoFilter": null, "pictures": 0
+        }])
     );
     assert_eq!(document.preview_input("=A1"), "formula");
     assert_eq!(document.preview_input("1.234,5"), "number");
@@ -303,4 +306,90 @@ fn sets_and_reads_conditional_formats_and_validations_as_json() {
     ] {
         assert_eq!(summary.unwrap_err().code, "NO_SUCH_SHEET");
     }
+}
+
+#[test]
+fn sorts_filters_and_freezes_a_sheet() {
+    let mut document = SheetDocument::create("it").unwrap();
+    document
+        .set_inputs_json(
+            0,
+            r#"[[0,0,"Zona"],[0,1,"Importo"],[1,0,"Sud"],[1,1,"2,5"],[2,0,"Nord"],[2,1,"1"],[3,0,"Sud"],[3,1,"3"]]"#,
+        )
+        .unwrap();
+
+    document
+        .sort_json(0, 0, 0, 3, 1, r#"[{"column":1,"descending":true}]"#, true)
+        .unwrap();
+    assert_eq!(document.input(0, 1, 1), "3");
+    assert_eq!(document.input(0, 3, 1), "1");
+    assert_eq!(
+        document
+            .sort_json(0, 0, 0, 3, 1, r#"[{"column":1,"order":"up"}]"#, true)
+            .unwrap_err()
+            .code,
+        "INVALID_INPUT"
+    );
+
+    document
+        .workbook
+        .set_auto_filter(0, Some((CellRef::new(0, 0), CellRef::new(3, 1))))
+        .unwrap();
+    let choices = parse(&document.filter_choices_summary(0, 1).unwrap());
+    assert_eq!(choices[1], json!({ "key": "2.5", "label": "2,5" }));
+    document.filter_column_json(0, 0, r#"["Sud"]"#).unwrap();
+    document.workbook.set_frozen(0, 1, 0).unwrap();
+
+    let sheets = parse(&document.sheets_summary().unwrap());
+    assert_eq!(sheets[0]["frozenRows"], 1);
+    assert_eq!(sheets[0]["frozenColumns"], 0);
+    assert_eq!(
+        sheets[0]["autoFilter"],
+        json!({
+            "top": 0, "left": 0, "bottom": 3, "right": 1,
+            "columns": [{ "column": 0, "shown": ["Sud"] }],
+            "hiddenRows": [3]
+        })
+    );
+    assert_eq!(sheets[0]["pictures"], 0);
+
+    document.filter_column_json(0, 0, "null").unwrap();
+    let sheets = parse(&document.sheets_summary().unwrap());
+    assert_eq!(sheets[0]["autoFilter"]["hiddenRows"], json!([]));
+    assert_eq!(
+        document.filter_column_json(0, 9, "null").unwrap_err().code,
+        "OUT_OF_BOUNDS"
+    );
+}
+
+#[test]
+fn fills_a_series_as_one_step() {
+    let mut document = SheetDocument::create("it").unwrap();
+    document
+        .set_inputs_json(0, r#"[[0,0,"1"],[1,0,"2"]]"#)
+        .unwrap();
+    document.fill_range(0, 0, 0, 1, 0, 0, 0, 4, 0).unwrap();
+    assert_eq!(document.input(0, 4, 0), "5");
+    assert!(document.undo());
+    assert_eq!(document.input(0, 4, 0), "");
+}
+
+#[test]
+fn lists_the_pictures_and_the_functions() {
+    let document = SheetDocument::create("it").unwrap();
+    assert_eq!(parse(&document.pictures_summary(0).unwrap()), json!([]));
+    assert_eq!(
+        document.pictures_summary(4).unwrap_err().code,
+        "NO_SUCH_SHEET"
+    );
+    assert_eq!(document.picture_bytes(0, 0), Vec::<u8>::new());
+    let names = parse(&document.function_names_json());
+    let names: Vec<&str> = names
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|name| name.as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"SOMMA"));
+    assert!(names.contains(&"CERCA.VERT"));
 }

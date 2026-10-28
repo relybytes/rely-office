@@ -16,10 +16,12 @@
 //! computed values cached next to each formula.
 
 mod address;
+mod arrange;
 mod dates;
 mod display;
 mod edit;
 mod evaluate;
+mod fill;
 mod formula;
 mod history;
 mod looks;
@@ -31,10 +33,13 @@ mod value;
 mod xlsx;
 
 pub use address::{CellRef, MAX_COLUMNS, MAX_ROWS, column_index, column_name};
+pub use arrange::{AutoFilter, MAX_FILTER_CHOICES, MAX_SORT_KEYS, SortKey};
 pub use dates::{date_from_serial, serial_from_date};
+pub use fill::MAX_FILL_CELLS;
 pub use formula::{
-    BinaryOperator, CellAddress, Expr, FormulaError, MAX_FORMULA_CHARS, RangeAddress,
-    UnaryOperator, parse_formula, parse_formula_in, print_formula, print_formula_in,
+    BinaryOperator, CellAddress, Expr, FUNCTION_NAMES, FormulaError, MAX_FORMULA_CHARS,
+    RangeAddress, UnaryOperator, function_names, parse_formula, parse_formula_in, print_formula,
+    print_formula_in,
 };
 pub use history::{EditHistory, MAX_UNDO_CELLS, MAX_UNDO_STEPS};
 pub use looks::{CellLook, DataBarLook, IconLook};

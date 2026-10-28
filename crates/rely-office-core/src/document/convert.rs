@@ -6,6 +6,7 @@
 
 //! From the element tree of `word/document.xml` to the neutral document tree.
 
+use super::format::ParagraphFormat;
 use std::collections::{HashMap, HashSet};
 
 use super::anchor::{Anchor, TextFrame, css_emu, set_frame};
@@ -516,6 +517,9 @@ impl<'a, 'p> Converter<'a, 'p> {
         look.page_break_before |=
             std::mem::take(&mut self.pending_page_break) || scan.page_break_before;
         self.pending_page_break = scan.page_break_after;
+        look.format = properties.map(ParagraphFormat::parse).unwrap_or_default();
+        look.format.style = self.styles.named_style(style_id);
+        look.format.page_break_before = look.page_break_before;
         if style.role != ParagraphRole::Code
             && let Some(reference) = numbering
         {

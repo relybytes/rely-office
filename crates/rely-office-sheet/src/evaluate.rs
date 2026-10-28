@@ -1059,6 +1059,7 @@ fn wildcard(pattern: &[char], text: &[char]) -> bool {
 }
 
 mod functions;
+mod more;
 
 #[cfg(test)]
 mod tests;

@@ -7,6 +7,7 @@
 //! The styles part (`word/styles.xml`): what a paragraph style means for its paragraphs, and
 //! the formatting a character style gives its runs.
 
+use super::format::NamedStyle;
 use std::collections::HashMap;
 
 use super::Alignment;
@@ -389,6 +390,27 @@ impl Styles {
 
     /// The spacing, indents and font of a paragraph of this style, over the document defaults;
     /// `None` means the default paragraph style.
+    /// The built-in style of Word a paragraph style is, by its name or by its id.
+    pub(crate) fn named_style(&self, style_id: Option<&str>) -> Option<NamedStyle> {
+        let id = style_id?;
+        let definition = self.by_id.get(id);
+        definition
+            .and_then(|definition| NamedStyle::from_name(&definition.name))
+            .or_else(|| NamedStyle::from_name(id))
+            .or_else(|| {
+                // Word's ids drop the spaces of the names: IntenseQuote, NoSpacing.
+                [
+                    NamedStyle::Title,
+                    NamedStyle::Subtitle,
+                    NamedStyle::IntenseQuote,
+                    NamedStyle::Caption,
+                    NamedStyle::NoSpacing,
+                ]
+                .into_iter()
+                .find(|style| style.style_id().eq_ignore_ascii_case(id))
+            })
+    }
+
     pub(crate) fn paragraph_look(&self, style_id: Option<&str>) -> ParagraphLook {
         let mut look = ParagraphLook::default();
         for definition in self.chain(style_id.or(self.default_paragraph.as_deref())) {

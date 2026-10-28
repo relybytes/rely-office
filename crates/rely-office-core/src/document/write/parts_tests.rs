@@ -365,6 +365,7 @@ fn writes_the_looks_a_tree_read_from_a_docx_carries() {
         },
         list_label: None,
         frame: None,
+        format: crate::document::ParagraphFormat::default(),
     };
     let heading_look = ParagraphLook {
         list_label: Some(ListLabel {

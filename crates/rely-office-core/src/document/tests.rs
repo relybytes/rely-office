@@ -540,11 +540,16 @@ fn groups_quotes_and_code_lines() {
     ]
     .concat();
     let read = tree_with(&body, &[("word/styles.xml", styles.as_bytes())]);
+    // An intense quote is a quote that keeps its own named style.
+    let mut intense = paragraph("Due");
+    if let Block::Paragraph { look, .. } = &mut intense {
+        look.format.style = Some(NamedStyle::IntenseQuote);
+    }
     assert_eq!(
         read.blocks,
         vec![
             Block::Blockquote {
-                blocks: vec![paragraph("Uno"), paragraph("Due")]
+                blocks: vec![paragraph("Uno"), intense]
             },
             Block::CodeBlock {
                 text: "let a = 1;\na\n\tb".to_owned()

@@ -130,6 +130,7 @@ fn move_looks(sheet: &mut Sheet, shift: Shift) {
     sheet
         .validations
         .retain(|validation| !validation.ranges.is_empty());
+    move_auto_filter(sheet, shift);
     if shift.rows() {
         sheet.row_heights = std::mem::take(&mut sheet.row_heights)
             .into_iter()
@@ -141,6 +142,39 @@ fn move_looks(sheet: &mut Sheet, shift: Shift) {
             .filter_map(|(column, width)| shift.index(column).map(|column| (column, width)))
             .collect();
     }
+}
+
+/// Move the filter of a sheet with its rows and columns: its filtered columns keep their
+/// cells, the rows it hides stay hidden, and a filter whose range is all deleted is gone.
+fn move_auto_filter(sheet: &mut Sheet, shift: Shift) {
+    let Some(mut filter) = sheet.auto_filter.take() else {
+        return;
+    };
+    let range = filter.range;
+    if shift.rows() {
+        let Some((first_row, last_row)) = shift.span(range.first_row, range.last_row) else {
+            return;
+        };
+        (filter.range.first_row, filter.range.last_row) = (first_row, last_row);
+        filter.hidden = std::mem::take(&mut filter.hidden)
+            .into_iter()
+            .filter_map(|(row, height)| shift.index(row).map(|row| (row, height)))
+            .collect();
+    } else {
+        let Some((first_column, last_column)) = shift.span(range.first_column, range.last_column)
+        else {
+            return;
+        };
+        (filter.range.first_column, filter.range.last_column) = (first_column, last_column);
+        filter.columns = std::mem::take(&mut filter.columns)
+            .into_iter()
+            .filter_map(|(column, shown)| {
+                let moved = shift.index(range.first_column + column)?;
+                Some((moved.checked_sub(first_column)?, shown))
+            })
+            .collect();
+    }
+    sheet.auto_filter = Some(filter);
 }
 
 /// Where the ranges of a rule land; a range all deleted is gone.
