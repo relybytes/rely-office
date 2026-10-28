@@ -36,8 +36,11 @@ use crate::document::{
     TrackedChanges, TreeOptions, Wrap, bullet_character, format_number, push_block, set_frame,
     sniff_image_type,
 };
-use crate::geometry::{DrawnShape, flip_paths, preset_geometry, rectangle_paths, shapes_svg};
-use crate::office_art::preset_of_shape_type;
+use crate::geometry::{
+    DrawnShape, flip_paths, preset_geometry, preset_geometry_with_values, rectangle_paths,
+    shapes_svg,
+};
+use crate::office_art::{drawingml_adjustments, preset_of_shape_type, upside_down_from_preset};
 use crate::{Limits, OfficeError};
 use table::TableBuilder;
 
@@ -1354,14 +1357,20 @@ impl Converter<'_> {
             1 => rectangle_paths(width, height),
             3 => preset_geometry("ellipse", None, width, height)?,
             20 | 32 => preset_geometry("line", None, width, height)?,
-            kind => preset_geometry(preset_of_shape_type(kind)?, None, width, height)?,
+            kind => {
+                let preset = preset_of_shape_type(kind)?;
+                match drawingml_adjustments(kind, &shape.adjust, width, height) {
+                    Some(values) => preset_geometry_with_values(preset, &values, width, height)?,
+                    None => preset_geometry(preset, None, width, height)?,
+                }
+            }
         };
         flip_paths(
             &mut paths,
             width,
             height,
             shape.flip_horizontal,
-            shape.flip_vertical,
+            shape.flip_vertical != upside_down_from_preset(shape.kind),
         );
         let fill = shape
             .filled

@@ -217,41 +217,151 @@ pub(crate) fn drawingml_adjustments(
     if adjust.iter().all(Option::is_none) {
         return None;
     }
-    let defaults: &[i64] = match kind {
-        2 | 21 => &[3_600],
-        5 | 184 => &[10_800],
-        7 | 9 | 11 | 16 | 22 | 23 => &[5_400],
-        10 => &[6_326],
-        84 => &[2_700],
-        61..=63 | 17 => &[1_350, 25_920],
-        13 | 14 | 67 => &[16_200, 5_400],
-        66 | 68 => &[5_400, 5_400],
-        15 | 55 => &[16_200],
-        _ => return None,
-    };
+    let defaults = binary_defaults(kind)?;
     #[expect(clippy::cast_precision_loss, reason = "adjust values are small")]
     let value = |index: usize| adjust[index].unwrap_or(defaults[index]) as f64;
     let share = |units: f64| units * 100_000.0 / 21_600.0;
     #[expect(clippy::cast_precision_loss, reason = "frame sizes fit in f64")]
     let (width, height) = (width.max(1) as f64, height.max(1) as f64);
     let shortest = width.min(height);
+    let mean = f64::midpoint(width, height);
     // A length along one side, as a share of the shorter side the preset measures it by.
     let along = |units: f64, side: f64| share(units) * side / shortest;
+    // An angle in sixteenths of a sixteenth of a degree, as the preset's 60,000ths of a degree,
+    // both measured clockwise from the right.
+    let angle = |units: f64| (units / 65_536.0).rem_euclid(360.0) * 60_000.0;
+    // The inner radius of a star, from the inset of its inner vertices.
+    let star = |units: f64| (10_800.0 - units) / 10_800.0 * 50_000.0;
     Some(match kind {
-        61..=63 | 17 => vec![share(value(0) - 10_800.0), share(value(1) - 10_800.0)],
-        13 | 14 => vec![
+        61..=63 | 17 | 106 => vec![share(value(0) - 10_800.0), share(value(1) - 10_800.0)],
+        13 | 14 | 93 | 94 => vec![
             share(21_600.0 - 2.0 * value(1)),
             along(21_600.0 - value(0), width),
         ],
-        66 => vec![share(21_600.0 - 2.0 * value(1)), along(value(0), width)],
+        66 | 69 => vec![share(21_600.0 - 2.0 * value(1)), along(value(0), width)],
         67 => vec![
             share(21_600.0 - 2.0 * value(1)),
             along(21_600.0 - value(0), height),
         ],
         68 => vec![share(21_600.0 - 2.0 * value(1)), along(value(0), height)],
+        70 => vec![share(21_600.0 - 2.0 * value(0)), along(value(1), height)],
+        76 => vec![
+            along(21_600.0 - 2.0 * value(1), mean),
+            along(10_800.0 - value(0), mean),
+            along(value(2), mean),
+        ],
+        77 => vec![
+            along(21_600.0 - 2.0 * value(3), height),
+            along(10_800.0 - value(1), height),
+            along(value(2), width),
+            share(21_600.0 - value(0)),
+        ],
+        78 => vec![
+            along(21_600.0 - 2.0 * value(3), height),
+            along(10_800.0 - value(1), height),
+            along(21_600.0 - value(2), width),
+            share(value(0)),
+        ],
+        79 => vec![
+            along(21_600.0 - 2.0 * value(3), width),
+            along(10_800.0 - value(1), width),
+            along(value(2), height),
+            share(21_600.0 - value(0)),
+        ],
+        80 => vec![
+            along(21_600.0 - 2.0 * value(3), width),
+            along(10_800.0 - value(1), width),
+            along(21_600.0 - value(2), height),
+            share(value(0)),
+        ],
+        81 => vec![
+            along(21_600.0 - 2.0 * value(3), height),
+            along(10_800.0 - value(1), height),
+            along(value(2), width),
+            share(21_600.0 - 2.0 * value(0)),
+        ],
+        82 => vec![
+            along(21_600.0 - 2.0 * value(3), width),
+            along(10_800.0 - value(1), width),
+            along(value(2), height),
+            share(21_600.0 - 2.0 * value(0)),
+        ],
+        // A line callout's points, the far end first in the binary file and last in the
+        // preset, each a share of the frame across and down.
+        41 | 44 | 47 | 50 | 178..=181 | 42 | 45 | 48 | 51 | 43 | 46 | 49 | 52 => {
+            let points = defaults.len() / 2;
+            (0..points)
+                .rev()
+                .flat_map(|point| [share(value(point * 2 + 1)), share(value(point * 2))])
+                .collect()
+        }
         15 | 55 => vec![along(21_600.0 - value(0), width)],
-        _ => vec![share(value(0))],
+        8 => vec![along(value(0), width)],
+        18 | 58 | 59 | 60 | 92 | 187 => vec![star(value(0))],
+        85 | 86 => vec![along(value(0), height)],
+        87 | 88 => vec![along(value(0), height), share(value(1))],
+        185 | 186 | 57 | 97 | 98 => vec![along(value(0), mean)],
+        65 => vec![along(21_600.0 - value(0), mean)],
+        96 => vec![(value(0) - 16_515.0) * 4_653.0 / 1_005.0],
+        64 | 188 => vec![share(value(0)), share(value(1) - 10_800.0)],
+        53 => vec![share(21_600.0 - value(1)), share(21_600.0 - 2.0 * value(0))],
+        54 => vec![share(value(1)), share(21_600.0 - 2.0 * value(0))],
+        19 => vec![angle(value(0)), angle(value(1))],
+        95 => vec![
+            angle(value(0)),
+            angle(180.0 * 65_536.0 - value(0)),
+            share(value(1)),
+        ],
+        _ => (0..defaults.len())
+            .map(|index| share(value(index)))
+            .collect(),
     })
+}
+
+/// The default adjust values of the shape types whose handles map onto their preset's.
+fn binary_defaults(kind: u16) -> Option<&'static [i64]> {
+    Some(match kind {
+        2 | 21 | 185 => &[3_600],
+        5 | 184 | 34 | 38 => &[10_800],
+        7 | 9 | 11 | 16 | 22 | 23 | 8 | 183 => &[5_400],
+        10 => &[6_326],
+        84 | 18 | 59 | 60 | 92 | 57 | 97 | 98 => &[2_700],
+        61..=63 | 17 | 106 => &[1_350, 25_920],
+        13 | 14 | 67 | 93 | 94 => &[16_200, 5_400],
+        66 | 68 => &[5_400, 5_400],
+        69 => &[4_320, 5_400],
+        70 => &[5_400, 4_320],
+        76 => &[6_480, 8_640, 4_320],
+        77 | 79 => &[7_200, 5_400, 3_600, 8_100],
+        78 | 80 => &[14_400, 5_400, 18_000, 8_100],
+        81 | 82 => &[5_400, 5_400, 2_700, 8_100],
+        41 | 44 | 47 | 50 | 178..=181 => &[-8_280, 24_300, -1_800, 4_050],
+        42 | 45 | 48 | 51 => &[-10_080, 24_300, -3_600, 4_050, -1_800, 4_050],
+        43 | 46 | 49 | 52 => &[23_400, 24_400, 25_200, 21_600, 25_200, 4_050, 23_400, 4_050],
+        15 | 55 => &[16_200],
+        58 => &[2_538],
+        187 => &[8_100],
+        85 | 86 | 186 => &[1_800],
+        87 | 88 => &[1_800, 10_800],
+        65 => &[18_900],
+        96 => &[17_520],
+        64 => &[2_700, 10_800],
+        188 => &[1_404, 10_800],
+        53 => &[5_400, 18_900],
+        54 => &[5_400, 2_700],
+        19 => &[-5_898_240, 0],
+        95 => &[11_796_480, 5_400],
+        35 | 39 => &[10_800, 10_800],
+        36 | 40 => &[10_800, 10_800, 10_800],
+        _ => return None,
+    })
+}
+
+/// Whether a shape type is drawn upside down from its `DrawingML` preset: the binary trapezoid
+/// narrows at the bottom, the preset's at the top.
+#[must_use]
+pub(crate) fn upside_down_from_preset(kind: u16) -> bool {
+    kind == 8
 }
 
 /// The `DrawingML` preset that draws a shape type (`MSOSPT`) the same; `None` for a rectangle

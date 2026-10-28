@@ -138,6 +138,8 @@ pub(super) struct ShapeContent {
     /// character or line.
     pub(super) horizontal_base: Option<u32>,
     pub(super) vertical_base: Option<u32>,
+    /// `adjustValue` to `adjust10Value`, in the shape type's 21,600 units.
+    pub(super) adjust: [Option<i64>; 10],
 }
 
 impl Default for ShapeContent {
@@ -157,6 +159,7 @@ impl Default for ShapeContent {
             vertical_align: None,
             horizontal_base: None,
             vertical_base: None,
+            adjust: [None; 10],
         }
     }
 }
@@ -259,6 +262,10 @@ fn shape_properties(record: Record<'_>, content: &mut ShapeContent) {
             0x0390 => content.horizontal_base = Some(value),
             0x0391 => content.vertical_align = Some(value),
             0x0392 => content.vertical_base = Some(value),
+            0x0147..=0x0150 => {
+                content.adjust[usize::from(identifier - 0x0147)] =
+                    Some(i64::from(i32::from_le_bytes(value.to_le_bytes())));
+            }
             _ => {}
         }
     }

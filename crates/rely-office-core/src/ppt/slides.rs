@@ -22,7 +22,7 @@ use crate::office_art::{
     CHILD_ANCHOR, CLIENT_ANCHOR, CLIENT_DATA, CLIENT_TEXTBOX, DRAWING_CONTAINER, GROUP_CONTAINER,
     GROUP_SHAPE, PROPERTIES, Record, SHAPE, SHAPE_CONTAINER, SHAPE_GROUP_CONTAINER,
     STORE_CONTAINER, TERTIARY_PROPERTIES, child, complex_properties, drawingml_adjustments, flag,
-    preset_of_shape_type, properties, records, store_images,
+    preset_of_shape_type, properties, records, store_images, upside_down_from_preset,
 };
 use crate::slides::{
     Animation, AnimationClass, AnimationTrigger, Bullet, Frame, Gradient, GradientKind,
@@ -1360,7 +1360,7 @@ fn geometry(
                 frame.width,
                 frame.height,
                 flip_horizontal,
-                flip_vertical,
+                flip_vertical != upside_down_from_preset(kind),
             );
             ShapeGeometry::Path(paths)
         }

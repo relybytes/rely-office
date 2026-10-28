@@ -209,3 +209,79 @@ fn turns_the_adjust_values_of_a_shape_type_into_its_presets() {
         "a star keeps its own"
     );
 }
+
+#[test]
+fn binary_defaults_give_the_preset_defaults_where_the_two_agree() {
+    let close = |kind: u16, values: &[i64], wanted: &[f64]| {
+        let mut adjust = [None; 10];
+        for (index, value) in values.iter().enumerate() {
+            adjust[index] = Some(*value);
+        }
+        let found = drawingml_adjustments(kind, &adjust, 100, 100).unwrap();
+        assert_eq!(found.len(), wanted.len(), "type {kind}: {found:?}");
+        for (found, wanted) in found.iter().zip(wanted) {
+            assert!(
+                (found - wanted).abs() < 100.0,
+                "type {kind}: {found} for {wanted}"
+            );
+        }
+    };
+    let default = |kind: u16| binary_defaults(kind).unwrap().to_vec();
+    close(
+        41,
+        &default(41),
+        &[18_750.0, -8_333.0, 112_500.0, -38_333.0],
+    );
+    close(
+        42,
+        &default(42),
+        &[
+            18_750.0, -8_333.0, 18_750.0, -16_667.0, 112_500.0, -46_667.0,
+        ],
+    );
+    close(58, &default(58), &[38_250.0]);
+    for star in [18, 59, 60, 92] {
+        close(star, &default(star), &[37_500.0]);
+    }
+    close(187, &default(187), &[12_500.0]);
+    close(85, &default(85), &[8_333.0]);
+    close(87, &default(87), &[8_333.0, 50_000.0]);
+    close(185, &default(185), &[16_667.0]);
+    close(186, &default(186), &[8_333.0]);
+    close(183, &default(183), &[25_000.0]);
+    close(64, &default(64), &[12_500.0, 0.0]);
+    // Word draws its double wave a little taller than the preset: 6,500 against 6,250.
+    close(188, &default(188), &[6_500.0, 0.0]);
+    close(19, &default(19), &[16_200_000.0, 0.0]);
+    close(95, &default(95), &[10_800_000.0, 0.0, 25_000.0]);
+    close(96, &default(96), &[4_653.0]);
+    close(78, &default(78), &[25_000.0, 25_000.0, 16_667.0, 66_667.0]);
+    close(77, &default(77), &[25_000.0, 25_000.0, 16_667.0, 66_667.0]);
+    close(69, &default(69), &[50_000.0, 20_000.0]);
+    close(70, &default(70), &[50_000.0, 20_000.0]);
+    close(8, &default(8), &[25_000.0]);
+    close(34, &default(34), &[50_000.0]);
+    close(36, &default(36), &[50_000.0, 50_000.0, 50_000.0]);
+    close(106, &default(106), &[-43_750.0, 70_000.0]);
+    close(54, &default(54), &[12_500.0, 50_000.0]);
+    close(53, &default(53), &[12_500.0, 50_000.0]);
+    close(76, &default(76), &[20_000.0, 20_000.0, 20_000.0]);
+    close(65, &default(65), &[12_500.0]);
+}
+
+#[test]
+fn values_measured_along_a_side_follow_the_frame() {
+    let mut adjust = [None; 10];
+    adjust[0] = Some(5_400);
+    // A bracket's corner is measured down the height against the shorter side.
+    let found = drawingml_adjustments(85, &adjust, 100, 200).unwrap();
+    assert!((found[0] - 50_000.0).abs() < 1.0, "{found:?}");
+    // An arc's angles turn past a whole turn and below zero.
+    adjust[0] = Some(-90 * 65_536);
+    adjust[1] = Some(450 * 65_536);
+    let found = drawingml_adjustments(19, &adjust, 100, 100).unwrap();
+    assert!((found[0] - 16_200_000.0).abs() < 1.0 && (found[1] - 5_400_000.0).abs() < 1.0);
+    assert!(upside_down_from_preset(8));
+    assert!(!upside_down_from_preset(7));
+    assert_eq!(binary_defaults(1), None);
+}
