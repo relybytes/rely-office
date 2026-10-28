@@ -267,6 +267,24 @@ export interface DocumentTree {
   sections?: Section[];
   /** The comments on the text, when there are any. */
   comments?: Comment[];
+  /** The objects embedded in the text, when there are any. */
+  objects?: EmbeddedObject[];
+}
+
+/**
+ * An object embedded in a document (an OLE object, a workbook inside a document), which the
+ * text shows as the image `media` indexes. `writeDocx` writes it back with that image.
+ */
+export interface EmbeddedObject {
+  /** The image that shows it: an `Inline` image with this `media` is the object. */
+  media: number;
+  /** What opens it, as its ProgID: `Excel.Sheet.12`, `Word.Document.8`, `Package`. */
+  program?: string;
+  /** The name it was stored under: `Microsoft_Excel_Worksheet.xlsx`, `oleObject1.bin`. */
+  name: string;
+  /** An Office package (xlsx, docx, pptx) rather than an OLE object in a compound file. */
+  package?: boolean;
+  bytes: Uint8Array;
 }
 
 /** The format of a document; the name only tells CSV from TSV and never overrides the bytes. */
@@ -343,6 +361,8 @@ export interface DocxInput {
   sections?: Section[];
   /** The comments the marks and anchors of the blocks name. */
   comments?: Comment[];
+  /** The objects the images of the blocks show, as `readDocumentTree` gives them. */
+  objects?: EmbeddedObject[];
 }
 
 /** A docx Word opens and `readDocumentTree` reads back to the same tree. */

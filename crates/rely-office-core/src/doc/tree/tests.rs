@@ -1137,3 +1137,97 @@ fn reads_comments_with_their_range_and_keeps_changes() {
         }]
     );
 }
+
+/// The bytes of a doc with one more storage, `/ObjectPool/_<number>`, holding a workbook.
+fn with_object_pool(document: Vec<u8>, number: u32) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut compound_file = cfb::CompoundFile::open(std::io::Cursor::new(document)).unwrap();
+    compound_file.create_storage("/ObjectPool").unwrap();
+    let storage = format!("/ObjectPool/_{number}");
+    compound_file.create_storage(&storage).unwrap();
+    let mut comp_obj = vec![0_u8; 28];
+    comp_obj.extend_from_slice(&1_u32.to_le_bytes());
+    comp_obj.push(0);
+    comp_obj.extend_from_slice(&0_u32.to_le_bytes());
+    comp_obj.extend_from_slice(&14_u32.to_le_bytes());
+    comp_obj.extend_from_slice(b"Excel.Sheet.8\0");
+    compound_file
+        .create_stream(format!("{storage}/\u{1}CompObj"))
+        .unwrap()
+        .write_all(&comp_obj)
+        .unwrap();
+    compound_file
+        .create_stream(format!("{storage}/Workbook"))
+        .unwrap()
+        .write_all(b"righe del foglio")
+        .unwrap();
+    compound_file.flush().unwrap();
+    compound_file.into_inner().into_inner()
+}
+
+#[test]
+fn an_embedding_field_keeps_its_object_with_its_picture() {
+    let main = "a\u{13} EMBED Excel.Sheet.8 \u{14}\u{1}\u{15}b\u{1}\r";
+    let separator = at(main, "\u{14}");
+    let pictures: Vec<usize> = main
+        .match_indices('\u{1}')
+        .map(|(index, _)| index)
+        .collect();
+    let mut art = record(0xF, 0, 0xF004, &[]);
+    art.extend(store_entry(Some(&png_blip(PNG)), 0, 0));
+    let mut builder = styled(main)
+        .character(
+            separator..separator + 1,
+            &[0x56, 0x08, 0x01, 0x03, 0x6A, 0xD2, 0x04, 0, 0],
+        )
+        .character(
+            pictures[0]..pictures[0] + 1,
+            &[0x55, 0x08, 0x01, 0x0A, 0x08, 0x01, 0x03, 0x6A, 0, 0, 0, 0],
+        )
+        .character(
+            pictures[1]..pictures[1] + 1,
+            &[0x55, 0x08, 0x01, 0x03, 0x6A, 0, 0, 0, 0],
+        );
+    builder.data = picture(&art);
+    let bytes = with_object_pool(builder.build(), 1234);
+    let tree = read_doc_tree(&bytes, &Limits::default(), TreeOptions::default()).unwrap();
+    assert_eq!(
+        pieces(content(&tree.blocks[0])),
+        vec!["a", "<image>", "b", "<image>"]
+    );
+    assert_eq!(tree.report.embedded_objects, 1);
+    assert_eq!(tree.objects.len(), 1);
+    let object = &tree.objects[0];
+    assert_eq!(object.media, 0);
+    assert_eq!(object.name, "_1234");
+    assert_eq!(object.program.as_deref(), Some("Excel.Sheet.8"));
+    let mut copy = crate::compound::open_compound_file(&object.bytes).unwrap();
+    assert_eq!(
+        crate::compound::read_stream(&mut copy, "/Workbook", 100)
+            .unwrap()
+            .unwrap(),
+        b"righe del foglio"
+    );
+}
+
+#[test]
+fn an_embedding_field_without_its_storage_keeps_only_the_picture() {
+    let main = "\u{13} EMBED Excel.Sheet.8 \u{14}\u{1}\u{15}\r";
+    let separator = at(main, "\u{14}");
+    let picture_at = at(main, "\u{1}");
+    let mut art = record(0xF, 0, 0xF004, &[]);
+    art.extend(store_entry(Some(&png_blip(PNG)), 0, 0));
+    let mut builder = styled(main)
+        .character(
+            separator..separator + 1,
+            &[0x56, 0x08, 0x01, 0x03, 0x6A, 0x09, 0, 0, 0],
+        )
+        .character(
+            picture_at..picture_at + 1,
+            &[0x55, 0x08, 0x01, 0x0A, 0x08, 0x01, 0x03, 0x6A, 0, 0, 0, 0],
+        );
+    builder.data = picture(&art);
+    let tree = read(&builder);
+    assert_eq!(tree.media.len(), 1);
+    assert_eq!(tree.objects, Vec::new());
+}

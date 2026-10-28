@@ -244,7 +244,12 @@ fn writes_a_docx_from_the_json_of_a_tree() {
     });
     let mut writer = DocxWriter::new();
     assert_eq!(writer.add_media(PNG.to_vec()), 0);
-    let bytes = docx_from_json(&tree.to_string(), std::mem::take(&mut writer.media)).unwrap();
+    let bytes = docx_from_json(
+        &tree.to_string(),
+        std::mem::take(&mut writer.media),
+        std::mem::take(&mut writer.objects),
+    )
+    .unwrap();
     let read = parse(&document_tree(&bytes, None, None).unwrap().json());
     assert_eq!(read["blocks"][0]["type"], "heading");
     assert_eq!(read["blocks"][1]["align"], "center");
@@ -254,10 +259,11 @@ fn writes_a_docx_from_the_json_of_a_tree() {
     );
     assert_eq!(read["media"][0]["contentType"], "image/png");
 
-    let failure = docx_from_json(r#"{"blocks":[{"type":"nope"}]}"#, Vec::new()).unwrap_err();
+    let failure =
+        docx_from_json(r#"{"blocks":[{"type":"nope"}]}"#, Vec::new(), Vec::new()).unwrap_err();
     assert_eq!(failure.code, "INVALID_TREE");
     assert_eq!(
-        docx_from_json(r#"{"blocks":[],"extra":1}"#, Vec::new())
+        docx_from_json(r#"{"blocks":[],"extra":1}"#, Vec::new(), Vec::new())
             .unwrap_err()
             .code,
         "INVALID_TREE"
@@ -309,4 +315,56 @@ fn converts_a_presentation_to_a_pptx() {
         convert_to_pptx(b"nothing", None).unwrap_err().code,
         "UNSUPPORTED_FORMAT"
     );
+}
+
+#[test]
+fn an_embedded_object_goes_out_with_the_tree_and_back_into_a_docx() {
+    let tree = json!({
+        "blocks": [{
+            "type": "paragraph",
+            "content": [{ "type": "image", "media": 0, "width": 80, "height": 40 }]
+        }]
+    });
+    let mut writer = DocxWriter::new();
+    writer.add_media(PNG.to_vec());
+    assert_eq!(
+        writer.add_object(
+            0,
+            b"PK\x03\x04il foglio".to_vec(),
+            "Foglio.xlsx".to_owned(),
+            Some("Excel.Sheet.12".to_owned()),
+        ),
+        0
+    );
+    let bytes = docx_from_json(
+        &tree.to_string(),
+        std::mem::take(&mut writer.media),
+        std::mem::take(&mut writer.objects),
+    )
+    .unwrap();
+    let mut handle = document_tree(&bytes, None, None).unwrap();
+    let read = parse(&handle.json());
+    assert_eq!(
+        read["objects"],
+        json!([{
+            "index": 0,
+            "media": 0,
+            "program": "Excel.Sheet.12",
+            "name": "object1.xlsx",
+            "package": true,
+            "byteLength": 13
+        }])
+    );
+    assert_eq!(
+        handle.take_object_bytes(0).as_deref(),
+        Some(&b"PK\x03\x04il foglio"[..])
+    );
+    assert_eq!(handle.take_object_bytes(0).as_deref(), Some(&[][..]));
+    assert_eq!(handle.take_object_bytes(1), None);
+    let plain = parse(
+        &document_tree(&docx("<w:p/>", &[]), None, None)
+            .unwrap()
+            .json(),
+    );
+    assert_eq!(plain.get("objects"), None);
 }

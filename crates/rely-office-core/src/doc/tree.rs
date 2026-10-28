@@ -26,6 +26,7 @@ use super::sections::{SectionLayout, read_sections};
 use super::styles::StyleSheet;
 use super::{decode_piece, read_piece_table, unreadable, word6};
 use crate::compound::{open_compound_file, read_stream, u16_at, u32_at};
+use crate::document::objects::{self, EmbeddedObject};
 use crate::document::{
     Alignment, Anchor, AnchorAlign, AnchorBase, AnchorPosition, Block, Borders, Comment,
     DocumentTree, HeadersFooters, ImportReport, Inline, LabelSuffix, LineSpacing, ListLabel, Mark,
@@ -185,6 +186,8 @@ pub(crate) fn read_doc_tree(
         style_properties: HashMap::new(),
         page_break_pending: false,
         in_note: false,
+        object_pool: object_pool(&mut compound_file, limits),
+        objects: Vec::new(),
     };
     let mut converter = converter;
     converter.read_comments();
@@ -246,12 +249,41 @@ fn read_word6_tree(
         style_properties: HashMap::new(),
         page_break_pending: false,
         in_note: false,
+        object_pool: HashMap::new(),
+        objects: Vec::new(),
     };
     Ok(converter.convert(
         &word6::sections(word_document, &fib),
         &positions(structure(pair::HEADERS)),
         structure(pair::DOCUMENT_PROPERTIES),
     ))
+}
+
+/// Every storage of the `ObjectPool`, an OLE object each, as a compound file of its own by the
+/// number in its name; as many as the document may have pictures.
+fn object_pool(
+    compound_file: &mut crate::compound::CompoundFile<'_>,
+    limits: &Limits,
+) -> HashMap<u32, Vec<u8>> {
+    let Ok(entries) = compound_file.read_storage("/ObjectPool") else {
+        return HashMap::new();
+    };
+    let numbers: Vec<u32> = entries
+        .filter(cfb::Entry::is_storage)
+        .filter_map(|entry| entry.name().strip_prefix('_')?.parse().ok())
+        .take(limits.max_images)
+        .collect();
+    numbers
+        .into_iter()
+        .filter_map(|number| {
+            let bytes = objects::storage_as_compound_file(
+                compound_file,
+                &format!("/ObjectPool/_{number}"),
+                limits.max_member_bytes,
+            )?;
+            Some((number, bytes))
+        })
+        .collect()
 }
 
 /// The notes a story refers to: each reference's character position and the range of its text.
@@ -297,6 +329,8 @@ struct Field {
     in_result: bool,
     link: Option<String>,
     page: Option<PageField>,
+    /// The storage of the object pool an embedding field holds, by its number.
+    object: Option<u32>,
 }
 
 /// What a run of text looks like, to group characters into runs.
@@ -344,9 +378,28 @@ struct Converter<'a> {
     comments: Vec<Comment>,
     reviewers: Vec<String>,
     tracked_changes: TrackedChanges,
+    /// The objects of the object pool, each a compound file of its own, by storage number.
+    object_pool: HashMap<u32, Vec<u8>>,
+    objects: Vec<EmbeddedObject>,
 }
 
 impl Converter<'_> {
+    /// Keep the object of a storage of the object pool with the picture that shows it.
+    fn keep_object(&mut self, storage: u32, media: usize) {
+        if self.objects.iter().any(|known| known.media == media) {
+            return;
+        }
+        let Some(bytes) = self.object_pool.remove(&storage) else {
+            return;
+        };
+        self.objects.push(EmbeddedObject {
+            media,
+            program: objects::program_of_compound_file(&bytes),
+            name: format!("_{storage}"),
+            bytes,
+        });
+    }
+
     /// Read the text of every comment, before the main text marks what they cover.
     fn read_comments(&mut self) {
         for stored in self.stored_comments.clone() {
@@ -489,6 +542,7 @@ impl Converter<'_> {
         self.report.headers_and_footers = inherited.iter().filter(|part| !part.is_empty()).count();
         DocumentTree {
             comments: std::mem::take(&mut self.comments),
+            objects: std::mem::take(&mut self.objects),
             blocks,
             media: self.media,
             report: self.report,
@@ -851,11 +905,16 @@ impl Converter<'_> {
                     continue;
                 }
                 '\u{14}' => {
+                    let separator = self.character_properties(position, paragraph_style);
                     if let Some(field) = fields.last_mut() {
                         field.in_result = true;
                         let (link, page) = self.interpret_field(&field.instruction);
                         field.link = link;
                         field.page = page;
+                        // The separator of an embedding field names its object's storage.
+                        if separator.object {
+                            field.object = separator.picture;
+                        }
                     }
                     continue;
                 }
@@ -904,6 +963,14 @@ impl Converter<'_> {
                         .picture
                         .and_then(|offset| self.inline_image(offset as usize))
                     {
+                        if let Inline::Image { media, .. } = &image
+                            && let Some(storage) = fields
+                                .iter_mut()
+                                .rev()
+                                .find_map(|field| field.object.take())
+                        {
+                            self.keep_object(storage, *media);
+                        }
                         content.push(image);
                     }
                     continue;

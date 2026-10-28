@@ -22,6 +22,7 @@ use zip::write::SimpleFileOptions;
 
 use super::edges::{Border, BorderStyle, Borders, CellLook, TabKind, TabLeader, VerticalAlignment};
 use super::look::{LineSpacing, PageField, ParagraphLook, RunLook, TableLook};
+use super::objects::{self, EmbeddedObject};
 use super::{
     Alignment, Anchor, Block, Comment, DocumentTree, Inline, Mark, Media, Note, NoteKind,
     PageLayout, Section, TableRow, TextFrame,
@@ -51,7 +52,9 @@ const NAMESPACES: &str = concat!(
     r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,
     r#"xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" "#,
     r#"xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" "#,
-    r#"xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math""#,
+    r#"xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" "#,
+    r#"xmlns:v="urn:schemas-microsoft-com:vml" "#,
+    r#"xmlns:o="urn:schemas-microsoft-com:office:office""#,
 );
 
 /// Write a document tree as a docx. An image whose type is not one Word shows (PNG, JPEG, GIF,
@@ -68,6 +71,8 @@ const NAMESPACES: &str = concat!(
 pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
     let mut writer = DocxWriter {
         media: &tree.media,
+        objects: &tree.objects,
+        object_parts: BTreeMap::new(),
         notes: &tree.notes,
         comments: &tree.comments,
         in_body: false,
@@ -173,9 +178,10 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
     let mut add = |name: &str, bytes: &[u8]| members.push((name.to_owned(), bytes.to_vec()));
     let mut content_parts = header_names;
     content_parts.extend(comment_parts.iter().map(|(name, _)| name.clone()));
+    let object_types: Vec<(String, String)> = writer.object_parts.values().cloned().collect();
     add(
         "[Content_Types].xml",
-        content_types(&content_parts).as_bytes(),
+        content_types(&content_parts, &object_types).as_bytes(),
     );
     add("_rels/.rels", package_relationships().as_bytes());
     add("word/document.xml", document.as_bytes());
@@ -224,6 +230,9 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
     }
     for (index, part) in &writer.image_parts {
         add(&format!("word/{part}"), &tree.media[*index].bytes);
+    }
+    for (index, (part, _)) in &writer.object_parts {
+        add(&format!("word/{part}"), &tree.objects[*index].bytes);
     }
     for (name, bytes) in &comment_parts {
         add(&format!("word/{name}"), bytes);
@@ -285,6 +294,9 @@ struct Relationship {
 
 struct DocxWriter<'a> {
     media: &'a [Media],
+    objects: &'a [EmbeddedObject],
+    /// Object index to its part path and content type.
+    object_parts: BTreeMap<usize, (String, String)>,
     notes: &'a [Note],
     comments: &'a [Comment],
     /// The body is being written, where comments are anchored; notes and headers have none.
@@ -813,22 +825,16 @@ impl DocxWriter<'_> {
         anchor: Option<&Anchor>,
         xml: &mut String,
     ) {
-        let Some(item) = self.media.get(media) else {
-            return;
-        };
-        let Some(extension) = image_extension(item.content_type) else {
+        let Some(relationship_id) = self.image_relationship(media) else {
             if let Some(alt) = alt.filter(|alt| !alt.is_empty()) {
                 push_text_runs(xml, alt, "");
             }
             return;
         };
-        let next_part = self.image_parts.len() + 1;
-        let part = self
-            .image_parts
-            .entry(media)
-            .or_insert_with(|| format!("media/image{next_part}.{extension}"))
-            .clone();
-        let relationship_id = self.relationship("image", part, false);
+        if let Some(object) = self.objects.iter().position(|object| object.media == media) {
+            self.object(object, &relationship_id, (width, height), xml);
+            return;
+        }
         // A width larger than the text is cut to it, the proportions kept.
         let max_pixels = u64::from(self.text_width_twips) * 96 / 1_440;
         let width = u64::from(width.unwrap_or(300).max(1));
@@ -883,6 +889,69 @@ impl DocxWriter<'_> {
             id = drawing_id,
             descr = description,
             rel = relationship_id,
+        );
+    }
+
+    /// The relationship of the part being written to a picture's part, the part named the first
+    /// time; `None` for a picture of a type Word does not show.
+    fn image_relationship(&mut self, media: usize) -> Option<String> {
+        let extension = image_extension(self.media.get(media)?.content_type)?;
+        let next_part = self.image_parts.len() + 1;
+        let part = self
+            .image_parts
+            .entry(media)
+            .or_insert_with(|| format!("media/image{next_part}.{extension}"))
+            .clone();
+        Some(self.relationship("image", part, false))
+    }
+
+    /// An embedded object as Word writes one: a VML shape of its picture, and the `OLEObject`
+    /// that names its part.
+    fn object(
+        &mut self,
+        object: usize,
+        picture: &str,
+        (width, height): (Option<u32>, Option<u32>),
+        xml: &mut String,
+    ) {
+        let content = &self.objects[object];
+        let next_part = self.object_parts.len() + 1;
+        let (part, kind, content_type) = objects::object_part(content, next_part);
+        let part = self
+            .object_parts
+            .entry(object)
+            .or_insert((part, content_type))
+            .0
+            .clone();
+        let program = content
+            .program
+            .clone()
+            .or_else(|| objects::program_of_package(&content.name).map(str::to_owned))
+            .map(|program| format!(r#" ProgID="{}""#, escape(&program)))
+            .unwrap_or_default();
+        let relationship_id = self.relationship(kind, part, false);
+        let width = width.unwrap_or(300).max(1);
+        let height = height.unwrap_or(200).max(1);
+        let shape = self.next_drawing_id;
+        self.next_drawing_id += 1;
+        let _ = write!(
+            xml,
+            concat!(
+                r#"<w:r><w:object w:dxaOrig="{dxa}" w:dyaOrig="{dya}">"#,
+                r#"<v:shape id="_x0000_i{shape}" style="width:{width}pt;height:{height}pt" stroked="f" o:ole="">"#,
+                r#"<v:imagedata r:id="{picture}" o:title=""/></v:shape>"#,
+                r#"<o:OLEObject Type="Embed"{program} ShapeID="_x0000_i{shape}" DrawAspect="Content" ObjectID="_{object_id}" r:id="{relationship}"/>"#,
+                "</w:object></w:r>"
+            ),
+            dxa = width * 15,
+            dya = height * 15,
+            shape = 1024 + shape,
+            width = points_of_pixels(width),
+            height = points_of_pixels(height),
+            picture = picture,
+            program = program,
+            object_id = 1_000_000_000 + shape,
+            relationship = relationship_id,
         );
     }
 
@@ -1567,7 +1636,13 @@ fn notes_part(root: &str, element: &str, notes: &str) -> String {
 /// The content type prefix of the parts of a word processing package.
 const WORD_CONTENT_TYPE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml";
 
-fn content_types(header_parts: &[String]) -> String {
+/// A length in CSS pixels as points, to the hundredth.
+fn points_of_pixels(pixels: u32) -> String {
+    let points = f64::from(pixels) * 0.75;
+    format!("{}", (points * 100.0).round() / 100.0)
+}
+
+fn content_types(header_parts: &[String], objects: &[(String, String)]) -> String {
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">"#,
@@ -1618,6 +1693,12 @@ fn content_types(header_parts: &[String]) -> String {
         let _ = write!(
             xml,
             r#"<Override PartName="/word/{part}" ContentType="{WORD_CONTENT_TYPE}.{kind}+xml"/>"#
+        );
+    }
+    for (part, content_type) in objects {
+        let _ = write!(
+            xml,
+            r#"<Override PartName="/word/{part}" ContentType="{content_type}"/>"#
         );
     }
     xml.push_str("</Types>");

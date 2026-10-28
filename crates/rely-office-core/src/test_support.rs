@@ -483,11 +483,27 @@ pub(crate) fn build_compound_file(streams: &[(&str, &[u8])]) -> Vec<u8> {
     let mut compound_file =
         cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new())).unwrap();
     for (name, content) in streams {
+        let mut parent = std::path::PathBuf::from("/");
+        let components: Vec<_> = std::path::Path::new(name).components().skip(1).collect();
+        for component in components.iter().take(components.len().saturating_sub(1)) {
+            parent.push(component);
+            if !compound_file.is_storage(&parent) {
+                compound_file.create_storage(&parent).unwrap();
+            }
+        }
         let mut stream = compound_file.create_stream(name).unwrap();
         stream.write_all(content).unwrap();
     }
     compound_file.flush().unwrap();
     compound_file.into_inner().into_inner()
+}
+
+/// The text of a member of a zip package.
+pub(crate) fn zip_member(package: &[u8], name: &str) -> String {
+    let mut archive = zip::ZipArchive::new(Cursor::new(package)).unwrap();
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut archive.by_name(name).unwrap(), &mut text).unwrap();
+    text
 }
 
 /// A `PowerPoint` record header followed by its body.

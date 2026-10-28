@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use super::styles::{FO, STYLE, Scope, Styles, TEXT, TextFlags, border, colour, points, twips};
 use crate::archive::{ZipPackage, open_package, read_member_bytes, read_text_member};
 use crate::chart::{odf_chart_picture, odf_object_part};
+use crate::document::objects::{self, EmbeddedObject};
 use crate::document::{
     Block, Borders, CellLook, Comment, DocumentTree, HeadersFooters, ImportReport, Inline,
     LabelSuffix, ListLabel, Mark, Media, Note, NoteKind, PageField, PageLayout, ParagraphLook,
@@ -96,6 +97,7 @@ pub(crate) fn read_odt_tree(
             HashMap::new()
         },
         open_changes: Vec::new(),
+        objects: Vec::new(),
     };
     // A paragraph or table whose style names a master page other than the current one starts
     // a section on that page.
@@ -183,6 +185,7 @@ pub(crate) fn read_odt_tree(
         notes: converter.notes,
         headers_footers: last.headers_footers,
         sections,
+        objects: converter.objects,
     })
 }
 
@@ -280,6 +283,7 @@ struct Converter<'a, 'p> {
     changes: HashMap<String, Change>,
     /// The insertions the text being read is in, by change id.
     open_changes: Vec<(String, Mark)>,
+    objects: Vec<EmbeddedObject>,
 }
 
 /// A changed region of `text:tracked-changes`: the mark of its text, and for a deletion the
@@ -979,10 +983,17 @@ impl Converter<'_, '_> {
                         || self.chart(element, object, content))
                 {
                 } else if let Some(image) = element.child(DRAW, "image") {
-                    if object.is_some() {
+                    let ole = element.child(DRAW, "object-ole");
+                    if object.is_some() || ole.is_some() {
                         self.report.embedded_objects += 1;
                     }
+                    let before = content.len();
                     self.image(element, image, scope, content);
+                    if let (Some(ole), Some(Inline::Image { media, .. })) =
+                        (ole, content.get(before))
+                    {
+                        self.keep_object(ole, *media);
+                    }
                 } else if let Some(text_box) = element.child(DRAW, "text-box") {
                     self.report.text_boxes += 1;
                     let frame = self.text_frame(element, scope);
@@ -1152,6 +1163,32 @@ impl Converter<'_, '_> {
         }
         self.floating = outer;
         self.floating.extend(blocks);
+    }
+
+    /// The OLE object of a `draw:object-ole`, a compound file of the package, kept with the
+    /// picture that shows it.
+    fn keep_object(&mut self, ole: &Element, media: usize) {
+        if self.objects.iter().any(|known| known.media == media) {
+            return;
+        }
+        let Some(href) = ole
+            .attribute(XLINK, "href")
+            .map(|href| href.trim_start_matches("./").to_owned())
+            .filter(|href| !href.contains("://"))
+        else {
+            return;
+        };
+        let Ok(Some(bytes)) = read_member_bytes(self.package, &href, self.limits.max_member_bytes)
+        else {
+            return;
+        };
+        let name = href.rsplit('/').next().unwrap_or(&href).to_owned();
+        self.objects.push(EmbeddedObject {
+            media,
+            program: objects::program_of_compound_file(&bytes),
+            name,
+            bytes,
+        });
     }
 
     fn image(&mut self, frame: &Element, image: &Element, scope: Scope, content: &mut Vec<Inline>) {

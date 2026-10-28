@@ -14,6 +14,7 @@ mod look;
 mod media;
 mod notes;
 mod numbering;
+pub(crate) mod objects;
 mod styles;
 mod write;
 
@@ -32,6 +33,7 @@ pub use edges::{
 pub use look::{LabelSuffix, LineSpacing, ListLabel, PageField, ParagraphLook, RunLook, TableLook};
 pub(crate) use media::image_pixel_size;
 pub use media::sniff_image_type;
+pub use objects::EmbeddedObject;
 pub use write::write_docx;
 pub(crate) use write::{escape as escape_xml, image_extension, zip_members};
 
@@ -69,6 +71,8 @@ pub struct DocumentTree {
     /// The comments on the text, referenced from [`Mark::Comment`] and
     /// [`Inline::CommentAnchor`] by their index in this list, in the order the file keeps them.
     pub comments: Vec<Comment>,
+    /// The objects embedded in the text, each shown by the image of its picture.
+    pub objects: Vec<EmbeddedObject>,
 }
 
 /// A comment on a stretch of the document, or a reply to one.
@@ -482,7 +486,8 @@ pub struct ImportReport {
     pub equations: usize,
     /// Drawing shapes and groups without a picture.
     pub shapes: usize,
-    /// OLE objects (embedded spreadsheets and the like).
+    /// OLE objects (embedded spreadsheets and the like): shown as their picture, and kept in
+    /// [`DocumentTree::objects`] when the object itself is found.
     pub embedded_objects: usize,
     /// Links whose target is not `http`, `https` or `mailto`, internal bookmarks included; the
     /// text stays, the link does not.
@@ -669,7 +674,7 @@ pub fn read_document_tree_with(
                 == Some("continuous"),
         });
     }
-    let (media, notes, comments) = converter.finish();
+    let (media, notes, comments, objects) = converter.finish();
     let last = sections.last().cloned().unwrap_or_else(|| Section {
         end_block: blocks.len(),
         layout: PageLayout::default(),
@@ -689,6 +694,7 @@ pub fn read_document_tree_with(
         headers_footers: last.headers_footers,
         sections,
         comments,
+        objects,
     })
 }
 

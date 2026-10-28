@@ -13,9 +13,9 @@
 //! cross as their own byte arrays, never inside the JSON.
 
 use rely_office_core::{
-    Block, Comment, DocumentTree, HeadersFooters, ImportReport, Limits, Media, Note, OfficeError,
-    PageLayout, Section, Sheet, TrackedChanges, TreeOptions, detect_format, extract_text,
-    read_document_tree, read_document_tree_with, read_presentation, read_workbook,
+    Block, Comment, DocumentTree, EmbeddedObject, HeadersFooters, ImportReport, Limits, Media,
+    Note, OfficeError, PageLayout, Section, Sheet, TrackedChanges, TreeOptions, detect_format,
+    extract_text, read_document_tree, read_document_tree_with, read_presentation, read_workbook,
     sniff_image_type, write_docx, write_pptx,
 };
 use serde::{Deserialize, Serialize};
@@ -141,6 +141,19 @@ struct MediaOutput {
     byte_length: usize,
 }
 
+/// An embedded object of a document tree, its bytes kept aside like an image's.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ObjectOutput<'a> {
+    index: usize,
+    media: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    program: Option<&'a str>,
+    name: &'a str,
+    package: bool,
+    byte_length: usize,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DocumentTreeOutput<'a> {
@@ -154,6 +167,8 @@ struct DocumentTreeOutput<'a> {
     sections: Vec<SectionOutput<'a>>,
     #[serde(skip_serializing_if = "<[Comment]>::is_empty")]
     comments: &'a [Comment],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    objects: Vec<ObjectOutput<'a>>,
 }
 
 /// How a document is read for JavaScript: `{ trackedChanges: "accept" | "keep" }`.
@@ -276,6 +291,7 @@ fn sheet_output(sheet: &Sheet) -> SheetOutput<'_> {
 pub struct DocumentTreeHandle {
     json: String,
     media: Vec<Media>,
+    objects: Vec<EmbeddedObject>,
 }
 
 #[wasm_bindgen]
@@ -291,6 +307,15 @@ impl DocumentTreeHandle {
     #[must_use]
     pub fn media_count(&self) -> usize {
         self.media.len()
+    }
+
+    /// The bytes of embedded object `index`, moved out of the handle: a second call returns
+    /// none.
+    #[wasm_bindgen(js_name = takeObjectBytes)]
+    pub fn take_object_bytes(&mut self, index: usize) -> Option<Vec<u8>> {
+        self.objects
+            .get_mut(index)
+            .map(|object| std::mem::take(&mut object.bytes))
     }
 
     /// The bytes of image `index`, moved out of the handle: a second call returns none.
@@ -323,6 +348,7 @@ pub fn document_tree(
         headers_footers,
         sections,
         comments,
+        objects,
     } = read_document_tree_with(bytes, &limits, &options)?;
     let json = to_json(&DocumentTreeOutput {
         blocks: &blocks,
@@ -349,8 +375,24 @@ pub fn document_tree(
             })
             .collect(),
         comments: &comments,
+        objects: objects
+            .iter()
+            .enumerate()
+            .map(|(index, object)| ObjectOutput {
+                index,
+                media: object.media,
+                program: object.program.as_deref(),
+                name: &object.name,
+                package: object.is_package(),
+                byte_length: object.bytes.len(),
+            })
+            .collect(),
     })?;
-    Ok(DocumentTreeHandle { json, media })
+    Ok(DocumentTreeHandle {
+        json,
+        media,
+        objects,
+    })
 }
 
 /// The page of a document to write, in twentieths of a point; A4 with 2.5 cm margins when left
@@ -407,12 +449,16 @@ fn layout_of(page: &PageInput) -> PageLayout {
 }
 
 /// Write a docx from the JSON of a document tree, `{ blocks, page?, notes?, headersFooters? }`,
-/// with the images the tree names by index.
+/// with the images the tree names by index and the objects those images show.
 ///
 /// # Errors
 ///
 /// `INVALID_TREE` for JSON that is not a document tree, or the error of the writer.
-pub fn docx_from_json(tree_json: &str, media: Vec<Media>) -> Result<Vec<u8>, Failure> {
+pub fn docx_from_json(
+    tree_json: &str,
+    media: Vec<Media>,
+    objects: Vec<EmbeddedObject>,
+) -> Result<Vec<u8>, Failure> {
     let input: DocxInput = serde_json::from_str(tree_json).map_err(|error| Failure {
         code: "INVALID_TREE",
         message: format!("invalid document tree: {error}"),
@@ -441,6 +487,7 @@ pub fn docx_from_json(tree_json: &str, media: Vec<Media>) -> Result<Vec<u8>, Fai
         headers_footers: input.headers_footers,
         sections,
         comments: input.comments,
+        objects,
     };
     Ok(write_docx(&tree)?)
 }
@@ -450,6 +497,7 @@ pub fn docx_from_json(tree_json: &str, media: Vec<Media>) -> Result<Vec<u8>, Fai
 #[derive(Debug, Default)]
 pub struct DocxWriter {
     media: Vec<Media>,
+    objects: Vec<EmbeddedObject>,
 }
 
 #[wasm_bindgen]
@@ -470,6 +518,25 @@ impl DocxWriter {
         self.media.len() - 1
     }
 
+    /// Add an object embedded in the document, shown by image `media`, and return its index;
+    /// `program` is its `ProgID` when known.
+    #[wasm_bindgen(js_name = addObject)]
+    pub fn add_object(
+        &mut self,
+        media: usize,
+        bytes: Vec<u8>,
+        name: String,
+        program: Option<String>,
+    ) -> usize {
+        self.objects.push(EmbeddedObject {
+            media,
+            program,
+            name,
+            bytes,
+        });
+        self.objects.len() - 1
+    }
+
     /// Write the docx.
     ///
     /// # Errors
@@ -477,8 +544,12 @@ impl DocxWriter {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen]
     pub fn write(&mut self, tree_json: &str) -> Result<Vec<u8>, JsError> {
-        docx_from_json(tree_json, std::mem::take(&mut self.media))
-            .map_err(|failure| throw(&failure))
+        docx_from_json(
+            tree_json,
+            std::mem::take(&mut self.media),
+            std::mem::take(&mut self.objects),
+        )
+        .map_err(|failure| throw(&failure))
     }
 }
 

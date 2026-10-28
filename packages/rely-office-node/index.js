@@ -91,6 +91,15 @@ function readDocumentTree(bytes, limits, options) {
       contentType: item.contentType,
       bytes: handle.takeMediaBytes(item.index) ?? new Uint8Array(0),
     }));
+    if (tree.objects !== undefined) {
+      tree.objects = tree.objects.map((item) => ({
+        media: item.media,
+        program: item.program,
+        name: item.name,
+        package: item.package,
+        bytes: handle.takeObjectBytes(item.index) ?? new Uint8Array(0),
+      }));
+    }
     return tree;
   } finally {
     handle.free();
@@ -186,11 +195,14 @@ function render(bytes, fileName, options) {
 }
 
 function writeDocx(tree) {
-  const { blocks, page, media, notes, headersFooters, sections, comments } = tree ?? {};
+  const { blocks, page, media, notes, headersFooters, sections, comments, objects } = tree ?? {};
   const writer = new wasm.DocxWriter();
   try {
     for (const bytes of media ?? []) {
       writer.addMedia(toBytes(bytes));
+    }
+    for (const object of objects ?? []) {
+      writer.addObject(object.media, toBytes(object.bytes), object.name ?? 'oleObject.bin', object.program);
     }
     return call(() =>
       writer.write(

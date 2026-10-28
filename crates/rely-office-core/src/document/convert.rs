@@ -13,6 +13,7 @@ use super::edges::CellLook;
 use super::look::{PageField, ParagraphLook, RunLook, TableLook};
 use super::notes::{CommentParts, NoteParts};
 use super::numbering::{ListCounters, Numbering};
+use super::objects::{self, EmbeddedObject};
 use super::styles::{
     NumberingReference, ParagraphRole, RunFormat, Styles, TableFormat, TableRegion, alignment,
     numbering_reference, on_off, outline_level,
@@ -172,6 +173,7 @@ pub(super) struct Converter<'a, 'p> {
     tracked_changes: TrackedChanges,
     /// The insertion or deletion the text being read is in, when changes are kept.
     revisions: Vec<Mark>,
+    objects: Vec<EmbeddedObject>,
 }
 
 impl<'a, 'p> Converter<'a, 'p> {
@@ -227,12 +229,13 @@ impl<'a, 'p> Converter<'a, 'p> {
             reading_comment: false,
             tracked_changes,
             revisions: Vec::new(),
+            objects: Vec::new(),
         }
     }
 
     /// The images, the notes and the comments read, in the order the tree refers to them, each
     /// reply pointing at the comment it answers.
-    pub(super) fn finish(mut self) -> (Vec<Media>, Vec<Note>, Vec<Comment>) {
+    pub(super) fn finish(mut self) -> (Vec<Media>, Vec<Note>, Vec<Comment>, Vec<EmbeddedObject>) {
         for index in 0..self.comments.len() {
             let Some(paragraph) = self.comment_paragraphs[index].as_ref() else {
                 continue;
@@ -248,7 +251,7 @@ impl<'a, 'p> Converter<'a, 'p> {
                     .filter(|position| *position != index)
             });
         }
-        (self.media, self.notes, self.comments)
+        (self.media, self.notes, self.comments, self.objects)
     }
 
     /// The index of a comment in the tree, read the first time the text names it; the text of
@@ -756,7 +759,7 @@ impl<'a, 'p> Converter<'a, 'p> {
                 }
                 (W, "drawing") => self.append_drawing(element, content),
                 (W, "pict") => self.append_vml(element, content, scan),
-                (W, "object") => self.report.embedded_objects += 1,
+                (W, "object") => self.append_object(element, content, scan),
                 (MC, "AlternateContent") => {
                     if let Some(choice) = alternate_choice(element) {
                         self.append_run_content(choice, format, look, link, content, scan);
@@ -1120,6 +1123,60 @@ impl<'a, 'p> Converter<'a, 'p> {
             width: css_length_in_pixels(style, "width"),
             height: css_length_in_pixels(style, "height"),
             anchor,
+        });
+    }
+
+    /// An OLE object: the picture that shows it, and the object kept with that picture when it
+    /// is embedded in the package rather than linked from outside.
+    fn append_object(
+        &mut self,
+        object: &Element,
+        content: &mut Vec<Inline>,
+        scan: &mut ParagraphScan,
+    ) {
+        self.report.embedded_objects += 1;
+        // An object without a picture is no shape: there is nothing to show.
+        if object.descendant(Namespace::Vml, "imagedata").is_none() {
+            return;
+        }
+        let before = content.len();
+        self.append_vml(object, content, scan);
+        let Some(Inline::Image { media, .. }) = content.get(before) else {
+            return;
+        };
+        let media = *media;
+        let Some(ole) = object.descendant(Namespace::VmlOffice, "OLEObject") else {
+            return;
+        };
+        if ole.attribute(Namespace::None, "Type") == Some("Link")
+            || self.objects.iter().any(|known| known.media == media)
+        {
+            return;
+        }
+        let Some(target) = ole
+            .attribute(Namespace::Relationships, "id")
+            .and_then(|id| self.relationships.get(id))
+            .filter(|relationship| !relationship.external)
+            .map(|relationship| relationship.target.clone())
+        else {
+            return;
+        };
+        let Ok(Some(bytes)) =
+            read_member_bytes(self.package, &target, self.limits.max_member_bytes)
+        else {
+            return;
+        };
+        let name = target.rsplit('/').next().unwrap_or(&target).to_owned();
+        let program = ole
+            .attribute(Namespace::None, "ProgID")
+            .map(str::to_owned)
+            .or_else(|| objects::program_of_compound_file(&bytes))
+            .or_else(|| objects::program_of_package(&name).map(str::to_owned));
+        self.objects.push(EmbeddedObject {
+            media,
+            program,
+            name,
+            bytes,
         });
     }
 
