@@ -36,6 +36,33 @@ below 1.0, a minor version may change the API.
   names, `;` and the decimal comma; `Input::text_in` shows a cell as its locale types it.
 - Undo and redo: `EditHistory` in `rely-office-sheet`, `undo`, `redo`, `canUndo` and `canRedo` on
   every `SheetDocument`, and in the grid and the slide editor with Ctrl+Z and Ctrl+Y.
+- The document tree carries what a paragraph sets itself, `format`: a named style of Word
+  (title, subtitle, intense quote, caption, no spacing), spacing, line spacing, indents and a page
+  break; and a table its `columnWidthsTwips`. Both are read from docx and written back.
+- The document editor: font, size and line spacing in the toolbar, the named styles of Word in
+  the style list, page breaks, a page view with the document's page size, margins, headers and
+  footers drawn on every page and pages numbered, find and replace (Ctrl+F) with case and
+  replace all, tracked changes recorded while typing by the author and accepted or rejected one at
+  a time, images resized by their corner with their proportions kept, and table columns resized
+  with the mouse.
+- 143 more spreadsheet functions, 298 in all, each with its Italian name: statistics of samples
+  and pairs, distributions, depreciation and loans, engineering conversions and bits, text and
+  information (see `docs/editing.md`). `FUNCTION_NAMES` and `function_names(locale)` list them.
+- Sorting by several keys, the autofilter, frozen panes and the fill handle's series in the
+  spreadsheet engine (`sort_range`, `set_auto_filter`, `set_filter_column`, `filter_choices`,
+  `set_frozen`, `fill_range`); the filter and the frozen panes are read from and written to xlsx.
+  The pictures and charts of an xlsx are given as drawn when it was opened (`Sheet::pictures`).
+- The grid: rows and columns resized by dragging their header edge and fitted by a double click,
+  the fill handle and Ctrl+D or Ctrl+R, frozen panes, sort and filter buttons with a menu of the
+  values to show, a borders menu, panels that create and remove conditional formats and
+  validations, the pictures and charts of the file drawn over the cells, and function names
+  suggested while a formula is typed.
+- The slide editor: a slide show (F5) with the transitions and the animations played click by
+  click, a panel that sets the transition and adds, orders and times the animations, several
+  shapes selected with Shift or a dragged box and moved together, rotation by a handle or a
+  number, copy, cut, paste (shapes, text and images from elsewhere) and duplicate, twenty preset
+  shapes drawn as outlines that stretch with their frame, tables inserted and edited cell by cell
+  with rows, columns and colours, and guides that a moved shape snaps to.
 
 ### Changed
 

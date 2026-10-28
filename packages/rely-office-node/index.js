@@ -356,6 +356,59 @@ class SheetDocument {
     return JSON.parse(call(() => this.document.invalidCellsJson(sheet)));
   }
 
+  fillRange(sheet, source, target) {
+    call(() =>
+      this.document.fillRange(
+        sheet,
+        source.top,
+        source.left,
+        source.bottom,
+        source.right,
+        target.top,
+        target.left,
+        target.bottom,
+        target.right,
+      ),
+    );
+  }
+
+  setFrozen(sheet, rows, columns) {
+    call(() => this.document.setFrozen(sheet, rows, columns));
+  }
+
+  sortRange(sheet, { top, left, bottom, right }, keys, hasHeader) {
+    call(() => this.document.sortRange(sheet, top, left, bottom, right, JSON.stringify(keys ?? []), Boolean(hasHeader)));
+  }
+
+  setAutoFilter(sheet, window) {
+    if (window === null || window === undefined) {
+      call(() => this.document.clearAutoFilter(sheet));
+      return;
+    }
+    const { top, left, bottom, right } = window;
+    call(() => this.document.setAutoFilter(sheet, top, left, bottom, right));
+  }
+
+  setFilterColumn(sheet, column, shown) {
+    call(() => this.document.setFilterColumn(sheet, column, JSON.stringify(shown ?? null)));
+  }
+
+  filterChoices(sheet, column) {
+    return JSON.parse(call(() => this.document.filterChoicesJson(sheet, column)));
+  }
+
+  pictures(sheet) {
+    return JSON.parse(call(() => this.document.picturesJson(sheet)));
+  }
+
+  pictureBytes(sheet, index) {
+    return this.document.pictureBytes(sheet, index);
+  }
+
+  functionNames() {
+    return JSON.parse(this.document.functionNamesJson());
+  }
+
   /** Today's date for TODAY() and NOW(): a Date, a serial day count, or null to unset it. */
   setToday(today) {
     this.document.setToday(toSerial(today));

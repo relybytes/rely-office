@@ -20,10 +20,13 @@ import type {
   ConditionalLook,
   DataValidation,
   DocumentBytes,
+  FilterChoice,
   SheetCell,
   SheetDocument,
   SheetOptions,
+  SheetPicture,
   SheetSummary,
+  SortKey,
   StylePatch,
 } from '../model.js';
 import { call, toBytes, toFileName, type WasmSource } from './shared.js';
@@ -205,6 +208,59 @@ class BrowserSheetDocument implements SheetDocument {
 
   invalidCells(sheet: number): [number, number][] {
     return parse(() => this.document.invalidCellsJson(sheet));
+  }
+
+  fillRange(sheet: number, source: CellWindow, target: CellWindow): void {
+    call(() =>
+      this.document.fillRange(
+        sheet,
+        source.top,
+        source.left,
+        source.bottom,
+        source.right,
+        target.top,
+        target.left,
+        target.bottom,
+        target.right,
+      ),
+    );
+  }
+
+  setFrozen(sheet: number, rows: number, columns: number): void {
+    call(() => this.document.setFrozen(sheet, rows, columns));
+  }
+
+  sortRange(sheet: number, { top, left, bottom, right }: CellWindow, keys: SortKey[], hasHeader: boolean): void {
+    call(() => this.document.sortRange(sheet, top, left, bottom, right, JSON.stringify(keys ?? []), Boolean(hasHeader)));
+  }
+
+  setAutoFilter(sheet: number, window: CellWindow | null): void {
+    if (window === null || window === undefined) {
+      call(() => this.document.clearAutoFilter(sheet));
+      return;
+    }
+    const { top, left, bottom, right } = window;
+    call(() => this.document.setAutoFilter(sheet, top, left, bottom, right));
+  }
+
+  setFilterColumn(sheet: number, column: number, shown: string[] | null): void {
+    call(() => this.document.setFilterColumn(sheet, column, JSON.stringify(shown ?? null)));
+  }
+
+  filterChoices(sheet: number, column: number): FilterChoice[] {
+    return parse(() => this.document.filterChoicesJson(sheet, column));
+  }
+
+  pictures(sheet: number): SheetPicture[] {
+    return parse(() => this.document.picturesJson(sheet));
+  }
+
+  pictureBytes(sheet: number, index: number): Uint8Array {
+    return this.document.pictureBytes(sheet, index);
+  }
+
+  functionNames(): string[] {
+    return JSON.parse(this.document.functionNamesJson()) as string[];
   }
 
   setToday(today: Date | number | null): void {

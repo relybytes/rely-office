@@ -155,6 +155,17 @@ async function sampleSheet(): Promise<SheetDocument> {
   workbook.setStyle(0, { top: 0, left: 0, bottom: 0, right: 3 }, { bold: true, fill: 'DBEAFE' });
   workbook.setStyle(0, { top: 4, left: 0, bottom: 4, right: 3 }, { bold: true });
   workbook.setColumnWidth(0, 0, 14);
+  workbook.setFrozen(0, 1, 1);
+  workbook.setAutoFilter(0, { top: 0, left: 0, bottom: 3, right: 3 });
+  workbook.setConditionalFormats(0, [
+    {
+      ranges: [{ firstRow: 1, firstColumn: 3, lastRow: 3, lastColumn: 3 }],
+      rules: [{ condition: { kind: 'dataBar', min: { kind: 'min' }, max: { kind: 'max' }, colour: '63BE7B', showValue: true } }],
+    },
+  ]);
+  workbook.setValidations(0, [
+    { ranges: [{ firstRow: 1, firstColumn: 1, lastRow: 3, lastColumn: 2 }], kind: 'decimal', operator: 'greaterOrEqual', formulas: ['0'] },
+  ]);
   return workbook;
 }
 
@@ -183,7 +194,7 @@ function Demo() {
         ))}
       </nav>
       <main>
-        {view === 'document' && document ? <DocumentEditor document={document} labels={ITALIAN_DOCUMENT_EDITOR_LABELS} /> : null}
+        {view === 'document' && document ? <DocumentEditor document={document} labels={ITALIAN_DOCUMENT_EDITOR_LABELS} pageView={new URLSearchParams(location.search).has('page')} /> : null}
         {view === 'sheet' && sheet ? <SheetGrid sheet={sheet} labels={ITALIAN_SHEET_GRID_LABELS} /> : null}
         {view === 'slides' && presentation ? <SlideEditor presentation={presentation} labels={ITALIAN_SLIDE_EDITOR_LABELS} /> : null}
       </main>

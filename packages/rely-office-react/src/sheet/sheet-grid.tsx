@@ -17,6 +17,7 @@ import {
   type ClipboardEvent,
   type CSSProperties,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactElement,
   type Ref,
 } from 'react';
@@ -26,24 +27,31 @@ import type {
   CellStyle,
   CellWindow,
   ConditionalLook,
+  FilterChoice,
   SheetCell,
   SheetDocument,
+  SortKey,
   StylePatch,
 } from '../model.js';
+import { acceptFunction, functionTokenAt, suggestFunctions, type FunctionToken } from './formula-hints.js';
 import {
   GridAxis,
   cellName,
   columnName,
+  columnWidthCharacters,
   columnWidthPixels,
   coverMerges,
+  fillTarget,
   parseCellName,
   parseTabSeparated,
   rowHeightPixels,
+  rowHeightPoints,
   toTabSeparated,
   windowBetween,
   type CellPosition,
 } from './geometry.js';
 import { ENGLISH_SHEET_GRID_LABELS, type SheetGridLabels } from './labels.js';
+import { BorderMenu, ConditionalFormatPanel, FilterMenu, ValidationPanel } from './sheet-panels.js';
 
 const DEFAULT_ROW_HEIGHT = rowHeightPixels(15);
 const DEFAULT_COLUMN_WIDTH = columnWidthPixels(8.43);
@@ -53,6 +61,11 @@ const EXTRA_ROWS = 50;
 const EXTRA_COLUMNS = 10;
 const MINIMUM_ROWS = 100;
 const MINIMUM_COLUMNS = 26;
+/** The smallest a dragged row or column gets; a size of its own hides it only from the menu. */
+const MINIMUM_DRAGGED_SIZE = 6;
+/** The rows an automatic column width looks at. */
+const FIT_ROWS = 2_000;
+const EMU_PER_PIXEL = 9_525;
 
 const NUMBER_FORMATS: [keyof SheetGridLabels, string][] = [
   ['formatGeneral', ''],
@@ -72,6 +85,29 @@ interface Selection {
 interface Editing extends CellPosition {
   text: string;
   source: 'cell' | 'bar';
+}
+
+interface Resizing {
+  axis: 'row' | 'column';
+  index: number;
+  origin: number;
+  base: number;
+  size: number;
+}
+
+interface FunctionHints {
+  token: FunctionToken;
+  names: string[];
+  active: number;
+}
+
+type Panel = 'conditional' | 'validation' | null;
+
+interface OpenFilter {
+  column: number;
+  choices: FilterChoice[];
+  shown: string[] | null;
+  position: { top: number; left: number };
 }
 
 /** What a host can ask of a mounted grid. */
@@ -135,10 +171,30 @@ function cellCss(cell: SheetCell | undefined, style: CellStyle | undefined, look
   return css;
 }
 
+function contains(window: CellWindow, { row, column }: CellPosition): boolean {
+  return row >= window.top && row <= window.bottom && column >= window.left && column <= window.right;
+}
+
+let measuring: CanvasRenderingContext2D | null | undefined;
+
+/** The width a text takes in the grid's font, measured when the browser can, else estimated. */
+function textWidth(text: string): number {
+  if (measuring === undefined) {
+    try {
+      measuring = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
+    } catch {
+      measuring = null;
+    }
+    if (measuring) measuring.font = '13px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif';
+  }
+  return measuring ? measuring.measureText(text).width : text.length * 7;
+}
+
 /**
- * A spreadsheet grid over a `SheetDocument`: the sheets as tabs, a formula bar, cells drawn with
- * their styles, merges, conditional formats and validation, and the editing a spreadsheet user
- * expects, from typing into a cell to copying a range with its formulas.
+ * A spreadsheet grid over a `SheetDocument`: the sheets as tabs, a formula bar that suggests
+ * functions, cells drawn with their styles, merges, conditional formats, validation and
+ * pictures, frozen panes, filters, and the editing a spreadsheet user expects, from typing into
+ * a cell to dragging its fill handle or the edge of a column.
  */
 export const SheetGrid = forwardRef(function SheetGrid(
   { sheet, onChange, editable = true, labels, className }: SheetGridProps,
@@ -153,7 +209,16 @@ export const SheetGrid = forwardRef(function SheetGrid(
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
   const [viewportSize, setViewportSize] = useState({ width: 960, height: 480 });
   const [renaming, setRenaming] = useState<{ index: number; name: string } | null>(null);
+  const [resizing, setResizing] = useState<Resizing | null>(null);
+  const [filling, setFilling] = useState<{ source: CellWindow; target: CellWindow } | null>(null);
+  const [hints, setHints] = useState<FunctionHints | null>(null);
+  const [panel, setPanel] = useState<Panel>(null);
+  const [bordersOpen, setBordersOpen] = useState(false);
+  const [openFilter, setOpenFilter] = useState<OpenFilter | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
+  const cellEditor = useRef<HTMLInputElement>(null);
+  const barEditor = useRef<HTMLInputElement>(null);
+  const pendingCaret = useRef<number | null>(null);
   const dragging = useRef(false);
   const copied = useRef<{ text: string; sheet: number; window: CellWindow } | null>(null);
   // Set while an edit is being closed on purpose, so the blur that follows does not commit it.
@@ -176,14 +241,23 @@ export const SheetGrid = forwardRef(function SheetGrid(
     // `revision` stands for every edit of the workbook, which changes in place.
   }, [sheet, activeSheet, revision]);
 
-  const rows = useMemo(
-    () => new GridAxis(DEFAULT_ROW_HEIGHT, workbook.summary.rowHeights.map(([row, points]) => [row, rowHeightPixels(points)])),
-    [workbook],
-  );
-  const columns = useMemo(
-    () => new GridAxis(DEFAULT_COLUMN_WIDTH, workbook.summary.columnWidths.map(([column, width]) => [column, columnWidthPixels(width)])),
-    [workbook],
-  );
+  const functionNames = useMemo(() => sheet.functionNames(), [sheet]);
+  const frozenRows = workbook.summary.frozenRows ?? 0;
+  const frozenColumns = workbook.summary.frozenColumns ?? 0;
+  const filter = workbook.summary.autoFilter ?? null;
+
+  const rows = useMemo(() => {
+    const sizes: [number, number][] = workbook.summary.rowHeights.map(([row, points]) => [row, rowHeightPixels(points)]);
+    if (resizing?.axis === 'row') sizes.push([resizing.index, resizing.size]);
+    return new GridAxis(DEFAULT_ROW_HEIGHT, new Map(sizes));
+  }, [workbook, resizing]);
+  const columns = useMemo(() => {
+    const sizes: [number, number][] = workbook.summary.columnWidths.map(([column, width]) => [column, columnWidthPixels(width)]);
+    if (resizing?.axis === 'column') sizes.push([resizing.index, resizing.size]);
+    return new GridAxis(DEFAULT_COLUMN_WIDTH, new Map(sizes));
+  }, [workbook, resizing]);
+  const frozenHeight = rows.offset(frozenRows);
+  const frozenWidth = columns.offset(frozenColumns);
 
   const selected = useMemo(
     () => coverMerges(windowBetween(selection.anchor, selection.focus), workbook.merges),
@@ -193,26 +267,46 @@ export const SheetGrid = forwardRef(function SheetGrid(
   const columnCount = Math.max(MINIMUM_COLUMNS, Math.max(workbook.summary.columns, selected.right + 1) + EXTRA_COLUMNS);
 
   const visible: CellWindow = useMemo(() => {
-    const top = Math.min(rows.indexAt(scroll.top), rowCount - 1);
-    const left = Math.min(columns.indexAt(scroll.left), columnCount - 1);
+    const top = Math.min(rows.indexAt(scroll.top + frozenHeight), rowCount - 1);
+    const left = Math.min(columns.indexAt(scroll.left + frozenWidth), columnCount - 1);
     return {
-      top,
-      left,
+      top: Math.max(top, frozenRows),
+      left: Math.max(left, frozenColumns),
       bottom: Math.min(rowCount - 1, rows.indexAt(scroll.top + viewportSize.height) + 1),
       right: Math.min(columnCount - 1, columns.indexAt(scroll.left + viewportSize.width) + 1),
     };
-  }, [rows, columns, scroll, viewportSize, rowCount, columnCount]);
+  }, [rows, columns, scroll, viewportSize, rowCount, columnCount, frozenHeight, frozenWidth, frozenRows, frozenColumns]);
 
   const cells = useMemo(() => {
     const map = new Map<string, SheetCell>();
-    for (const cell of sheet.cells(workbook.index, visible)) map.set(`${cell.row}:${cell.column}`, cell);
+    const windows: CellWindow[] = [visible];
+    if (frozenRows > 0) windows.push({ top: 0, bottom: frozenRows - 1, left: visible.left, right: visible.right });
+    if (frozenColumns > 0) windows.push({ top: visible.top, bottom: visible.bottom, left: 0, right: frozenColumns - 1 });
+    if (frozenRows > 0 && frozenColumns > 0) windows.push({ top: 0, bottom: frozenRows - 1, left: 0, right: frozenColumns - 1 });
+    for (const window of windows) {
+      for (const cell of sheet.cells(workbook.index, window)) map.set(`${cell.row}:${cell.column}`, cell);
+    }
     return map;
-  }, [sheet, workbook, visible]);
+  }, [sheet, workbook, visible, frozenRows, frozenColumns]);
 
   const cellAt = useCallback(
     ({ row, column }: CellPosition): SheetCell | undefined =>
       cells.get(`${row}:${column}`) ?? sheet.cells(workbook.index, { top: row, left: column, bottom: row, right: column })[0],
     [cells, sheet, workbook.index],
+  );
+
+  const pictures = useMemo(() => sheet.pictures(workbook.index), [sheet, workbook.index]);
+  const pictureUrls = useMemo(() => {
+    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return pictures.map(() => '');
+    return pictures.map((picture, position) =>
+      URL.createObjectURL(new Blob([new Uint8Array(sheet.pictureBytes(workbook.index, position))], { type: picture.contentType })),
+    );
+  }, [sheet, workbook.index, pictures]);
+  useEffect(
+    () => () => {
+      for (const url of pictureUrls) if (url) URL.revokeObjectURL(url);
+    },
+    [pictureUrls],
   );
 
   useLayoutEffect(() => {
@@ -230,13 +324,12 @@ export const SheetGrid = forwardRef(function SheetGrid(
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    const release = () => {
-      dragging.current = false;
-    };
-    window.addEventListener('mouseup', release);
-    return () => window.removeEventListener('mouseup', release);
-  }, []);
+  useLayoutEffect(() => {
+    if (pendingCaret.current === null) return;
+    const input = editing?.source === 'bar' ? barEditor.current : cellEditor.current;
+    input?.setSelectionRange(pendingCaret.current, pendingCaret.current);
+    pendingCaret.current = null;
+  });
 
   /** Run an edit of the workbook; a refusal of rely-office is shown and changes nothing. */
   const mutate = useCallback(
@@ -255,20 +348,69 @@ export const SheetGrid = forwardRef(function SheetGrid(
     [onChange],
   );
 
+  useEffect(() => {
+    const release = () => {
+      dragging.current = false;
+      setFilling((current) => {
+        if (current) {
+          const { source, target } = current;
+          const grew =
+            source.top !== target.top || source.left !== target.left || source.bottom !== target.bottom || source.right !== target.right;
+          if (grew && mutate(() => sheet.fillRange(workbook.index, source, target))) {
+            setSelection({ anchor: { row: target.top, column: target.left }, focus: { row: target.bottom, column: target.right } });
+          }
+        }
+        return null;
+      });
+    };
+    window.addEventListener('mouseup', release);
+    return () => window.removeEventListener('mouseup', release);
+  }, [mutate, sheet, workbook.index]);
+
+  useEffect(() => {
+    if (!resizing) return;
+    const move = (event: MouseEvent) => {
+      const pointer = resizing.axis === 'column' ? event.clientX : event.clientY;
+      setResizing((current) =>
+        current ? { ...current, size: Math.max(MINIMUM_DRAGGED_SIZE, current.base + pointer - current.origin) } : current,
+      );
+    };
+    const finish = () => {
+      const { axis, index, size, base } = resizing;
+      setResizing(null);
+      if (size === base) return;
+      mutate(() =>
+        axis === 'column'
+          ? sheet.setColumnWidth(workbook.index, index, columnWidthCharacters(size))
+          : sheet.setRowHeight(workbook.index, index, rowHeightPoints(size)),
+      );
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', finish);
+    return () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', finish);
+    };
+  }, [resizing, mutate, sheet, workbook.index]);
+
   const scrollIntoView = useCallback(
     ({ row, column }: CellPosition) => {
       const element = viewport.current;
       if (!element) return;
-      const top = rows.offset(row);
-      const bottom = top + rows.size(row);
-      const left = columns.offset(column);
-      const right = left + columns.size(column);
-      if (top < element.scrollTop) element.scrollTop = top;
-      else if (bottom > element.scrollTop + viewportSize.height) element.scrollTop = bottom - viewportSize.height;
-      if (left < element.scrollLeft) element.scrollLeft = left;
-      else if (right > element.scrollLeft + viewportSize.width) element.scrollLeft = right - viewportSize.width;
+      if (row >= frozenRows) {
+        const top = rows.offset(row);
+        const bottom = top + rows.size(row);
+        if (top < element.scrollTop + frozenHeight) element.scrollTop = top - frozenHeight;
+        else if (bottom > element.scrollTop + viewportSize.height) element.scrollTop = bottom - viewportSize.height;
+      }
+      if (column >= frozenColumns) {
+        const left = columns.offset(column);
+        const right = left + columns.size(column);
+        if (left < element.scrollLeft + frozenWidth) element.scrollLeft = left - frozenWidth;
+        else if (right > element.scrollLeft + viewportSize.width) element.scrollLeft = right - viewportSize.width;
+      }
     },
-    [rows, columns, viewportSize],
+    [rows, columns, viewportSize, frozenRows, frozenColumns, frozenHeight, frozenWidth],
   );
 
   const moveTo = useCallback(
@@ -281,6 +423,17 @@ export const SheetGrid = forwardRef(function SheetGrid(
   );
 
   const focusGrid = () => viewport.current?.focus();
+
+  const updateHints = (text: string, caret: number | null) => {
+    const token = caret === null ? null : functionTokenAt(text, caret);
+    const names = token ? suggestFunctions(functionNames, token.prefix) : [];
+    setHints(token && names.length > 0 ? { token, names, active: 0 } : null);
+  };
+
+  const typeInto = (text: string, caret: number | null) => {
+    setEditing((current) => (current ? { ...current, text } : current));
+    updateHints(text, caret);
+  };
 
   const commit = useCallback(
     (move?: { rows: number; columns: number }) => {
@@ -299,6 +452,7 @@ export const SheetGrid = forwardRef(function SheetGrid(
       if (!done) return;
       closing.current = true;
       setEditing(null);
+      setHints(null);
       if (move) moveTo({ row: row + move.rows, column: column + move.columns });
       focusGrid();
     },
@@ -309,7 +463,9 @@ export const SheetGrid = forwardRef(function SheetGrid(
     if (!editable) return;
     closing.current = false;
     const { anchor } = selection;
-    setEditing({ ...anchor, text: text ?? sheet.input(workbook.index, anchor.row, anchor.column), source: 'cell' });
+    const initial = text ?? sheet.input(workbook.index, anchor.row, anchor.column);
+    setEditing({ ...anchor, text: initial, source: 'cell' });
+    updateHints(initial, text === undefined ? null : initial.length);
   };
 
   const step = (direction: 'undo' | 'redo') => {
@@ -327,6 +483,53 @@ export const SheetGrid = forwardRef(function SheetGrid(
     mutate(() => sheet.setStyle(workbook.index, selected, { [key]: !(activeStyle?.font[key] ?? false) }));
   const applyStyle = (patch: StylePatch) => mutate(() => sheet.setStyle(workbook.index, selected, patch));
 
+  const filterWindow: CellWindow | null = filter ? { top: filter.top, left: filter.left, bottom: filter.bottom, right: filter.right } : null;
+  const usedWindow: CellWindow = {
+    top: 0,
+    left: 0,
+    bottom: Math.max(0, workbook.summary.rows - 1),
+    right: Math.max(0, workbook.summary.columns - 1),
+  };
+  const single = selected.top === selected.bottom && selected.left === selected.right;
+
+  /** Whether the first row of a window reads as its heading: text over other values, or bold. */
+  const hasHeading = (window: CellWindow, column: number): boolean => {
+    if (window.bottom <= window.top) return false;
+    const heading = sheet.cells(workbook.index, { ...window, bottom: window.top });
+    if (heading.length === 0 || heading.some((cell) => cell.kind !== 'text')) return false;
+    if (heading.some((cell) => workbook.styles[cell.style]?.font.bold)) return true;
+    const below = sheet.cells(workbook.index, { top: window.top + 1, bottom: window.bottom, left: column, right: column });
+    return below.some((cell) => cell.kind !== 'text');
+  };
+
+  const sort = (descending: boolean, column = selection.anchor.column) => {
+    const inFilter = filterWindow && contains(filterWindow, { row: selection.anchor.row, column });
+    const window = inFilter ? filterWindow : single ? usedWindow : selected;
+    const key: SortKey = { column: Math.min(Math.max(column, window.left), window.right), descending };
+    mutate(() => sheet.sortRange(workbook.index, window, [key], inFilter ? true : hasHeading(window, key.column)));
+  };
+
+  const toggleFilter = () =>
+    mutate(() => sheet.setAutoFilter(workbook.index, filter ? null : single ? usedWindow : selected));
+
+  const toggleFreeze = () =>
+    mutate(() => {
+      if (frozenRows > 0 || frozenColumns > 0) sheet.setFrozen(workbook.index, 0, 0);
+      else if (selection.anchor.row === 0 && selection.anchor.column === 0) sheet.setFrozen(workbook.index, 1, 0);
+      else sheet.setFrozen(workbook.index, selection.anchor.row, selection.anchor.column);
+    });
+
+  const fitColumn = (column: number) => {
+    const last = Math.min(Math.max(0, workbook.summary.rows - 1), FIT_ROWS);
+    const found = sheet.cells(workbook.index, { top: 0, bottom: last, left: column, right: column });
+    if (found.length === 0) {
+      mutate(() => sheet.setColumnWidth(workbook.index, column, null));
+      return;
+    }
+    const widest = Math.max(...found.map((cell) => textWidth(cell.display)));
+    mutate(() => sheet.setColumnWidth(workbook.index, column, columnWidthCharacters(Math.ceil(widest) + 12)));
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (editing) return;
     const { anchor, focus } = selection;
@@ -343,6 +546,12 @@ export const SheetGrid = forwardRef(function SheetGrid(
       step('undo');
     } else if (command && (key === 'y' || (key === 'z' && event.shiftKey))) {
       step('redo');
+    } else if (command && key === 'd' && editable && selected.bottom > selected.top) {
+      const source = { ...selected, bottom: selected.top };
+      mutate(() => sheet.fillRange(workbook.index, source, selected));
+    } else if (command && key === 'r' && editable && selected.right > selected.left) {
+      const source = { ...selected, right: selected.left };
+      mutate(() => sheet.fillRange(workbook.index, source, selected));
     } else if (event.key in steps) {
       const [rowStep, columnStep] = steps[event.key];
       moveTo({ row: from.row + rowStep, column: from.column + columnStep }, event.shiftKey);
@@ -354,8 +563,8 @@ export const SheetGrid = forwardRef(function SheetGrid(
       startEditing();
     } else if ((event.key === 'Delete' || event.key === 'Backspace') && editable) {
       mutate(() => sheet.clearRange(workbook.index, selected));
-    } else if (command && ['b', 'i', 'u'].includes(event.key.toLowerCase()) && editable) {
-      toggle(({ b: 'bold', i: 'italic', u: 'underline' } as const)[event.key.toLowerCase() as 'b' | 'i' | 'u']);
+    } else if (command && ['b', 'i', 'u'].includes(key) && editable) {
+      toggle(({ b: 'bold', i: 'italic', u: 'underline' } as const)[key as 'b' | 'i' | 'u']);
     } else if (event.key.length === 1 && !command && !event.altKey) {
       startEditing(event.key);
     } else {
@@ -402,10 +611,6 @@ export const SheetGrid = forwardRef(function SheetGrid(
     [workbook.index, selected],
   );
 
-  const merges = workbook.merges.filter(
-    (merge) =>
-      merge.firstRow <= visible.bottom && merge.lastRow >= visible.top && merge.firstColumn <= visible.right && merge.lastColumn >= visible.left,
-  );
   const coveredBy = new Map<string, CellRange>();
   for (const merge of workbook.merges) {
     for (let row = merge.firstRow; row <= merge.lastRow; row += 1) {
@@ -422,6 +627,23 @@ export const SheetGrid = forwardRef(function SheetGrid(
     width: columns.offset(window.right + 1) - columns.offset(window.left),
   });
 
+  const openFilterMenu = (event: ReactMouseEvent, column: number) => {
+    event.stopPropagation();
+    if (!filter) return;
+    const offset = column - filter.left;
+    const shown = filter.columns.find((entry) => entry.column === offset)?.shown ?? null;
+    let choices: FilterChoice[] = [];
+    try {
+      choices = sheet.filterChoices(workbook.index, offset);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    const left = HEADER_WIDTH + columns.offset(column) - (column >= frozenColumns ? scroll.left : 0);
+    const top = HEADER_HEIGHT + rows.offset(filter.top + 1) - (filter.top >= frozenRows ? scroll.top : 0);
+    setOpenFilter({ column, choices, shown, position: { top, left: Math.max(0, left) } });
+  };
+
   const renderCell = (row: number, column: number, span?: CellRange): ReactElement => {
     const key = `${row}:${column}`;
     const cell = cells.get(key) ?? (span ? cellAt({ row, column }) : undefined);
@@ -431,12 +653,14 @@ export const SheetGrid = forwardRef(function SheetGrid(
       ? rectangle({ top: span.firstRow, left: span.firstColumn, bottom: span.lastRow, right: span.lastColumn })
       : rectangle({ top: row, left: column, bottom: row, right: column });
     const showValue = !look?.bar && !look?.icon ? true : (look.bar?.showValue ?? look.icon?.showValue ?? true);
+    const filterButton = filter !== null && row === filter.top && column >= filter.left && column <= filter.right;
+    const filtered = filterButton && filter.columns.some((entry) => entry.column === column - filter.left);
     return (
       <div
         key={key}
         role="gridcell"
         aria-label={cellName({ row, column })}
-        aria-selected={row >= selected.top && row <= selected.bottom && column >= selected.left && column <= selected.right}
+        aria-selected={contains(selected, { row, column })}
         className={['rely-sheet-cell', workbook.invalid.has(key) ? 'rely-sheet-invalid' : ''].filter(Boolean).join(' ')}
         style={{ ...area, ...cellCss(cell, style, look) }}
         onMouseDown={(event) => {
@@ -447,7 +671,8 @@ export const SheetGrid = forwardRef(function SheetGrid(
           focusGrid();
         }}
         onMouseEnter={() => {
-          if (dragging.current) setSelection((current) => ({ anchor: current.anchor, focus: { row, column } }));
+          if (filling) setFilling((current) => (current ? { ...current, target: fillTarget(current.source, { row, column }) } : current));
+          else if (dragging.current) setSelection((current) => ({ anchor: current.anchor, focus: { row, column } }));
         }}
         onDoubleClick={() => startEditing()}
       >
@@ -460,18 +685,38 @@ export const SheetGrid = forwardRef(function SheetGrid(
           </span>
         ) : null}
         {showValue ? <span className="rely-sheet-value">{cell?.display ?? ''}</span> : null}
+        {filterButton ? (
+          <button
+            type="button"
+            className="rely-sheet-filter-button"
+            aria-label={`${words.filterColumn} ${columnName(column)}`}
+            aria-pressed={filtered}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => openFilterMenu(event, column)}
+          >
+            {filtered ? '⧩' : '▾'}
+          </button>
+        ) : null}
       </div>
     );
   };
 
-  const body: ReactElement[] = [];
-  for (let row = visible.top; row <= visible.bottom; row += 1) {
-    for (let column = visible.left; column <= visible.right; column += 1) {
-      if (coveredBy.has(`${row}:${column}`)) continue;
-      body.push(renderCell(row, column));
+  /** The cells of a window, merges drawn once from their top-left cell. */
+  const renderCells = (window: CellWindow): ReactElement[] => {
+    const drawn: ReactElement[] = [];
+    for (let row = window.top; row <= window.bottom; row += 1) {
+      for (let column = window.left; column <= window.right; column += 1) {
+        if (coveredBy.has(`${row}:${column}`)) continue;
+        drawn.push(renderCell(row, column));
+      }
     }
-  }
-  for (const merge of merges) body.push(renderCell(merge.firstRow, merge.firstColumn, merge));
+    for (const merge of workbook.merges) {
+      const overlaps =
+        merge.firstRow <= window.bottom && merge.lastRow >= window.top && merge.firstColumn <= window.right && merge.lastColumn >= window.left;
+      if (overlaps) drawn.push(renderCell(merge.firstRow, merge.firstColumn, merge));
+    }
+    return drawn;
+  };
 
   const editingCell = editing && editing.source === 'cell' ? editing : null;
   const editingArea = editingCell
@@ -486,11 +731,35 @@ export const SheetGrid = forwardRef(function SheetGrid(
   const listId = `rely-sheet-list-${workbook.index}`;
   const anchorName = cellName(selection.anchor);
   const rangeName =
-    selected.top === selected.bottom && selected.left === selected.right
-      ? anchorName
-      : `${cellName({ row: selected.top, column: selected.left })}:${cellName({ row: selected.bottom, column: selected.right })}`;
+    single ? anchorName : `${cellName({ row: selected.top, column: selected.left })}:${cellName({ row: selected.bottom, column: selected.right })}`;
+
+  const acceptHint = (name: string) => {
+    if (!editing || !hints) return;
+    const accepted = acceptFunction(editing.text, hints.token, name);
+    pendingCaret.current = accepted.caret;
+    setEditing({ ...editing, text: accepted.text });
+    setHints(null);
+  };
 
   const editorKeys = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (hints) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        setHints({ ...hints, active: (hints.active + delta + hints.names.length) % hints.names.length });
+        return;
+      }
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        event.preventDefault();
+        acceptHint(hints.names[hints.active]);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setHints(null);
+        return;
+      }
+    }
     if (event.key === 'Enter') {
       event.preventDefault();
       commit({ rows: event.shiftKey ? -1 : 1, columns: 0 });
@@ -501,10 +770,162 @@ export const SheetGrid = forwardRef(function SheetGrid(
       event.preventDefault();
       closing.current = true;
       setEditing(null);
+      setHints(null);
       setMessage(null);
       focusGrid();
     }
   };
+
+  const hintList = (style: CSSProperties) =>
+    hints ? (
+      <ul className="rely-sheet-hints" role="listbox" aria-label={words.functions} style={style}>
+        {hints.names.map((name, position) => (
+          <li
+            key={name}
+            role="option"
+            aria-selected={position === hints.active}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              acceptHint(name);
+            }}
+          >
+            {name}
+          </li>
+        ))}
+      </ul>
+    ) : null;
+
+  const activeArea = (() => {
+    const merge = coveredBy.get(`${selection.anchor.row}:${selection.anchor.column}`);
+    return merge
+      ? { top: merge.firstRow, left: merge.firstColumn, bottom: merge.lastRow, right: merge.lastColumn }
+      : { top: selection.anchor.row, left: selection.anchor.column, bottom: selection.anchor.row, right: selection.anchor.column };
+  })();
+
+  /** What every pane draws over its cells: the selection, the fill handle and the editor. */
+  const overlays = (pane: 'main' | 'top' | 'left' | 'corner'): ReactElement => {
+    const paneOf = ({ row, column }: CellPosition) =>
+      row < frozenRows ? (column < frozenColumns ? 'corner' : 'top') : column < frozenColumns ? 'left' : 'main';
+    const selectionRectangle = rectangle(selected);
+    const handleHere = editable && !editing && paneOf({ row: selected.bottom, column: selected.right }) === pane;
+    return (
+      <>
+        <div className="rely-sheet-selection" style={selectionRectangle} />
+        <div className="rely-sheet-active" style={rectangle(activeArea)} />
+        {filling ? <div className="rely-sheet-fill-target" style={rectangle(filling.target)} /> : null}
+        {handleHere ? (
+          <div
+            className="rely-sheet-fill-handle"
+            title={words.fillHandle}
+            style={{
+              top: rows.offset(selected.bottom + 1) - 4,
+              left: columns.offset(selected.right + 1) - 4,
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setFilling({ source: selected, target: selected });
+            }}
+          />
+        ) : null}
+        {editingCell && editingArea && paneOf(editingCell) === pane ? (
+          <>
+            <input
+              ref={cellEditor}
+              className="rely-sheet-editor"
+              aria-label={cellName(editingCell)}
+              style={editingArea}
+              value={editingCell.text}
+              list={validationItems.length > 0 ? listId : undefined}
+              autoFocus
+              onChange={(event) => typeInto(event.target.value, event.target.selectionStart)}
+              onSelect={(event) => updateHints(event.currentTarget.value, event.currentTarget.selectionStart)}
+              onKeyDown={editorKeys}
+              onBlur={() => {
+                setHints(null);
+                if (closing.current) closing.current = false;
+                else commit();
+              }}
+            />
+            {hintList({
+              top: Number(editingArea.top) + Number(editingArea.height),
+              left: editingArea.left,
+            })}
+          </>
+        ) : null}
+      </>
+    );
+  };
+
+  const canvasSize = { width: columns.offset(columnCount), height: rows.offset(rowCount) };
+
+  const columnHeader = (column: number) => (
+    <div
+      key={column}
+      role="columnheader"
+      className={column >= selected.left && column <= selected.right ? 'rely-sheet-header rely-sheet-header-selected' : 'rely-sheet-header'}
+      style={{ left: columns.offset(column), width: columns.size(column), height: HEADER_HEIGHT }}
+      onMouseDown={(event) => {
+        setSelection((current) => ({ anchor: event.shiftKey ? current.anchor : { row: 0, column }, focus: { row: rowCount - 1, column } }));
+        focusGrid();
+      }}
+    >
+      {columnName(column)}
+      {editable ? (
+        <span
+          className="rely-sheet-resize-column"
+          title={words.resizeColumn}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const size = columns.size(column);
+            setResizing({ axis: 'column', index: column, origin: event.clientX, base: size, size });
+          }}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            fitColumn(column);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+
+  const rowHeader = (row: number) => (
+    <div
+      key={row}
+      role="rowheader"
+      className={row >= selected.top && row <= selected.bottom ? 'rely-sheet-header rely-sheet-header-selected' : 'rely-sheet-header'}
+      style={{ top: rows.offset(row), height: rows.size(row), width: HEADER_WIDTH }}
+      onMouseDown={(event) => {
+        setSelection((current) => ({
+          anchor: event.shiftKey ? current.anchor : { row, column: 0 },
+          focus: { row, column: columnCount - 1 },
+        }));
+        focusGrid();
+      }}
+    >
+      {row + 1}
+      {editable ? (
+        <span
+          className="rely-sheet-resize-row"
+          title={words.resizeRow}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const size = rows.size(row);
+            setResizing({ axis: 'row', index: row, origin: event.clientY, base: size, size });
+          }}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            mutate(() => sheet.setRowHeight(workbook.index, row, null));
+          }}
+        />
+      ) : null}
+    </div>
+  );
+
+  const range = (from: number, to: number) => Array.from({ length: Math.max(0, to - from + 1) }, (_, offset) => from + offset);
+  const frozen = frozenRows > 0 || frozenColumns > 0;
 
   return (
     <div className={['rely-sheet-grid', className].filter(Boolean).join(' ')}>
@@ -554,6 +975,28 @@ export const SheetGrid = forwardRef(function SheetGrid(
               <span aria-hidden="true">{'▧'}</span>
               <input type="color" aria-label={words.fill} onChange={(event) => applyStyle({ fill: event.target.value })} />
             </label>
+            <span className="rely-sheet-menu-anchor">
+              <button
+                type="button"
+                className="rely-tool"
+                aria-label={words.borders}
+                title={words.borders}
+                aria-expanded={bordersOpen}
+                onClick={() => setBordersOpen((open) => !open)}
+              >
+                {'▦'}
+              </button>
+              {bordersOpen ? (
+                <BorderMenu
+                  words={words}
+                  onApply={(placement, border) => {
+                    mutate(() => sheet.setBorders(workbook.index, selected, placement, border));
+                    setBordersOpen(false);
+                  }}
+                  onClose={() => setBordersOpen(false)}
+                />
+              ) : null}
+            </span>
           </div>
           <div className="rely-tool-group">
             {(
@@ -599,11 +1042,59 @@ export const SheetGrid = forwardRef(function SheetGrid(
             </select>
           </div>
           <div className="rely-tool-group">
+            <button type="button" className="rely-tool" aria-label={words.sortAscending} title={words.sortAscending} onClick={() => sort(false)}>
+              {'A↓'}
+            </button>
+            <button type="button" className="rely-tool" aria-label={words.sortDescending} title={words.sortDescending} onClick={() => sort(true)}>
+              {'Z↓'}
+            </button>
+            <button
+              type="button"
+              className="rely-tool"
+              aria-label={words.filter}
+              title={words.filter}
+              aria-pressed={filter !== null}
+              onClick={toggleFilter}
+            >
+              {'⧩'}
+            </button>
+            <button
+              type="button"
+              className="rely-tool"
+              aria-label={frozen ? words.unfreeze : words.freeze}
+              title={frozen ? words.unfreeze : words.freeze}
+              aria-pressed={frozen}
+              onClick={toggleFreeze}
+            >
+              {'⊞'}
+            </button>
+            <button
+              type="button"
+              className="rely-tool"
+              aria-label={words.conditionalFormats}
+              title={words.conditionalFormats}
+              aria-pressed={panel === 'conditional'}
+              onClick={() => setPanel((current) => (current === 'conditional' ? null : 'conditional'))}
+            >
+              {'◐'}
+            </button>
+            <button
+              type="button"
+              className="rely-tool"
+              aria-label={words.validation}
+              title={words.validation}
+              aria-pressed={panel === 'validation'}
+              onClick={() => setPanel((current) => (current === 'validation' ? null : 'validation'))}
+            >
+              {'✓'}
+            </button>
+          </div>
+          <div className="rely-tool-group">
             <button type="button" className="rely-tool" aria-label={words.merge} title={words.merge} onClick={() => mutate(() => sheet.mergeCells(workbook.index, selected))}>
               {'⬚'}
             </button>
             <button type="button" className="rely-tool" aria-label={words.unmerge} title={words.unmerge} onClick={() => mutate(() => sheet.unmergeCells(workbook.index, selected))}>
-              {'⊞'}
+              {'⊟'}
             </button>
             <button type="button" className="rely-tool" aria-label={words.insertRow} title={words.insertRow} onClick={() => mutate(() => sheet.insertRows(workbook.index, selected.top, selected.bottom - selected.top + 1))}>
               {'+━'}
@@ -637,20 +1128,30 @@ export const SheetGrid = forwardRef(function SheetGrid(
             focusGrid();
           }}
         />
-        <input
-          className="rely-sheet-formula"
-          aria-label={words.formula}
-          readOnly={!editable}
-          value={editing ? editing.text : sheet.input(workbook.index, selection.anchor.row, selection.anchor.column)}
-          onFocus={() => {
-            if (editable && !editing) {
-              closing.current = false;
-              setEditing({ ...selection.anchor, text: sheet.input(workbook.index, selection.anchor.row, selection.anchor.column), source: 'bar' });
-            }
-          }}
-          onChange={(event) => setEditing((current) => (current ? { ...current, text: event.target.value } : current))}
-          onKeyDown={editorKeys}
-        />
+        <span className="rely-sheet-formula-wrap">
+          <input
+            ref={barEditor}
+            className="rely-sheet-formula"
+            aria-label={words.formula}
+            readOnly={!editable}
+            value={editing ? editing.text : sheet.input(workbook.index, selection.anchor.row, selection.anchor.column)}
+            onFocus={() => {
+              if (editable && !editing) {
+                closing.current = false;
+                setEditing({ ...selection.anchor, text: sheet.input(workbook.index, selection.anchor.row, selection.anchor.column), source: 'bar' });
+              }
+            }}
+            onChange={(event) => typeInto(event.target.value, event.target.selectionStart)}
+            onSelect={(event) => {
+              if (editing?.source === 'bar') updateHints(event.currentTarget.value, event.currentTarget.selectionStart);
+            }}
+            onBlur={() => {
+              if (editing?.source === 'bar') setHints(null);
+            }}
+            onKeyDown={editorKeys}
+          />
+          {editing?.source === 'bar' ? hintList({ top: '100%', left: 0 }) : null}
+        </span>
       </div>
       {message ? (
         <div className="rely-sheet-message" role="alert">
@@ -658,104 +1159,144 @@ export const SheetGrid = forwardRef(function SheetGrid(
         </div>
       ) : null}
 
-      <div className="rely-sheet-frame">
-        <div className="rely-sheet-corner" style={{ width: HEADER_WIDTH, height: HEADER_HEIGHT }} />
-        <div className="rely-sheet-column-headers" style={{ left: HEADER_WIDTH, height: HEADER_HEIGHT }}>
-          <div style={{ transform: `translateX(${-scroll.left}px)` }}>
-            {Array.from({ length: visible.right - visible.left + 1 }, (_, offset) => visible.left + offset).map((column) => (
-              <div
-                key={column}
-                role="columnheader"
-                className={column >= selected.left && column <= selected.right ? 'rely-sheet-header rely-sheet-header-selected' : 'rely-sheet-header'}
-                style={{ left: columns.offset(column), width: columns.size(column), height: HEADER_HEIGHT }}
-                onMouseDown={(event) => {
-                  setSelection((current) => ({ anchor: event.shiftKey ? current.anchor : { row: 0, column }, focus: { row: rowCount - 1, column } }));
-                  focusGrid();
-                }}
-              >
-                {columnName(column)}
+      <div className="rely-sheet-body">
+        <div className="rely-sheet-frame">
+          <div className="rely-sheet-corner" style={{ width: HEADER_WIDTH, height: HEADER_HEIGHT }} />
+          <div className="rely-sheet-column-headers" style={{ left: HEADER_WIDTH, height: HEADER_HEIGHT }}>
+            <div style={{ transform: `translateX(${-scroll.left}px)` }}>{range(visible.left, visible.right).map(columnHeader)}</div>
+            {frozenColumns > 0 ? (
+              <div className="rely-sheet-frozen-headers" style={{ width: frozenWidth, height: HEADER_HEIGHT }}>
+                {range(0, frozenColumns - 1).map(columnHeader)}
               </div>
-            ))}
+            ) : null}
           </div>
-        </div>
-        <div className="rely-sheet-row-headers" style={{ top: HEADER_HEIGHT, width: HEADER_WIDTH }}>
-          <div style={{ transform: `translateY(${-scroll.top}px)` }}>
-            {Array.from({ length: visible.bottom - visible.top + 1 }, (_, offset) => visible.top + offset).map((row) => (
-              <div
-                key={row}
-                role="rowheader"
-                className={row >= selected.top && row <= selected.bottom ? 'rely-sheet-header rely-sheet-header-selected' : 'rely-sheet-header'}
-                style={{ top: rows.offset(row), height: rows.size(row), width: HEADER_WIDTH }}
-                onMouseDown={(event) => {
-                  setSelection((current) => ({
-                    anchor: event.shiftKey ? current.anchor : { row, column: 0 },
-                    focus: { row, column: columnCount - 1 },
-                  }));
-                  focusGrid();
-                }}
-              >
-                {row + 1}
+          <div className="rely-sheet-row-headers" style={{ top: HEADER_HEIGHT, width: HEADER_WIDTH }}>
+            <div style={{ transform: `translateY(${-scroll.top}px)` }}>{range(visible.top, visible.bottom).map(rowHeader)}</div>
+            {frozenRows > 0 ? (
+              <div className="rely-sheet-frozen-headers" style={{ width: HEADER_WIDTH, height: frozenHeight }}>
+                {range(0, frozenRows - 1).map(rowHeader)}
               </div>
-            ))}
+            ) : null}
           </div>
-        </div>
-        <div
-          ref={viewport}
-          className="rely-sheet-viewport"
-          role="grid"
-          aria-label={words.grid}
-          aria-rowcount={rowCount}
-          aria-colcount={columnCount}
-          tabIndex={0}
-          style={{ top: HEADER_HEIGHT, left: HEADER_WIDTH }}
-          onScroll={(event) => setScroll({ top: event.currentTarget.scrollTop, left: event.currentTarget.scrollLeft })}
-          onKeyDown={onKeyDown}
-          onCopy={copySelection}
-          onCut={(event) => {
-            copySelection(event);
-            if (editable) mutate(() => sheet.clearRange(workbook.index, selected));
-          }}
-          onPaste={paste}
-        >
-          <div className="rely-sheet-canvas" style={{ width: columns.offset(columnCount), height: rows.offset(rowCount) }}>
-            {body}
-            <div className="rely-sheet-selection" style={rectangle(selected)} />
+          <div
+            ref={viewport}
+            className="rely-sheet-viewport"
+            role="grid"
+            aria-label={words.grid}
+            aria-rowcount={rowCount}
+            aria-colcount={columnCount}
+            tabIndex={0}
+            style={{ top: HEADER_HEIGHT, left: HEADER_WIDTH }}
+            onScroll={(event) => {
+              setScroll({ top: event.currentTarget.scrollTop, left: event.currentTarget.scrollLeft });
+              setOpenFilter(null);
+            }}
+            onKeyDown={onKeyDown}
+            onCopy={copySelection}
+            onCut={(event) => {
+              copySelection(event);
+              if (editable) mutate(() => sheet.clearRange(workbook.index, selected));
+            }}
+            onPaste={paste}
+          >
+            <div className="rely-sheet-canvas" style={canvasSize}>
+              {renderCells(visible)}
+              {pictures.map((picture, position) => (
+                <img
+                  key={position}
+                  className="rely-sheet-picture"
+                  alt={picture.description ?? ''}
+                  src={pictureUrls[position] || undefined}
+                  style={{
+                    top: rows.offset(picture.row) + picture.offsetYEmu / EMU_PER_PIXEL,
+                    left: columns.offset(picture.column) + picture.offsetXEmu / EMU_PER_PIXEL,
+                    width: picture.widthEmu / EMU_PER_PIXEL,
+                    height: picture.heightEmu / EMU_PER_PIXEL,
+                  }}
+                />
+              ))}
+              {overlays('main')}
+              {validationItems.length > 0 ? (
+                <datalist id={listId}>
+                  {validationItems.map((item) => (
+                    <option key={item} value={item} />
+                  ))}
+                </datalist>
+              ) : null}
+            </div>
+          </div>
+          {frozenRows > 0 ? (
             <div
-              className="rely-sheet-active"
-              style={rectangle(
-                (() => {
-                  const merge = coveredBy.get(`${selection.anchor.row}:${selection.anchor.column}`);
-                  return merge
-                    ? { top: merge.firstRow, left: merge.firstColumn, bottom: merge.lastRow, right: merge.lastColumn }
-                    : { top: selection.anchor.row, left: selection.anchor.column, bottom: selection.anchor.row, right: selection.anchor.column };
-                })(),
-              )}
+              className="rely-sheet-pane rely-sheet-pane-top"
+              style={{ top: HEADER_HEIGHT, left: HEADER_WIDTH, width: viewportSize.width, height: frozenHeight }}
+            >
+              <div className="rely-sheet-canvas" style={{ ...canvasSize, transform: `translateX(${-scroll.left}px)` }}>
+                {renderCells({ top: 0, bottom: frozenRows - 1, left: visible.left, right: visible.right })}
+                {overlays('top')}
+              </div>
+            </div>
+          ) : null}
+          {frozenColumns > 0 ? (
+            <div
+              className="rely-sheet-pane rely-sheet-pane-left"
+              style={{ top: HEADER_HEIGHT, left: HEADER_WIDTH, width: frozenWidth, height: viewportSize.height }}
+            >
+              <div className="rely-sheet-canvas" style={{ ...canvasSize, transform: `translateY(${-scroll.top}px)` }}>
+                {renderCells({ top: visible.top, bottom: visible.bottom, left: 0, right: frozenColumns - 1 })}
+                {overlays('left')}
+              </div>
+            </div>
+          ) : null}
+          {frozenRows > 0 && frozenColumns > 0 ? (
+            <div
+              className="rely-sheet-pane rely-sheet-pane-top rely-sheet-pane-left"
+              style={{ top: HEADER_HEIGHT, left: HEADER_WIDTH, width: frozenWidth, height: frozenHeight }}
+            >
+              <div className="rely-sheet-canvas" style={canvasSize}>
+                {renderCells({ top: 0, bottom: frozenRows - 1, left: 0, right: frozenColumns - 1 })}
+                {overlays('corner')}
+              </div>
+            </div>
+          ) : null}
+          {openFilter ? (
+            <FilterMenu
+              key={openFilter.column}
+              words={words}
+              choices={openFilter.choices}
+              shown={openFilter.shown}
+              position={openFilter.position}
+              onClose={() => setOpenFilter(null)}
+              onApply={(shown) => {
+                if (filter) mutate(() => sheet.setFilterColumn(workbook.index, openFilter.column - filter.left, shown));
+                setOpenFilter(null);
+              }}
+              onSort={(descending) => {
+                if (filterWindow) {
+                  mutate(() => sheet.sortRange(workbook.index, filterWindow, [{ column: openFilter.column, descending }], true));
+                }
+                setOpenFilter(null);
+              }}
             />
-            {editingCell && editingArea ? (
-              <input
-                className="rely-sheet-editor"
-                aria-label={cellName(editingCell)}
-                style={editingArea}
-                value={editingCell.text}
-                list={validationItems.length > 0 ? listId : undefined}
-                autoFocus
-                onChange={(event) => setEditing((current) => (current ? { ...current, text: event.target.value } : current))}
-                onKeyDown={editorKeys}
-                onBlur={() => {
-                  if (closing.current) closing.current = false;
-                  else commit();
-                }}
-              />
-            ) : null}
-            {validationItems.length > 0 ? (
-              <datalist id={listId}>
-                {validationItems.map((item) => (
-                  <option key={item} value={item} />
-                ))}
-              </datalist>
-            ) : null}
-          </div>
+          ) : null}
         </div>
+        {panel === 'conditional' ? (
+          <ConditionalFormatPanel
+            words={words}
+            selection={selected}
+            formats={sheet.conditionalFormats(workbook.index)}
+            onChange={(formats) => mutate(() => sheet.setConditionalFormats(workbook.index, formats))}
+            onClose={() => setPanel(null)}
+          />
+        ) : null}
+        {panel === 'validation' ? (
+          <ValidationPanel
+            words={words}
+            selection={selected}
+            validations={sheet.validations(workbook.index)}
+            onChange={(validations) => mutate(() => sheet.setValidations(workbook.index, validations))}
+            onClose={() => setPanel(null)}
+          />
+        ) : null}
       </div>
 
       <div className="rely-sheet-tabs" role="tablist" aria-label={words.sheets}>
@@ -786,6 +1327,7 @@ export const SheetGrid = forwardRef(function SheetGrid(
                 setActiveSheet(index);
                 setSelection({ anchor: { row: 0, column: 0 }, focus: { row: 0, column: 0 } });
                 setEditing(null);
+                setOpenFilter(null);
               }}
               onDoubleClick={() => editable && setRenaming({ index, name: summary.name })}
             >

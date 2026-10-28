@@ -8,11 +8,14 @@ import {
   GridAxis,
   cellName,
   columnName,
+  columnWidthCharacters,
   columnWidthPixels,
   coverMerges,
+  fillTarget,
   parseCellName,
   parseTabSeparated,
   rowHeightPixels,
+  rowHeightPoints,
   toTabSeparated,
   windowBetween,
 } from './geometry.js';
@@ -98,5 +101,28 @@ describe('the clipboard', () => {
       ['1', '2'],
       ['3', '4'],
     ]);
+  });
+});
+
+describe('fillTarget', () => {
+  const source = { top: 2, left: 1, bottom: 3, right: 2 };
+
+  it('grows the source towards the pointer along the side it went furthest past', () => {
+    expect(fillTarget(source, { row: 9, column: 3 })).toEqual({ top: 2, left: 1, bottom: 9, right: 2 });
+    expect(fillTarget(source, { row: 0, column: 2 })).toEqual({ top: 0, left: 1, bottom: 3, right: 2 });
+    expect(fillTarget(source, { row: 4, column: 7 })).toEqual({ top: 2, left: 1, bottom: 3, right: 7 });
+    expect(fillTarget(source, { row: 3, column: 0 })).toEqual({ top: 2, left: 0, bottom: 3, right: 2 });
+  });
+
+  it('keeps the source while the pointer stays inside it', () => {
+    expect(fillTarget(source, { row: 3, column: 1 })).toBe(source);
+  });
+});
+
+describe('sizes back to file units', () => {
+  it('inverts the pixel conversions', () => {
+    expect(columnWidthCharacters(columnWidthPixels(10))).toBe(10);
+    expect(rowHeightPoints(rowHeightPixels(15))).toBe(15);
+    expect(columnWidthCharacters(2)).toBe(0);
   });
 });

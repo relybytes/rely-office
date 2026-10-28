@@ -193,7 +193,27 @@ export function TextBodyView({
   );
 }
 
-function TableView({ table, scale }: Readonly<{ table: SlideTable; scale: number }>): ReactElement {
+/** A cell of a table by its row and its column, as the editor names the one being written. */
+export interface TableCellPlace {
+  row: number;
+  column: number;
+}
+
+function TableView({
+  table,
+  scale,
+  activeCell,
+  editingCell = false,
+  onCellDown,
+  onCommitCell,
+}: Readonly<{
+  table: SlideTable;
+  scale: number;
+  activeCell?: TableCellPlace | null;
+  editingCell?: boolean;
+  onCellDown?: (cell: TableCellPlace) => void;
+  onCommitCell?: (cell: TableCellPlace, element: HTMLDivElement) => void;
+}>): ReactElement {
   return (
     <table className="rely-slide-table">
       <colgroup>
@@ -210,9 +230,16 @@ function TableView({ table, scale }: Readonly<{ table: SlideTable; scale: number
                   key={cellIndex}
                   colSpan={cell.colSpan}
                   rowSpan={cell.rowSpan}
+                  className={activeCell?.row === rowIndex && activeCell.column === cellIndex ? 'rely-slide-cell-active' : undefined}
                   style={{ background: cell.fill ? `#${cell.fill}` : undefined }}
+                  onPointerDown={onCellDown ? () => onCellDown({ row: rowIndex, column: cellIndex }) : undefined}
                 >
-                  <TextBodyView body={cell.body} scale={scale} />
+                  <TextBodyView
+                    body={cell.body}
+                    scale={scale}
+                    editable={editingCell && activeCell?.row === rowIndex && activeCell.column === cellIndex}
+                    onCommit={onCommitCell ? (element) => onCommitCell({ row: rowIndex, column: cellIndex }, element) : undefined}
+                  />
                 </td>
               ),
             )}
@@ -230,12 +257,18 @@ export function ShapeView({
   media,
   editingText = false,
   onCommitText,
+  activeCell,
+  onCellDown,
+  onCommitCell,
 }: Readonly<{
   shape: SlideShape;
   scale: number;
   media: MediaUrls;
   editingText?: boolean;
   onCommitText?: (element: HTMLDivElement) => void;
+  activeCell?: TableCellPlace | null;
+  onCellDown?: (cell: TableCellPlace) => void;
+  onCommitCell?: (cell: TableCellPlace, element: HTMLDivElement) => void;
 }>): ReactElement {
   const { content } = shape;
   return (
@@ -247,7 +280,16 @@ export function ShapeView({
       {content.type === 'picture' && media.has(content.media) ? (
         <img className="rely-slide-picture" src={media.get(content.media)} alt="" draggable={false} />
       ) : null}
-      {content.type === 'table' ? <TableView table={content} scale={scale} /> : null}
+      {content.type === 'table' ? (
+        <TableView
+          table={content}
+          scale={scale}
+          activeCell={activeCell}
+          editingCell={editingText}
+          onCellDown={onCellDown}
+          onCommitCell={onCommitCell}
+        />
+      ) : null}
     </>
   );
 }

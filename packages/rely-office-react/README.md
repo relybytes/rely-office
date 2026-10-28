@@ -6,9 +6,9 @@ compiled to WebAssembly, and three React editors over them.
 
 | Component | Edits | Saves |
 | --- | --- | --- |
-| `DocumentEditor` | the document tree in a rich-text editor (TipTap): headings, paragraphs and their alignment, every mark of the tree, nested lists, tables with merged cells, images in the line, comments, tracked changes, footnote references, equations, section breaks | docx |
-| `SheetGrid` | a `SheetDocument`: cells, formulas, styles, number formats, merges, conditional formats, data validation, rows, columns and sheets, the clipboard | xlsx or ods |
-| `SlideEditor` | the slide model: shapes moved, resized and written into, text styled, pictures, tables, backgrounds, slides added, duplicated, reordered and hidden, speaker notes | pptx |
+| `DocumentEditor` | the document tree in a rich-text editor (TipTap): headings, Word's named styles, fonts, sizes, line spacing, every mark of the tree, nested lists, tables with merged cells and resizable columns, images resized in the line, comments, tracked changes recorded while typing, footnote references, equations, page breaks, a page view with headers and footers, find and replace | docx |
+| `SheetGrid` | a `SheetDocument`: cells, formulas with function suggestions, styles, borders, number formats, merges, conditional formats and data validation with their editors, rows and columns resized by drag, the fill handle, frozen panes, sort and filter, the file's charts and pictures, sheets, the clipboard | xlsx or ods |
+| `SlideEditor` | the slide model: shapes moved along guides, resized, rotated, selected several at a time, copied and written into, preset shapes, text styled, pictures, tables edited cell by cell, backgrounds, slides added, duplicated, reordered and hidden, speaker notes, transitions and animations, the slide show | pptx |
 
 The backend has its own package, [`@relybytes/rely-office`](../rely-office-node/README.md), with
 the same model plus rendering to PDF and PNG, which this package leaves out: the typesetter is
@@ -65,6 +65,16 @@ keeps its table and its logo. The toolbar adds a comment on the selection (by `a
 reference out of the text, and saving keeps only what the text still refers to, the notes
 numbered in order. `sidePanel={false}` leaves the panel to the host.
 
+The toolbar sets the font, the size and the line spacing, and the style list holds Word's
+named styles (title, subtitle, intense quote, caption, no spacing) beside the headings: they are
+written to the docx as Word's own styles. `pageView` (or its toolbar button) lays the text on pages
+of the document's size, with its margins, its header and its footer and the pages numbered; a
+page break goes in at the caret. Ctrl+F opens find and replace. With tracked changes on
+(`trackChanges`, or the toolbar), what is typed is marked inserted and what is deleted stays,
+marked deleted, both by `author`, until it is accepted or rejected, one change or all of them.
+An image is resized by dragging its corner, its proportions kept, and a table column by dragging
+its edge; both sizes are saved.
+
 What the editor does not show rides along and is written back untouched: the page, the sections
 and the embedded objects. `report` counts what the mapping had to leave out: marks a code run
 cannot carry and images whose bytes are missing.
@@ -99,6 +109,16 @@ The formula bar shows a formula in the workbook's locale, `=SOMMA(A1;0,5)` in It
 pastes its formulas with their references moved; text from another program is pasted as typed
 cells. A value a stop validation refuses is not written, and the message of the rule is shown.
 
+Dragging the edge of a column or row header resizes it and a double click fits it; dragging the
+square at the corner of the selection fills the cells it reaches, numbers along their trend, dates
+a day at a time, months, weekdays and numbered texts counting on, formulas with their references
+moved (Ctrl+D and Ctrl+R fill down and right). The toolbar sorts by the active column, puts filter
+buttons on the table (each opens the list of its values to show), freezes the rows and columns
+above and left of the active cell, sets borders, and opens the panels that add and remove the
+conditional formats and the validations of the selection. While a formula is typed the functions
+it could be calling are offered in the locale's names; Tab or Enter takes one. The pictures and
+charts of the file are drawn over the cells.
+
 ## A presentation
 
 ```tsx
@@ -113,9 +133,22 @@ const pptx = slides.current!.savePptx();
 ```
 
 A shape is moved by dragging it or with the arrows (Shift for larger steps), resized from its
-corners and written into with a double click or Enter; the formatting of each run is kept while
-its text changes. What a slide draws from its layout and master shows locked. Ctrl+Z and Ctrl+Y
-undo and redo every change, a drag as one, up to 100 of them.
+corners, rotated from the handle above it (Shift for steps of 15 degrees) and written into with a
+double click or Enter; the formatting of each run is kept while its text changes. A moved shape
+snaps to the edges and centres of the slide and of the other shapes, and a guide shows where (Alt
+moves freely). Shift and a click, or a box dragged over the slide, select several shapes, which
+move, colour, copy and delete together; Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+D copy, cut, paste and
+duplicate them, and text or an image pasted from elsewhere becomes a text box or a picture. The
+shapes menu draws twenty presets, from the triangle to the speech bubble. A table is written into
+cell by cell, with rows and columns added or removed and each cell coloured. What a slide draws
+from its layout and master shows locked. Ctrl+Z and Ctrl+Y undo and redo every change, a drag as
+one, up to 100 of them.
+
+The effects panel sets the slide's transition, its duration and when it advances, and adds,
+orders and times the animations of the selected shapes. F5, or the play button, plays the show
+over the whole screen: a click, the space bar or an arrow runs the next animation or brings the
+next slide in with its transition, hidden slides are skipped and Escape leaves. `SlideShow` plays
+a presentation by itself, for a host's own player.
 
 ## The look
 

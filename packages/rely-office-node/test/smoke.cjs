@@ -514,6 +514,44 @@ test('keeps the conditional formats and validations of a sheet, in xlsx and ods'
   }
 });
 
+test('fills, sorts, filters and freezes a sheet, and keeps the filter and the panes in xlsx', () => {
+  const sheet = office.createSheet({ locale: 'it' });
+  try {
+    sheet.setInputs(0, [
+      [0, 0, 'Zona'],
+      [0, 1, 'Importo'],
+      [1, 0, 'Sud'],
+      [1, 1, '1'],
+      [2, 0, 'Nord'],
+      [2, 1, '2'],
+    ]);
+    sheet.fillRange(0, { top: 1, left: 1, bottom: 2, right: 1 }, { top: 1, left: 1, bottom: 4, right: 1 });
+    assert.equal(sheet.input(0, 4, 1), '4');
+    sheet.sortRange(0, { top: 0, left: 0, bottom: 2, right: 1 }, [{ column: 0 }], true);
+    assert.equal(sheet.input(0, 1, 0), 'Nord');
+    sheet.setAutoFilter(0, { top: 0, left: 0, bottom: 2, right: 1 });
+    assert.deepEqual(sheet.filterChoices(0, 0).map((choice) => choice.key), ['Nord', 'Sud']);
+    sheet.setFilterColumn(0, 0, ['Sud']);
+    sheet.setFrozen(0, 1, 0);
+    assert.deepEqual(sheet.sheets()[0].autoFilter.hiddenRows, [1]);
+    assert.ok(sheet.functionNames().includes('SOMMA'));
+    assert.deepEqual(sheet.pictures(0), []);
+
+    const opened = office.openSheet(sheet.save(), 'filtro.xlsx', { locale: 'it' });
+    try {
+      const summary = opened.sheets()[0];
+      assert.equal(summary.frozenRows, 1);
+      assert.deepEqual(summary.autoFilter.columns, [{ column: 0, shown: ['Sud'] }]);
+    } finally {
+      opened.free();
+    }
+    sheet.setAutoFilter(0, null);
+    assert.equal(sheet.sheets()[0].autoFilter, null);
+  } finally {
+    sheet.free();
+  }
+});
+
 test('survives many calls without leaking handles', () => {
   for (let round = 0; round < 200; round += 1) {
     office.readDocumentTree(docx);

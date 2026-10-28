@@ -40,6 +40,50 @@ export interface SlideEditorLabels {
   lockedShape: string;
   notes: string;
   resize: string;
+  slideShow: string;
+  play: string;
+  playFromStart: string;
+  endOfShow: string;
+  effects: string;
+  close: string;
+  transition: string;
+  direction: string;
+  directionLeft: string;
+  directionRight: string;
+  directionUp: string;
+  directionDown: string;
+  duration: string;
+  advanceOnClick: string;
+  advanceAfter: string;
+  animations: string;
+  noAnimations: string;
+  addAnimation: string;
+  trigger: string;
+  triggerOnClick: string;
+  triggerWithPrevious: string;
+  triggerAfterPrevious: string;
+  delay: string;
+  moveEarlier: string;
+  moveLater: string;
+  removeAnimation: string;
+  entrance: string;
+  emphasis: string;
+  exit: string;
+  rotate: string;
+  shapes: string;
+  table: string;
+  addTableRow: string;
+  addTableColumn: string;
+  deleteTableRow: string;
+  deleteTableColumn: string;
+  cellFill: string;
+  copy: string;
+  cut: string;
+  paste: string;
+  duplicate: string;
+  effectName: (name: string) => string;
+  shapeName: (preset: string) => string;
+  animationOf: (shape: number) => string;
 }
 
 export const ENGLISH_SLIDE_EDITOR_LABELS: SlideEditorLabels = {
@@ -77,6 +121,61 @@ export const ENGLISH_SLIDE_EDITOR_LABELS: SlideEditorLabels = {
   lockedShape: 'From the layout',
   notes: 'Speaker notes',
   resize: 'Resize',
+  slideShow: 'Slide show',
+  play: 'Play from this slide',
+  playFromStart: 'Play from the start',
+  endOfShow: 'End of the show. Click to leave.',
+  effects: 'Transitions and animations',
+  close: 'Close',
+  transition: 'Transition',
+  direction: 'Direction',
+  directionLeft: 'From the right',
+  directionRight: 'From the left',
+  directionUp: 'From the bottom',
+  directionDown: 'From the top',
+  duration: 'Duration (s)',
+  advanceOnClick: 'Advance on click',
+  advanceAfter: 'Advance after (s)',
+  animations: 'Animations',
+  noAnimations: 'No animations on this slide',
+  addAnimation: 'Add to the selection',
+  trigger: 'Start',
+  triggerOnClick: 'On click',
+  triggerWithPrevious: 'With previous',
+  triggerAfterPrevious: 'After previous',
+  delay: 'Delay (s)',
+  moveEarlier: 'Move earlier',
+  moveLater: 'Move later',
+  removeAnimation: 'Remove',
+  entrance: 'Entrance',
+  emphasis: 'Emphasis',
+  exit: 'Exit',
+  rotate: 'Rotate',
+  shapes: 'Shapes',
+  table: 'Table',
+  addTableRow: 'Add row below',
+  addTableColumn: 'Add column right',
+  deleteTableRow: 'Delete row',
+  deleteTableColumn: 'Delete column',
+  cellFill: 'Cell colour',
+  copy: 'Copy',
+  cut: 'Cut',
+  paste: 'Paste',
+  duplicate: 'Duplicate',
+  /** The name of a transition or an animation effect by its PresentationML name. */
+  effectName: (name) => ({
+    none: 'None', fade: 'Fade', push: 'Push', wipe: 'Wipe', split: 'Split', cover: 'Cover', pull: 'Uncover',
+    zoom: 'Zoom', cut: 'Cut', dissolve: 'Dissolve', reveal: 'Reveal', appear: 'Appear', fly: 'Fly in', grow: 'Grow',
+    spin: 'Spin', disappear: 'Disappear',
+  } as Record<string, string>)[name] ?? name,
+  shapeName: (preset) => ({
+    rectangle: 'Rectangle', roundedRectangle: 'Rounded rectangle', ellipse: 'Ellipse', line: 'Line', triangle: 'Triangle',
+    rightTriangle: 'Right triangle', diamond: 'Diamond', parallelogram: 'Parallelogram', trapezoid: 'Trapezoid',
+    pentagon: 'Pentagon', hexagon: 'Hexagon', octagon: 'Octagon', star: 'Star', arrowRight: 'Right arrow',
+    arrowLeft: 'Left arrow', arrowUp: 'Up arrow', arrowDown: 'Down arrow', chevron: 'Chevron', plus: 'Plus',
+    heart: 'Heart', callout: 'Speech bubble',
+  } as Record<string, string>)[preset] ?? preset,
+  animationOf: (shape) => `Shape ${shape}`,
 };
 
 export const ITALIAN_SLIDE_EDITOR_LABELS: SlideEditorLabels = {
@@ -114,4 +213,58 @@ export const ITALIAN_SLIDE_EDITOR_LABELS: SlideEditorLabels = {
   lockedShape: 'Dal layout',
   notes: 'Note del relatore',
   resize: 'Ridimensiona',
+  slideShow: 'Presentazione',
+  play: 'Presenta da questa diapositiva',
+  playFromStart: 'Presenta dall\'inizio',
+  endOfShow: 'Fine della presentazione. Fai clic per uscire.',
+  effects: 'Transizioni e animazioni',
+  close: 'Chiudi',
+  transition: 'Transizione',
+  direction: 'Direzione',
+  directionLeft: 'Da destra',
+  directionRight: 'Da sinistra',
+  directionUp: 'Dal basso',
+  directionDown: 'Dall\'alto',
+  duration: 'Durata (s)',
+  advanceOnClick: 'Avanza al clic',
+  advanceAfter: 'Avanza dopo (s)',
+  animations: 'Animazioni',
+  noAnimations: 'Nessuna animazione in questa diapositiva',
+  addAnimation: 'Aggiungi alla selezione',
+  trigger: 'Avvio',
+  triggerOnClick: 'Al clic',
+  triggerWithPrevious: 'Con il precedente',
+  triggerAfterPrevious: 'Dopo il precedente',
+  delay: 'Ritardo (s)',
+  moveEarlier: 'Sposta prima',
+  moveLater: 'Sposta dopo',
+  removeAnimation: 'Rimuovi',
+  entrance: 'Entrata',
+  emphasis: 'Enfasi',
+  exit: 'Uscita',
+  rotate: 'Ruota',
+  shapes: 'Forme',
+  table: 'Tabella',
+  addTableRow: 'Aggiungi riga sotto',
+  addTableColumn: 'Aggiungi colonna a destra',
+  deleteTableRow: 'Elimina riga',
+  deleteTableColumn: 'Elimina colonna',
+  cellFill: 'Colore cella',
+  copy: 'Copia',
+  cut: 'Taglia',
+  paste: 'Incolla',
+  duplicate: 'Duplica',
+  effectName: (name) => ({
+    none: 'Nessuna', fade: 'Dissolvenza', push: 'Spinta', wipe: 'Pulisci', split: 'Dividi', cover: 'Copri', pull: 'Scopri',
+    zoom: 'Zoom', cut: 'Taglio', dissolve: 'Dissolvi', reveal: 'Rivela', appear: 'Apparizione', fly: 'Entrata veloce',
+    grow: 'Aumenta', spin: 'Rotazione', disappear: 'Scomparsa',
+  } as Record<string, string>)[name] ?? name,
+  shapeName: (preset) => ({
+    rectangle: 'Rettangolo', roundedRectangle: 'Rettangolo arrotondato', ellipse: 'Ellisse', line: 'Linea', triangle: 'Triangolo',
+    rightTriangle: 'Triangolo rettangolo', diamond: 'Rombo', parallelogram: 'Parallelogramma', trapezoid: 'Trapezio',
+    pentagon: 'Pentagono', hexagon: 'Esagono', octagon: 'Ottagono', star: 'Stella', arrowRight: 'Freccia a destra',
+    arrowLeft: 'Freccia a sinistra', arrowUp: 'Freccia in su', arrowDown: 'Freccia in giù', chevron: 'Gallone', plus: 'Croce',
+    heart: 'Cuore', callout: 'Fumetto',
+  } as Record<string, string>)[preset] ?? preset,
+  animationOf: (shape) => `Forma ${shape}`,
 };

@@ -6,11 +6,31 @@
 
 import type { Editor } from '@tiptap/core';
 import { useEditorState } from '@tiptap/react';
-import { useRef, useState, type ReactElement, type ReactNode } from 'react';
-import type { Alignment } from '../model.js';
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import type { Alignment, NamedStyle, ParagraphFormat } from '../model.js';
+import { FONT_FAMILIES, FONT_SIZES, LINE_SPACINGS } from './formatting.js';
 import type { DocumentEditorLabels } from './labels.js';
+import { searchKey } from './search.js';
 
-type Panel = 'link' | 'equation' | null;
+type Panel = 'link' | 'equation' | 'find' | null;
+
+const NAMED_STYLES: [NamedStyle, keyof DocumentEditorLabels][] = [
+  ['title', 'styleTitle'],
+  ['subtitle', 'styleSubtitle'],
+  ['intenseQuote', 'styleIntenseQuote'],
+  ['caption', 'styleCaption'],
+  ['noSpacing', 'styleNoSpacing'],
+];
+
+/** A line spacing as a multiple of a single line: 360 is 1.5. */
+function spacingName(value: number): string {
+  return String(Math.round((value / 240) * 100) / 100);
+}
+
+/** The family a CSS font list starts with, without quotes. */
+function firstFamily(family: string | null | undefined): string {
+  return (family ?? '').split(',')[0].trim().replace(/^['"]|['"]$/g, '');
+}
 
 function ToolButton({
   label,
@@ -55,17 +75,35 @@ export function DocumentToolbar({
   onImage,
   onComment,
   onFootnote,
+  trackChanges,
+  onTrackChanges,
+  pageView,
+  onPageView,
+  findRequest = 0,
 }: Readonly<{
   editor: Editor;
   labels: DocumentEditorLabels;
   onImage: (file: File) => void;
   onComment: () => void;
   onFootnote: () => void;
+  trackChanges: boolean;
+  onTrackChanges: (enabled: boolean) => void;
+  pageView: boolean;
+  onPageView: (enabled: boolean) => void;
+  /** Raised by the editor on Ctrl+F, to open the find panel. */
+  findRequest?: number;
 }>): ReactElement {
   const [panel, setPanel] = useState<Panel>(null);
   const [linkAddress, setLinkAddress] = useState('');
   const [latex, setLatex] = useState('');
+  const [findText, setFindText] = useState('');
+  const [replaceText, setReplaceText] = useState('');
+  const [matchCase, setMatchCase] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (findRequest > 0) setPanel('find');
+  }, [findRequest]);
 
   const state = useEditorState({
     editor,
@@ -84,6 +122,12 @@ export function DocumentToolbar({
       codeBlock: current.isActive('codeBlock'),
       table: current.isActive('table'),
       heading: ([1, 2, 3, 4, 5, 6] as const).find((level) => current.isActive('heading', { level })) ?? 0,
+      format: ((current.getAttributes('paragraph').format ?? current.getAttributes('heading').format ?? null) as
+        | ParagraphFormat
+        | null),
+      fontFamily: firstFamily(current.getAttributes('textStyle').fontFamily as string | null),
+      fontSize: (current.getAttributes('textStyle').fontSize as string | null) ?? '',
+      search: searchKey.getState(current.state) ?? null,
       align: (current.getAttributes('paragraph').align ?? current.getAttributes('heading').align ?? null) as
         | Alignment
         | null,
@@ -98,9 +142,26 @@ export function DocumentToolbar({
 
   const chain = () => editor.chain().focus();
   const openPanel = (next: Panel) => {
+    if (panel === 'find' && next !== 'find') editor.commands.setSearch('');
+    if (panel === 'find' && next === 'find') {
+      editor.commands.setSearch('');
+      setPanel(null);
+      return;
+    }
     setPanel(panel === next ? null : next);
     if (next === 'link') setLinkAddress((editor.getAttributes('link').href as string | undefined) ?? '');
   };
+  const search = (text: string, caseSensitive: boolean) => {
+    setFindText(text);
+    setMatchCase(caseSensitive);
+    editor.commands.setSearch(text, caseSensitive);
+  };
+  const styleValue = state.heading > 0 ? String(state.heading) : (state.format?.style ?? '0');
+  const sizePoints = /^(\d+(?:\.\d+)?)pt$/.exec(state.fontSize)?.[1] ?? '';
+  const spacing = state.format?.lineSpacing?.rule === 'auto' ? String(state.format.lineSpacing.value) : '';
+  const families = FONT_FAMILIES.includes(state.fontFamily) || state.fontFamily === '' ? FONT_FAMILIES : [state.fontFamily, ...FONT_FAMILIES];
+  const sizes = sizePoints === '' || FONT_SIZES.includes(Number(sizePoints)) ? FONT_SIZES : [Number(sizePoints), ...FONT_SIZES];
+  const matches = state.search?.matches.length ?? 0;
 
   return (
     <div className="rely-toolbar-wrap">
@@ -117,17 +178,70 @@ export function DocumentToolbar({
           <select
             className="rely-tool-select"
             aria-label={labels.textStyle}
-            value={state.heading}
+            value={styleValue}
             onChange={(event) => {
-              const level = Number(event.target.value);
-              if (level === 0) chain().setParagraph().run();
-              else chain().setHeading({ level: level as 1 | 2 | 3 | 4 | 5 | 6 }).run();
+              const value = event.target.value;
+              const level = Number(value);
+              if (value === '0') chain().setNamedStyle(null).run();
+              else if (Number.isInteger(level) && level > 0) chain().setNamedStyle({ heading: level as 1 | 2 | 3 | 4 | 5 | 6 }).run();
+              else chain().setNamedStyle(value as NamedStyle).run();
             }}
           >
-            <option value={0}>{labels.paragraph}</option>
+            <option value="0">{labels.paragraph}</option>
             {[1, 2, 3, 4, 5, 6].map((level) => (
-              <option key={level} value={level}>
+              <option key={level} value={String(level)}>
                 {labels.heading(level)}
+              </option>
+            ))}
+            {NAMED_STYLES.map(([style, key]) => (
+              <option key={style} value={style}>
+                {labels[key] as string}
+              </option>
+            ))}
+          </select>
+          <select
+            className="rely-tool-select"
+            aria-label={labels.fontFamily}
+            value={state.fontFamily}
+            onChange={(event) => chain().setTextStyle({ fontFamily: event.target.value || null }).run()}
+          >
+            <option value="">{labels.defaultFont}</option>
+            {families.map((family) => (
+              <option key={family} value={family} style={{ fontFamily: family }}>
+                {family}
+              </option>
+            ))}
+          </select>
+          <select
+            className="rely-tool-select rely-tool-size"
+            aria-label={labels.fontSize}
+            value={sizePoints}
+            onChange={(event) => chain().setTextStyle({ fontSize: event.target.value ? `${event.target.value}pt` : null }).run()}
+          >
+            <option value="">{'–'}</option>
+            {sizes.map((size) => (
+              <option key={size} value={String(size)}>
+                {String(size)}
+              </option>
+            ))}
+          </select>
+          <select
+            className="rely-tool-select rely-tool-size"
+            aria-label={labels.lineSpacing}
+            title={labels.lineSpacing}
+            value={spacing}
+            onChange={(event) =>
+              chain()
+                .setParagraphFormat({
+                  lineSpacing: event.target.value ? { rule: 'auto', value: Number(event.target.value) } : null,
+                })
+                .run()
+            }
+          >
+            <option value="">{'↕'}</option>
+            {LINE_SPACINGS.map((value) => (
+              <option key={value} value={String(value)}>
+                {spacingName(value)}
               </option>
             ))}
           </select>
@@ -204,6 +318,9 @@ export function DocumentToolbar({
           <ToolButton label={labels.rule} onClick={() => chain().setHorizontalRule().run()}>
             {'―'}
           </ToolButton>
+          <ToolButton label={labels.pageBreak} onClick={() => chain().insertPageBreak().run()}>
+            {'⤓'}
+          </ToolButton>
         </div>
         <div className="rely-tool-group">
           <ToolButton label={labels.link} active={state.link || panel === 'link'} onClick={() => openPanel('link')}>
@@ -268,17 +385,85 @@ export function DocumentToolbar({
           </ToolButton>
         </div>
         <div className="rely-tool-group">
-          <ToolButton label={labels.acceptChanges} onClick={() => chain().acceptAllChanges().run()}>
+          <ToolButton label={labels.trackChanges} active={trackChanges} onClick={() => onTrackChanges(!trackChanges)}>
+            {'✎±'}
+          </ToolButton>
+          <ToolButton label={labels.acceptChange} onClick={() => chain().acceptChangesInSelection().run()}>
             {'✓'}
           </ToolButton>
-          <ToolButton label={labels.rejectChanges} onClick={() => chain().rejectAllChanges().run()}>
+          <ToolButton label={labels.rejectChange} onClick={() => chain().rejectChangesInSelection().run()}>
             {'✗'}
+          </ToolButton>
+          <ToolButton label={labels.acceptChanges} onClick={() => chain().acceptAllChanges().run()}>
+            {'✓✓'}
+          </ToolButton>
+          <ToolButton label={labels.rejectChanges} onClick={() => chain().rejectAllChanges().run()}>
+            {'✗✗'}
           </ToolButton>
           <ToolButton label={labels.clearFormatting} onClick={() => chain().unsetAllMarks().clearNodes().run()}>
             {'T̸'}
           </ToolButton>
         </div>
+        <div className="rely-tool-group">
+          <ToolButton label={labels.find} active={panel === 'find'} onClick={() => openPanel('find')}>
+            {'⌕'}
+          </ToolButton>
+          <ToolButton label={labels.pageView} active={pageView} onClick={() => onPageView(!pageView)}>
+            {'▯'}
+          </ToolButton>
+        </div>
       </div>
+      {panel === 'find' ? (
+        <form
+          className="rely-toolbar-panel rely-find-panel"
+          role="search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            editor.commands.findNext();
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            editor.commands.setSearch('');
+            setPanel(null);
+            editor.commands.focus();
+          }}
+        >
+          <input
+            type="search"
+            aria-label={labels.findText}
+            placeholder={labels.findText}
+            value={findText}
+            onChange={(event) => search(event.target.value, matchCase)}
+            autoFocus
+          />
+          <span className="rely-find-count" aria-live="polite">
+            {labels.findCount((state.search?.current ?? -1) + 1, matches)}
+          </span>
+          <button type="button" aria-label={labels.findPrevious} title={labels.findPrevious} onClick={() => editor.commands.findPrevious()}>
+            {'↑'}
+          </button>
+          <button type="submit" aria-label={labels.findNext} title={labels.findNext}>
+            {'↓'}
+          </button>
+          <label className="rely-find-case">
+            <input type="checkbox" checked={matchCase} onChange={(event) => search(findText, event.target.checked)} />
+            <span>{labels.matchCase}</span>
+          </label>
+          <input
+            type="text"
+            aria-label={labels.replaceText}
+            placeholder={labels.replaceText}
+            value={replaceText}
+            onChange={(event) => setReplaceText(event.target.value)}
+          />
+          <button type="button" disabled={matches === 0} onClick={() => editor.commands.replaceMatch(replaceText)}>
+            {labels.replace}
+          </button>
+          <button type="button" disabled={matches === 0} onClick={() => editor.commands.replaceAllMatches(replaceText)}>
+            {labels.replaceAll}
+          </button>
+        </form>
+      ) : null}
       {panel === 'link' ? (
         <form
           className="rely-toolbar-panel"

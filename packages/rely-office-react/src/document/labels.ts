@@ -72,6 +72,33 @@ export interface DocumentEditorLabels {
   section: (number: number) => string;
   /** The author of a comment when the host names none. */
   you: string;
+  fontFamily: string;
+  fontSize: string;
+  defaultFont: string;
+  lineSpacing: string;
+  styleTitle: string;
+  styleSubtitle: string;
+  styleIntenseQuote: string;
+  styleCaption: string;
+  styleNoSpacing: string;
+  pageBreak: string;
+  pageView: string;
+  find: string;
+  findText: string;
+  replaceText: string;
+  matchCase: string;
+  findNext: string;
+  findPrevious: string;
+  replace: string;
+  replaceAll: string;
+  closeFind: string;
+  trackChanges: string;
+  acceptChange: string;
+  rejectChange: string;
+  /** How many places a search found, and which one is selected. */
+  findCount: (current: number, total: number) => string;
+  /** The words under a page in the page view. */
+  pageNumber: (page: number) => string;
 }
 
 export const ENGLISH_DOCUMENT_EDITOR_LABELS: DocumentEditorLabels = {
@@ -140,6 +167,31 @@ export const ENGLISH_DOCUMENT_EDITOR_LABELS: DocumentEditorLabels = {
   evenFooter: 'Even page footer',
   section: (number) => `Section ${number}`,
   you: 'You',
+  fontFamily: 'Font',
+  fontSize: 'Font size',
+  defaultFont: 'Default',
+  lineSpacing: 'Line spacing',
+  styleTitle: 'Title',
+  styleSubtitle: 'Subtitle',
+  styleIntenseQuote: 'Intense quote',
+  styleCaption: 'Caption',
+  styleNoSpacing: 'No spacing',
+  pageBreak: 'Page break',
+  pageView: 'Page view',
+  find: 'Find and replace',
+  findText: 'Find',
+  replaceText: 'Replace with',
+  matchCase: 'Match case',
+  findNext: 'Next',
+  findPrevious: 'Previous',
+  replace: 'Replace',
+  replaceAll: 'Replace all',
+  closeFind: 'Close',
+  trackChanges: 'Track changes',
+  acceptChange: 'Accept change',
+  rejectChange: 'Reject change',
+  findCount: (current, total) => (total === 0 ? 'No results' : `${current} of ${total}`),
+  pageNumber: (page) => `Page ${page}`,
 };
 
 export const ITALIAN_DOCUMENT_EDITOR_LABELS: DocumentEditorLabels = {
@@ -208,4 +260,29 @@ export const ITALIAN_DOCUMENT_EDITOR_LABELS: DocumentEditorLabels = {
   evenFooter: 'Piè di pagina delle pagine pari',
   section: (number) => `Sezione ${number}`,
   you: 'Tu',
+  fontFamily: 'Carattere',
+  fontSize: 'Dimensione carattere',
+  defaultFont: 'Predefinito',
+  lineSpacing: 'Interlinea',
+  styleTitle: 'Titolo',
+  styleSubtitle: 'Sottotitolo',
+  styleIntenseQuote: 'Citazione intensa',
+  styleCaption: 'Didascalia',
+  styleNoSpacing: 'Nessuna spaziatura',
+  pageBreak: 'Interruzione di pagina',
+  pageView: 'Vista pagina',
+  find: 'Trova e sostituisci',
+  findText: 'Trova',
+  replaceText: 'Sostituisci con',
+  matchCase: 'Maiuscole/minuscole',
+  findNext: 'Successivo',
+  findPrevious: 'Precedente',
+  replace: 'Sostituisci',
+  replaceAll: 'Sostituisci tutto',
+  closeFind: 'Chiudi',
+  trackChanges: 'Revisioni',
+  acceptChange: 'Accetta modifica',
+  rejectChange: 'Rifiuta modifica',
+  findCount: (current, total) => (total === 0 ? 'Nessun risultato' : `${current} di ${total}`),
+  pageNumber: (page) => `Pagina ${page}`,
 };

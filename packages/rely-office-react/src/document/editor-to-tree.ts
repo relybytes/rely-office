@@ -17,6 +17,7 @@ import type {
   TableRow,
 } from '../model.js';
 import type { EditorDocument } from './editor-document.js';
+import { cleanFormat } from './formatting.js';
 import { mapBlockImages } from './media.js';
 import { compactComments, compactNotes } from './references.js';
 
@@ -153,8 +154,16 @@ function mapNode(node: JSONContent, context: WalkContext): Block[] {
       return [{ type: 'codeBlock', text: plainText(node) }];
     case 'horizontalRule':
       return [{ type: 'horizontalRule' }];
-    case 'table':
-      return [{ type: 'table', rows: (node.content ?? []).map((row) => mapRow(row, context)) }];
+    case 'table': {
+      const columnWidthsTwips = tableWidths(node);
+      return [
+        {
+          type: 'table',
+          rows: (node.content ?? []).map((row) => mapRow(row, context)),
+          ...(columnWidthsTwips === null ? {} : { columnWidthsTwips }),
+        },
+      ];
+    }
     case 'image':
       return [{ type: 'paragraph', content: mapInlines([node]) }];
     case 'sectionBreak':
@@ -174,7 +183,29 @@ type AlignedBlock = Extract<Block, { type: 'paragraph' | 'heading' }>;
 
 function withAlign(block: AlignedBlock, node: JSONContent): AlignedBlock {
   const align = node.attrs?.align;
-  return typeof align === 'string' && ALIGNMENTS.has(align) ? { ...block, align: align as Alignment } : block;
+  const format = cleanFormat(node.attrs?.format as Record<string, unknown> | null | undefined);
+  return {
+    ...block,
+    ...(typeof align === 'string' && ALIGNMENTS.has(align) ? { align: align as Alignment } : {}),
+    ...(format === null ? {} : { format }),
+  };
+}
+
+/** The widths of a table's columns in twips, from its first row, when every cell has one. */
+function tableWidths(table: JSONContent): number[] | null {
+  const cells = table.content?.[0]?.content ?? [];
+  const widths: number[] = [];
+  for (const cell of cells) {
+    const colwidth = cell.attrs?.colwidth as unknown;
+    const span = Math.max(1, Math.round(Number(cell.attrs?.colspan ?? 1)));
+    if (!Array.isArray(colwidth) || colwidth.length !== span) return null;
+    for (const pixels of colwidth) {
+      const value = Number(pixels);
+      if (!Number.isFinite(value) || value <= 0) return null;
+      widths.push(Math.round(value * 15));
+    }
+  }
+  return widths.length > 0 ? widths : null;
 }
 
 /** A list keeps the `listId` it came with, unless an earlier list of the text already took it. */
@@ -200,16 +231,18 @@ function flattenList(list: JSONContent, level: number, listId: number, out: Bloc
     const content: Inline[] = [];
     const nested: JSONContent[] = [];
     let started = false;
+    let format: ReturnType<typeof cleanFormat> = null;
     for (const child of item.content ?? []) {
       if (child.type === 'bulletList' || child.type === 'orderedList') {
         nested.push(child);
         continue;
       }
       if (started) content.push({ type: 'hardBreak' });
+      else format = cleanFormat(child.attrs?.format as Record<string, unknown> | null | undefined);
       content.push(...mapInlines(child.type === 'paragraph' || child.type === 'heading' ? child.content : [{ type: 'text', text: plainText(child) }]));
       started = true;
     }
-    out.push({ type: 'listItem', ordered, level, listId, content });
+    out.push({ type: 'listItem', ordered, level, listId, content, ...(format === null ? {} : { format }) });
     for (const child of nested) flattenList(child, level + 1, listId, out);
   }
   return out;

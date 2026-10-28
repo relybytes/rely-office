@@ -58,7 +58,7 @@
     "build": "npm run sync-model && tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "typecheck": "npm run sync-model && tsc -p tsconfig.json --noEmit",
     "test": "npm run sync-model && vitest run",
-    "smoke": "node test/smoke-runtime.mjs",
+    "smoke": "node test/smoke-dist.mjs",
     "demo": "vite --config demo/vite.config.ts",
     "demo:build": "vite build --config demo/vite.config.ts"
   },

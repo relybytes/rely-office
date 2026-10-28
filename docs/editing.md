@@ -63,6 +63,15 @@ objects })`, where `media` lists the bytes of each image in the order `image.med
 heightTwips, marginsTwips }`. `convertToDocx(bytes)` reads a doc, an odt or a docx and writes it
 as a docx in one call.
 
+### What a paragraph sets itself
+
+A paragraph, a heading and a list item carry `format`, what they set themselves beside what their
+style gives them: one of the named styles of Word (`title`, `subtitle`, `intenseQuote`, `caption`,
+`noSpacing`, read from the style's name in English or Italian and written with the style
+definition), the space before and after, the line spacing (a multiple, exact or at least), the
+indents and a page break before. A paragraph that sets nothing has no `format`, so a tree read
+before stays the same. A table carries `columnWidthsTwips` when the file gives its grid.
+
 ## Writing a pptx
 
 `write_pptx(&Presentation) -> Vec<u8>` writes the slide model `read_presentation` gives, from a
@@ -182,7 +191,8 @@ does not rename (`XOR`, `INT`) keeps its name.
   `Riepilogo!A1` and `'Vendite 2026'!B2:C9`, sheet names case-insensitive.
 - **Operators** with Excel's precedence: comparison `= <> < <= > >=`, `&`, `+ -`, `* /`, `^` (left
   to right, so `2^3^2` is 64), unary signs (tighter than `^`, so `-2^2` is 4), postfix `%`.
-- **Functions** (155), in families: mathematics (`SUM`, `SUMPRODUCT`, `ROUND`, `MROUND`, `TRUNC`,
+- **Functions** (298, listed by `FUNCTION_NAMES` and, in the locale's names, by `function_names`
+  for an editor's suggestions), in families: mathematics (`SUM`, `SUMPRODUCT`, `ROUND`, `MROUND`, `TRUNC`,
   `FLOOR`, `GCD`, `LOG`, the trigonometric functions, ...), statistics (`AVERAGE`, `MEDIAN`,
   `MODE.SNGL`, `STDEV.S`, `VAR.P`, `LARGE`, `SMALL`, `RANK.EQ`, `MAXIFS`, `MINIFS`, ...), logic (`IF`,
   `IFS`, `SWITCH`, `IFERROR`, `IFNA`, `XOR`, ...), text (`TEXT`, `TEXTJOIN`, `SUBSTITUTE`, `SEARCH`,
@@ -190,7 +200,19 @@ does not rename (`XOR`, `INT`) keeps its name.
   `CHOOSE`, `ROW`, `COLUMN`, ...), dates (`DATE`, `EOMONTH`, `EDATE`, `WORKDAY`, `NETWORKDAYS`,
   `DATEDIF`, `WEEKDAY`, `ISOWEEKNUM`, `YEARFRAC`, ...) and finance (`PMT`, `IPMT`, `PPMT`, `FV`, `PV`,
   `NPER`, `RATE`, `NPV`, `IRR`), with the criteria of the `IF` functions (`>5`, `<>x`, `=x` and the
-  wildcards `*` `?`). `TEXT` reads its format code in Italian notation too. The `_xlfn.` prefix
+  wildcards `*` `?`). A second set covers what a workbook reaches for after those: hyperbolic and
+  reciprocal trigonometry, combinations and permutations, `ROMAN`, `BASE`, `SUBTOTAL`; the
+  statistics of samples and pairs (`GEOMEAN`, `KURT`, `SKEW`, `PERCENTILE.INC` and `.EXC`,
+  `QUARTILE`, `PERCENTRANK`, `RANK.AVG`, `TRIMMEAN`, `CORREL`, `SLOPE`, `INTERCEPT`, `FORECAST`,
+  `COVARIANCE.S`, `STEYX`, the `A` aggregates); the normal, exponential, Poisson and binomial
+  distributions, `CONFIDENCE.NORM`, `GAMMA` and `FISHER`; depreciation (`SLN`, `SYD`, `DDB`, `DB`),
+  `EFFECT`, `NOMINAL`, `CUMIPMT`, `CUMPRINC`, `MIRR`, `XNPV`, `XIRR`, `PDURATION`, `RRI`; dates with
+  custom weekends (`WORKDAY.INTL`, `NETWORKDAYS.INTL`) and `DAYS360`; engineering (`BIN2DEC` and
+  the eleven other base conversions, the `BIT` functions, `CONVERT` over length, mass, volume,
+  time, speed, area, energy, power, pressure, information and temperature); text (`FIXED`,
+  `DOLLAR`, `NUMBERVALUE`, `TEXTBEFORE`, `TEXTAFTER`, `UNICHAR`); information (`TYPE`,
+  `ERROR.TYPE`, `ISREF`, `ADDRESS`). Every one has its Italian name. Functions that return an
+  array (`FILTER`, `SORT`, `UNIQUE`, `SEQUENCE`) are not computed. `TEXT` reads its format code in Italian notation too. The `_xlfn.` prefix
   files store before the newer functions is read and written back.
 - **Values and errors** follow Excel: numbers before text before booleans in comparisons, text
   without case; `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?` (an unknown function or name), `#N/A`,
@@ -211,6 +233,31 @@ and a new edit drops what could be redone. A step is a whole copy rather than th
 edit, because an edit that moves rows rewrites formulas on every sheet: a copy cannot be wrong.
 The copies are bounded, at most 100 steps and 2,000,000 cells together, the oldest going first, so
 a large workbook keeps fewer steps rather than its size a hundred times over.
+
+### Sorting, filtering, freezing and filling
+
+- `sort_range(sheet, window, keys, has_header)` orders the rows of a rectangle by up to 64 keys,
+  each a column and a direction: numbers before text (without case) before booleans before
+  errors, blank cells last in either direction, equal rows in the order they had. The cells move
+  with their looks, and a formula that moves points from its new row, as Excel moves it.
+- `set_auto_filter(sheet, window)` puts filter buttons on the first row of a rectangle;
+  `set_filter_column(sheet, column, shown)` chooses the values a column shows, and the rows whose
+  value is left out are hidden, each keeping the height it had to come back to. `filter_choices`
+  gives the values a column can show, as keys (what a file stores) and as the locale shows them.
+  The filter is read from and written to an xlsx with the hidden name Excel keeps for it, and it
+  follows the rows and columns inserted or deleted around it.
+- `set_frozen(sheet, rows, columns)` freezes the first rows and columns; an xlsx keeps them as a
+  frozen pane.
+- `fill_range(sheet, source, target)` is the fill handle: the target holds the source and reaches
+  past it on one side, and each row or column of the source makes its own series. Numbers follow
+  their least-squares trend (`1, 3` gives `5, 7`), a single date counts days, a text ending in a
+  number counts on keeping its zeros (`Lotto 08`, `Lotto 09`), month and weekday names in Italian
+  and English follow the calendar in the case they were written, formulas move their relative
+  references, and anything else repeats with its look. It is one step of the history.
+
+The pictures and charts of an xlsx are also given, as they were drawn when it was opened, by
+`Sheet::pictures`: a chart is an SVG drawn from the values the file cached, so an editor shows it
+over the grid; it is not drawn again as the cells change.
 
 ### Edits that move cells
 
@@ -245,8 +292,9 @@ OpenFormula, styles with data styles built from the number formats, merges, colu
 heights, conditional formats and validations as LibreOffice writes them. Pictures, charts and
 pivot tables are kept by `write_xlsx` only. An xls is always saved as xlsx.
 
-Not kept: comments, defined names, and formulas with functions outside the list, which show
-`#NAME?` after an edit recalculates them.
+Not kept: comments, defined names other than the filter's, and formulas with functions outside
+the list, which show `#NAME?` after an edit recalculates them. An ods keeps neither the frozen
+panes nor the filter.
 
 ## From JavaScript
 
@@ -258,7 +306,9 @@ each with its `input`, `display`, `kind` and `format`) and sends each action as 
 `setInputs`, `setFormat`, `setColumnWidth`, `setRowHeight`, `setStyle`, `setBorders`,
 `clearStyles`, `mergeCells`, `unmergeCells`, `clearRange`, `copyRange`, `insertRows`, `deleteRows`,
 `insertColumns`, `deleteColumns`, `addSheet`, `renameSheet`, `removeSheet`,
-`setConditionalFormats`, `setValidations`, `setToday`, `save`, `saveOds`; `stylesJson` and
+`setConditionalFormats`, `setValidations`, `fillRange`, `sortRange`, `setAutoFilter`,
+`setFilterColumn`, `setFrozen`, `setToday`, `save`, `saveOds`; `filterChoices`, `pictures` with
+`pictureBytes`, and `functionNames` serve an editor's menus; `stylesJson` and
 `mergesJson` give the styles and merges to draw, `conditionalFormats`, `validations`,
 `conditionalLooks`, `validation` and `invalidCells` the rules and what they make of the cells. A
 cell of `cells` carries its `style`.

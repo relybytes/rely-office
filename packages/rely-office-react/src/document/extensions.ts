@@ -12,6 +12,11 @@ import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/p
 import type { EditorView } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import type { Alignment } from '../model.js';
+import { RelyParagraphFormat } from './formatting.js';
+import { imageNodeView } from './image-view.js';
+import { RelyPagination } from './pagination.js';
+import { RelySearch } from './search.js';
+import { RelyTrackRecording, TRACK_SKIP } from './track-changes.js';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -126,6 +131,9 @@ export const RelyImage = Image.extend({
           attributes.media === null ? {} : { 'data-media': String(attributes.media) },
       },
     };
+  },
+  addNodeView() {
+    return imageNodeView;
   },
 }).configure({ inline: true, allowBase64: true });
 
@@ -277,6 +285,7 @@ export const RelyTrackedChanges = Extension.create({
         if (dispatch) {
           tr.removeMark(0, state.doc.content.size, keepType);
           for (const [from, to] of removals.reverse()) tr.delete(from, to);
+          tr.setMeta(TRACK_SKIP, true);
           dispatch(tr);
         }
         return true;
@@ -311,6 +320,7 @@ export const RelyReferences = Extension.create({
         });
         if (dispatch) {
           for (const [from, to] of deletions.reverse()) tr.delete(from, to);
+          tr.setMeta(TRACK_SKIP, true);
           dispatch(tr);
         }
         return true;
@@ -458,6 +468,8 @@ export const RelySectionBreak = Node.create({
 export interface RelyDocumentExtensionOptions {
   /** The extensions of the host, added after these. */
   extensions?: AnyExtension[];
+  /** Who the changes recorded while tracking is on are by. */
+  author?: () => string;
 }
 
 /**
@@ -477,7 +489,7 @@ export function createRelyDocumentExtensions(options: RelyDocumentExtensionOptio
     RelyAlignment,
     RelyListIdentity,
     RelyImage,
-    TableKit.configure({ table: { resizable: false } }),
+    TableKit.configure({ table: { resizable: true, cellMinWidth: 30 } }),
     RelySuperscript,
     RelySubscript,
     RelyTextStyle,
@@ -491,6 +503,10 @@ export function createRelyDocumentExtensions(options: RelyDocumentExtensionOptio
     RelyCommentAnchor,
     RelyMath,
     RelySectionBreak,
+    RelyParagraphFormat,
+    RelySearch,
+    RelyTrackRecording.configure({ author: options.author ?? (() => '') }),
+    RelyPagination,
     ...(options.extensions ?? []),
   ];
 }

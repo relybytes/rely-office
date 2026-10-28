@@ -230,6 +230,173 @@ describe('SheetGrid', () => {
     expect(cell('C1').textContent).toBe('15');
   });
 
+  test('dragging the fill handle continues the series as one step', () => {
+    const { cell, grid } = mount();
+    fireEvent.mouseDown(cell('A1'));
+    fireEvent.keyDown(grid, { key: 'ArrowDown', shiftKey: true });
+
+    fireEvent.mouseDown(grid.querySelector('.rely-sheet-fill-handle')!);
+    fireEvent.mouseEnter(cell('A5'));
+    fireEvent.mouseUp(window);
+
+    expect(sheet.input(0, 2, 0)).toBe('30');
+    expect(sheet.input(0, 4, 0)).toBe('50');
+    expect((screen.getByLabelText('Cell') as HTMLInputElement).value).toBe('A1:A5');
+    sheet.undo();
+    expect(sheet.input(0, 2, 0)).toBe('=SOMMA(A1:A2)');
+  });
+
+  test('Ctrl+D fills the first row of the selection down', () => {
+    const { cell, grid } = mount();
+    fireEvent.mouseDown(cell('B1'));
+    fireEvent.keyDown(grid, { key: 'ArrowDown', shiftKey: true });
+    fireEvent.keyDown(grid, { key: 'ArrowDown', shiftKey: true });
+
+    fireEvent.keyDown(grid, { key: 'd', ctrlKey: true });
+
+    expect(sheet.input(0, 2, 1)).toBe('Totale');
+  });
+
+  test('dragging the edge of a column header sets its width, and a double click fits it', () => {
+    mount();
+    const header = screen.getAllByRole('columnheader').find((element) => element.textContent === 'B')!;
+    const edge = header.querySelector('.rely-sheet-resize-column')!;
+
+    fireEvent.mouseDown(edge, { clientX: 100 });
+    fireEvent.mouseMove(window, { clientX: 170 });
+    fireEvent.mouseUp(window);
+
+    expect(sheet.sheets()[0].columnWidths).toEqual([[1, 18.43]]);
+    fireEvent.doubleClick(edge);
+    expect(sheet.sheets()[0].columnWidths[0][1]).toBeLessThan(18);
+  });
+
+  test('dragging the edge of a row header sets its height', () => {
+    mount();
+    const header = screen.getAllByRole('rowheader').find((element) => element.textContent === '2')!;
+
+    fireEvent.mouseDown(header.querySelector('.rely-sheet-resize-row')!, { clientY: 50 });
+    fireEvent.mouseMove(window, { clientY: 80 });
+    fireEvent.mouseUp(window);
+
+    expect(sheet.sheets()[0].rowHeights).toEqual([[1, 37.5]]);
+  });
+
+  test('the filter buttons hide the rows whose values are left out, and sort', () => {
+    sheet.setInputs(0, [
+      [0, 2, 'Zona'],
+      [1, 2, 'Nord'],
+      [2, 2, 'Sud'],
+    ]);
+    const { cell } = mount();
+    fireEvent.mouseDown(cell('C1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    expect(sheet.sheets()[0].autoFilter).toMatchObject({ top: 0, left: 0, bottom: 2, right: 2 });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filter column C' }));
+    const menu = screen.getByRole('dialog', { name: 'Filter column' });
+    fireEvent.click(within(menu).getByRole('checkbox', { name: 'Sud' }));
+    fireEvent.click(within(menu).getByRole('button', { name: 'OK' }));
+
+    expect(sheet.sheets()[0].autoFilter?.hiddenRows).toEqual([2]);
+    expect(screen.getByRole('button', { name: 'Filter column C' }).getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    expect(sheet.sheets()[0].autoFilter).toBeNull();
+    expect(sheet.sheets()[0].rowHeights).toEqual([]);
+  });
+
+  test('sorting the column of the active cell orders the rows below a bold heading', () => {
+    sheet.setInputs(0, [
+      [0, 3, 'Nome'],
+      [1, 3, 'Verdi'],
+      [2, 3, 'Bianchi'],
+      [3, 3, 'Rossi'],
+    ]);
+    sheet.setStyle(0, { top: 0, left: 3, bottom: 0, right: 3 }, { bold: true });
+    const { cell } = mount();
+    fireEvent.mouseDown(cell('D1'));
+    fireEvent.mouseEnter(cell('D4'));
+    fireEvent.mouseUp(window);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sort A to Z' }));
+
+    expect([1, 2, 3].map((row) => sheet.input(0, row, 3))).toEqual(['Bianchi', 'Rossi', 'Verdi']);
+  });
+
+  test('freezing keeps the rows above the active cell in a pane of their own', () => {
+    const { cell, grid } = mount();
+    fireEvent.mouseDown(cell('B2'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Freeze panes at the selection' }));
+
+    expect(sheet.sheets()[0]).toMatchObject({ frozenRows: 1, frozenColumns: 1 });
+    expect(document.querySelectorAll('.rely-sheet-pane')).toHaveLength(3);
+    expect(within(grid).queryByRole('gridcell', { name: 'A1' })).toBeNull();
+    expect(screen.getAllByRole('gridcell', { name: 'A1' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Unfreeze panes' }));
+    expect(document.querySelectorAll('.rely-sheet-pane')).toHaveLength(0);
+  });
+
+  test('typing a function name offers the functions, and Tab takes one', () => {
+    const { cell, grid } = mount();
+    fireEvent.mouseDown(cell('C1'));
+    fireEvent.keyDown(grid, { key: '=' });
+    const editor = screen.getByRole('textbox', { name: 'C1' }) as HTMLInputElement;
+
+    fireEvent.change(editor, { target: { value: '=som', selectionStart: 4 } });
+    const hints = screen.getByRole('listbox', { name: 'Functions' });
+    expect(within(hints).getAllByRole('option')[0].textContent).toBe('SOMMA');
+    fireEvent.keyDown(editor, { key: 'Tab' });
+
+    expect(editor.value).toBe('=SOMMA(');
+    expect(screen.queryByRole('listbox')).toBeNull();
+    fireEvent.change(editor, { target: { value: '=SOMMA(A1:A2)', selectionStart: 13 } });
+    fireEvent.keyDown(editor, { key: 'Enter' });
+    expect(cell('C1').textContent).toBe('30');
+  });
+
+  test('the conditional format panel adds a rule to the selection', () => {
+    const { cell } = mount();
+    fireEvent.mouseDown(cell('A1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Conditional formatting' }));
+    const panel = screen.getByRole('complementary', { name: 'Conditional formatting' });
+    expect(within(panel).getByText('No rules on this sheet')).toBeTruthy();
+
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Value' }), { target: { value: '15' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add rule' }));
+
+    expect(sheet.conditionalFormats(0)).toHaveLength(1);
+    expect(sheet.conditionalFormats(0)[0].rules[0].condition).toEqual({ kind: 'cellIs', operator: 'greater', formulas: ['15'] });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Remove' }));
+    expect(sheet.conditionalFormats(0)).toHaveLength(0);
+  });
+
+  test('the validation panel puts a list on the selection', () => {
+    const { cell } = mount();
+    fireEvent.mouseDown(cell('E1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Data validation' }));
+    const panel = screen.getByRole('complementary', { name: 'Data validation' });
+
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Items, separated by a semicolon' }), { target: { value: 'Sì;No' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Apply to the selection' }));
+
+    expect(sheet.validations(0)).toMatchObject([{ kind: 'list', formulas: ['"Sì,No"'] }]);
+    expect(sheet.validation(0, 0, 4).items).toEqual(['Sì', 'No']);
+  });
+
+  test('the borders menu puts a border on the selection', () => {
+    const { cell } = mount();
+    fireEvent.mouseDown(cell('B1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Borders' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'All borders' }));
+
+    const style = sheet.styles()[sheet.cells(0, { top: 0, left: 1, bottom: 0, right: 1 })[0].style];
+    expect(style.borders.top).toMatchObject({ style: 'single', colour: '000000' });
+    expect(screen.queryByRole('dialog', { name: 'Borders' })).toBeNull();
+  });
+
   test('read only, nothing can be typed and there is no toolbar', () => {
     const { cell, grid, ref } = mount({ editable: false });
     fireEvent.mouseDown(cell('A1'));

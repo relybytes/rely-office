@@ -76,6 +76,32 @@ export function coverMerges(window: CellWindow, merges: CellRange[]): CellWindow
   return current;
 }
 
+/**
+ * Where dragging the fill handle of a source to a cell fills: the source grown towards the
+ * cell along the side the pointer went furthest past, as a spreadsheet's fill handle does.
+ */
+export function fillTarget(source: CellWindow, { row, column }: CellPosition): CellWindow {
+  const down = row - source.bottom;
+  const up = source.top - row;
+  const right = column - source.right;
+  const left = source.left - column;
+  const vertical = Math.max(down, up);
+  const horizontal = Math.max(right, left);
+  if (vertical <= 0 && horizontal <= 0) return source;
+  if (vertical >= horizontal) return down > 0 ? { ...source, bottom: row } : { ...source, top: row };
+  return right > 0 ? { ...source, right: column } : { ...source, left: column };
+}
+
+/** A width in pixels as Excel's characters, the inverse of `columnWidthPixels`. */
+export function columnWidthCharacters(pixels: number): number {
+  return Math.max(0, Math.round(((pixels - 5) / 7) * 100) / 100);
+}
+
+/** A height in pixels as points, the inverse of `rowHeightPixels`. */
+export function rowHeightPoints(pixels: number): number {
+  return Math.max(0, Math.round(((pixels * 72) / 96) * 100) / 100);
+}
+
 /** Excel's column width in characters as pixels, for its default font. */
 export function columnWidthPixels(characters: number): number {
   return Math.round(characters * 7 + 5);

@@ -46,16 +46,25 @@ structures.
 
 | `type` | Fields | From |
 | --- | --- | --- |
-| `heading` | `level` 1 to 6, `content`, `align` | a `heading N` or `Title` style, else the outline level of the style or the paragraph; levels past 6 become 6 |
-| `paragraph` | `content`, `align` | any other paragraph, an empty one included |
-| `listItem` | `ordered`, `level` (0 outermost), `listId`, `content` | a paragraph with numbering, from the paragraph or its style; `numFmt` `bullet` is unordered, any other format ordered, `none` is no list |
-| `table` | `rows`: `{ header, cells: { colSpan, rowSpan, blocks }[] }[]` | `w:tbl`; `tblHeader` marks a header row, `gridSpan` the columns, a `vMerge` continuation folds into the cell above |
+| `heading` | `level` 1 to 6, `content`, `align`, `format` | a `heading N` or `Title` style, else the outline level of the style or the paragraph; levels past 6 become 6 |
+| `paragraph` | `content`, `align`, `format` | any other paragraph, an empty one included |
+| `listItem` | `ordered`, `level` (0 outermost), `listId`, `content`, `format` | a paragraph with numbering, from the paragraph or its style; `numFmt` `bullet` is unordered, any other format ordered, `none` is no list |
+| `table` | `rows`: `{ header, cells: { colSpan, rowSpan, blocks }[] }[]`, `columnWidthsTwips` | `w:tbl`; `tblHeader` marks a header row, `gridSpan` the columns, a `vMerge` continuation folds into the cell above |
 | `blockquote` | `blocks` | quote styles; consecutive quote paragraphs share one blockquote |
 | `codeBlock` | `text` | code styles; consecutive code paragraphs are the lines of one block |
 | `horizontalRule` | | an empty paragraph with a VML rule, a bottom border, or a horizontal line style |
 
 `align` is `left`, `center`, `right` or `justify`, from the paragraph or its style, and absent
 when neither sets one.
+
+`format` is what the paragraph sets itself, beside what its style gives it, and absent when it
+sets nothing: `style`, one of Word's named styles (`title`, `subtitle`, `intenseQuote`, `caption`,
+`noSpacing`, known by the style's name in English or Italian), `spaceBeforeTwips`,
+`spaceAfterTwips`, `lineSpacing` (`{ rule: 'auto' | 'exact' | 'atLeast', value }`, `auto` in
+240ths of a line, the others in twips), `indentLeftTwips`, `indentRightTwips`,
+`indentFirstLineTwips` (negative hangs) and `pageBreakBefore`. `writeDocx` writes it back, the
+named styles with their definitions. `columnWidthsTwips` is the grid of a table, when the file
+gives one.
 
 In Rust, paragraphs, headings, list items, tables and text runs also carry a `look`: spacing,
 line spacing, indents, page breaks, fonts, sizes and colours, column widths, cell margins and

@@ -9,14 +9,16 @@ import { EditorContent, useEditor } from '@tiptap/react';
 import {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactElement,
   type Ref,
 } from 'react';
-import type { DocumentTree, MediaItem } from '../model.js';
+import type { Block, DocumentTree, MediaItem } from '../model.js';
 import { saveDocument } from './document-files.js';
 import { DocumentSidePanel } from './document-side-panel.js';
 import { DocumentToolbar } from './document-toolbar.js';
@@ -25,7 +27,34 @@ import { editorToDocumentTree } from './editor-to-tree.js';
 import { createRelyDocumentExtensions } from './extensions.js';
 import { ENGLISH_DOCUMENT_EDITOR_LABELS, type DocumentEditorLabels } from './labels.js';
 import { mediaDataUrl, sniffImageType } from './media.js';
+import { DEFAULT_PAGINATION, type PaginationOptions } from './pagination.js';
 import { contentReferences, type ContentReferences } from './references.js';
+
+/** Twentieths of a point as CSS pixels. */
+const TWIPS_PER_PIXEL = 15;
+
+/** The text of header or footer blocks, a line per paragraph, for the page view to draw. */
+export function blocksText(blocks: Block[]): string {
+  const inline = (block: Block): string => {
+    switch (block.type) {
+      case 'paragraph':
+      case 'heading':
+      case 'listItem':
+        return block.content
+          .map((part) => (part.type === 'text' ? part.text : part.type === 'hardBreak' ? ' ' : ''))
+          .join('');
+      case 'blockquote':
+        return block.blocks.map(inline).join(' ');
+      case 'table':
+        return block.rows.map((row) => row.cells.map((cell) => cell.blocks.map(inline).join(' ')).join('  ')).join(' ');
+      case 'codeBlock':
+        return block.text;
+      default:
+        return '';
+    }
+  };
+  return blocks.map(inline).filter((line) => line.trim().length > 0).join('  ');
+}
 
 /** What a host can ask of a mounted document editor. */
 export interface DocumentEditorHandle {
@@ -63,6 +92,10 @@ export interface DocumentEditorProps {
   author?: { name: string; initials?: string };
   /** False hides the panel of comments, notes and headers, for a host that edits them itself. */
   sidePanel?: boolean;
+  /** Open in the page view, the text on pages of the document's size with their headers. */
+  pageView?: boolean;
+  /** Open recording tracked changes. */
+  trackChanges?: boolean;
   className?: string;
 }
 
@@ -96,6 +129,8 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
     extensions,
     author,
     sidePanel = true,
+    pageView: initialPageView = false,
+    trackChanges: initialTrackChanges = false,
     className,
   }: DocumentEditorProps,
   ref: Ref<DocumentEditorHandle>,
@@ -104,12 +139,21 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
   const media = useRef<MediaItem[]>([...document.media]);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
-  const allExtensions = useMemo(() => createRelyDocumentExtensions({ extensions }), [extensions]);
+  const writer = author ?? { name: words.you };
+  const writerName = useRef(writer.name);
+  writerName.current = writer.name;
+  const allExtensions = useMemo(
+    () => createRelyDocumentExtensions({ extensions, author: () => writerName.current }),
+    [extensions],
+  );
   const [aside, setAsideState] = useState<DocumentAside>(document.aside);
   const asideRef = useRef(aside);
   const [references, setReferences] = useState<ContentReferences>(() => contentReferences(document.content));
   const [focusComment, setFocusComment] = useState<number | null>(null);
-  const writer = author ?? { name: words.you };
+  const [pageView, setPageView] = useState(initialPageView);
+  const [trackChanges, setTrackChanges] = useState(initialTrackChanges);
+  const [findRequest, setFindRequest] = useState(0);
+  const [pages, setPages] = useState(1);
 
   const current = useCallback(
     (editor: Editor): EditorDocument => ({
@@ -132,6 +176,42 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
       onChangeRef.current?.(now);
     },
   });
+
+  const page = aside.page;
+  const margins = {
+    top: page.marginsTwips[0] / TWIPS_PER_PIXEL,
+    right: page.marginsTwips[1] / TWIPS_PER_PIXEL,
+    bottom: page.marginsTwips[2] / TWIPS_PER_PIXEL,
+    left: page.marginsTwips[3] / TWIPS_PER_PIXEL,
+  };
+  const pageHeight = page.heightTwips / TWIPS_PER_PIXEL;
+  const header = blocksText(aside.headersFooters.header);
+  const footer = blocksText(aside.headersFooters.footer);
+
+  useEffect(() => {
+    if (!editor) return;
+    const storage = (editor.storage as unknown as Record<string, { options: PaginationOptions; pages: number }>).relyPagination;
+    storage.options = {
+      ...DEFAULT_PAGINATION,
+      enabled: pageView,
+      contentHeight: Math.max(48, pageHeight - margins.top - margins.bottom),
+      marginTop: margins.top,
+      marginBottom: margins.bottom,
+      header,
+      footer,
+      pageLabel: words.pageNumber,
+    };
+    editor.view.dispatch(editor.state.tr.setMeta('relyTrackSkip', true).setMeta('addToHistory', false));
+    const update = () => setPages(storage.pages);
+    editor.on('transaction', update);
+    return () => {
+      editor.off('transaction', update);
+    };
+  }, [editor, pageView, pageHeight, margins.top, margins.bottom, header, footer, words.pageNumber]);
+
+  useEffect(() => {
+    editor?.commands.setTrackChanges(trackChanges);
+  }, [editor, trackChanges]);
 
   const setAside = useCallback(
     (next: DocumentAside) => {
@@ -201,8 +281,29 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
     [editor, current, document],
   );
 
+  const pageStyle: CSSProperties | undefined = pageView
+    ? ({
+        '--rely-page-width': `${page.widthTwips / TWIPS_PER_PIXEL}px`,
+        '--rely-page-margin-top': `${margins.top}px`,
+        '--rely-page-margin-right': `${margins.right}px`,
+        '--rely-page-margin-bottom': `${margins.bottom}px`,
+        '--rely-page-margin-left': `${margins.left}px`,
+        '--rely-page-height': `${pageHeight}px`,
+      } as CSSProperties)
+    : undefined;
+
   return (
-    <div className={['rely-document-editor', className].filter(Boolean).join(' ')}>
+    <div
+      className={['rely-document-editor', pageView ? 'rely-page-view' : '', className].filter(Boolean).join(' ')}
+      style={pageStyle}
+      onKeyDown={(event) => {
+        const key = event.key.toLowerCase();
+        if ((event.ctrlKey || event.metaKey) && (key === 'f' || key === 'h') && editable && toolbar) {
+          event.preventDefault();
+          setFindRequest((count) => count + 1);
+        }
+      }}
+    >
       {toolbar && editable && editor ? (
         <DocumentToolbar
           editor={editor}
@@ -210,10 +311,28 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
           onImage={insertImage}
           onComment={addComment}
           onFootnote={insertFootnote}
+          trackChanges={trackChanges}
+          onTrackChanges={setTrackChanges}
+          pageView={pageView}
+          onPageView={setPageView}
+          findRequest={findRequest}
         />
       ) : null}
       <div className="rely-document-body">
-        <EditorContent editor={editor} className="rely-document-page" />
+        <div className="rely-document-page">
+          {pageView ? (
+            <div className="rely-page-header rely-page-header-first" aria-hidden="true">
+              {header}
+            </div>
+          ) : null}
+          <EditorContent editor={editor} />
+          {pageView ? (
+            <div className="rely-page-footer rely-page-footer-last" aria-hidden="true">
+              {footer}
+              <span className="rely-page-number">{words.pageNumber(pages)}</span>
+            </div>
+          ) : null}
+        </div>
         {sidePanel ? (
           <DocumentSidePanel
             aside={aside}

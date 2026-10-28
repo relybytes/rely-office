@@ -118,10 +118,15 @@ function mapBlocks(blocks: Block[], context: MappingContext): JSONContent[] {
 function mapBlock(block: Block, context: MappingContext): JSONContent[] {
   switch (block.type) {
     case 'paragraph':
-      return [textBlock('paragraph', { align: block.align ?? null }, block.content, context)];
+      return [textBlock('paragraph', { align: block.align ?? null, format: block.format ?? null }, block.content, context)];
     case 'heading':
       return [
-        textBlock('heading', { level: block.level, align: block.align ?? null }, block.content, context),
+        textBlock(
+          'heading',
+          { level: block.level, align: block.align ?? null, format: block.format ?? null },
+          block.content,
+          context,
+        ),
       ];
     case 'listItem':
       return [mapList([block], context)];
@@ -137,21 +142,39 @@ function mapBlock(block: Block, context: MappingContext): JSONContent[] {
       ];
     case 'horizontalRule':
       return [{ type: 'horizontalRule' }];
-    case 'table':
+    case 'table': {
+      const widths = block.columnWidthsTwips ?? [];
       return [
         {
           type: 'table',
-          content: block.rows.map((row) => ({
-            type: 'tableRow',
-            content: row.cells.map((cell) => ({
-              type: row.header ? 'tableHeader' : 'tableCell',
-              attrs: { colspan: cell.colSpan, rowspan: cell.rowSpan, colwidth: null },
-              content: mapBlocks(cell.blocks, context),
-            })),
-          })),
+          content: block.rows.map((row) => {
+            let column = 0;
+            return {
+              type: 'tableRow',
+              content: row.cells.map((cell) => {
+                const span = widths.slice(column, column + cell.colSpan);
+                column += cell.colSpan;
+                const colwidth = span.length === cell.colSpan ? span.map(twipsToPixels) : null;
+                return {
+                  type: row.header ? 'tableHeader' : 'tableCell',
+                  attrs: { colspan: cell.colSpan, rowspan: cell.rowSpan, colwidth },
+                  content: mapBlocks(cell.blocks, context),
+                };
+              }),
+            };
+          }),
         },
       ];
+    }
   }
+}
+
+/**
+ * Twentieths of a point as the CSS pixels a table column is drawn with, 96 to the inch; kept to
+ * a hundredth of a pixel so a width the person did not drag comes back to the twip.
+ */
+export function twipsToPixels(twips: number): number {
+  return Math.max(1, Math.round((twips / 15) * 100) / 100);
 }
 
 function textBlock(
@@ -191,7 +214,7 @@ function mapList(items: ListItemBlock[], context: MappingContext): JSONContent {
     }
     stack[stack.length - 1].content!.push({
       type: 'listItem',
-      content: [textBlock('paragraph', { align: null }, item.content, context)],
+      content: [textBlock('paragraph', { align: null, format: item.format ?? null }, item.content, context)],
     });
   }
   return root;

@@ -164,15 +164,58 @@ export interface TableRow {
 /** How a paragraph's lines sit between the margins; absent means the start of the line. */
 export type Alignment = 'left' | 'center' | 'right' | 'justify';
 
+/** The built-in paragraph styles of Word a paragraph can take beside the headings. */
+export type NamedStyle = 'title' | 'subtitle' | 'intenseQuote' | 'caption' | 'noSpacing';
+
+/** How the lines of a paragraph are spaced. */
+export type LineSpacing =
+  /** A multiple of single spacing in 240ths: 240 single, 360 one and a half, 480 double. */
+  | { rule: 'auto'; value: number }
+  /** Exactly this line height, in twentieths of a point. */
+  | { rule: 'exact'; value: number }
+  /** At least this line height, in twentieths of a point. */
+  | { rule: 'atLeast'; value: number };
+
+/**
+ * What a paragraph sets itself, beside what its style gives it; every field left out is the
+ * style's. Lengths in twentieths of a point (twips).
+ */
+export interface ParagraphFormat {
+  style?: NamedStyle;
+  spaceBeforeTwips?: number;
+  spaceAfterTwips?: number;
+  lineSpacing?: LineSpacing;
+  indentLeftTwips?: number;
+  indentRightTwips?: number;
+  /** Positive indents the first line, negative hangs it. */
+  indentFirstLineTwips?: number;
+  /** The paragraph starts a new page. */
+  pageBreakBefore?: boolean;
+}
+
 export type Block =
-  | { type: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; content: Inline[]; align?: Alignment }
-  | { type: 'paragraph'; content: Inline[]; align?: Alignment }
+  | {
+      type: 'heading';
+      level: 1 | 2 | 3 | 4 | 5 | 6;
+      content: Inline[];
+      align?: Alignment;
+      format?: ParagraphFormat;
+    }
+  | { type: 'paragraph'; content: Inline[]; align?: Alignment; format?: ParagraphFormat }
   /**
    * One list item. Consecutive items with the same `listId` form one list; `level` is the
    * nesting depth, 0 for the outermost.
    */
-  | { type: 'listItem'; ordered: boolean; level: number; listId: number; content: Inline[] }
-  | { type: 'table'; rows: TableRow[] }
+  | {
+      type: 'listItem';
+      ordered: boolean;
+      level: number;
+      listId: number;
+      content: Inline[];
+      format?: ParagraphFormat;
+    }
+  /** The width of each column in twips, when the file gives them. */
+  | { type: 'table'; rows: TableRow[]; columnWidthsTwips?: number[] }
   | { type: 'blockquote'; blocks: Block[] }
   | { type: 'codeBlock'; text: string }
   | { type: 'horizontalRule' };
@@ -606,6 +649,50 @@ export interface SheetSummary {
   rowHeights: [number, number][];
   /** The pivot tables the sheet carries from its file; `save` writes them back unchanged. */
   pivotTables: number;
+  /** The rows and columns frozen at the top and the left. */
+  frozenRows: number;
+  frozenColumns: number;
+  autoFilter: AutoFilterSummary | null;
+  /** How many pictures and charts `pictures` lists. */
+  pictures: number;
+}
+
+/** The filter buttons of a sheet, on the first row of their window. */
+export interface AutoFilterSummary {
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+  /** The filtered columns, counted from `left`, and the keys of the values each shows. */
+  columns: { column: number; shown: string[] }[];
+  /** The rows the filter hides. */
+  hiddenRows: number[];
+}
+
+/** A value a filter column can show: its key, and how the document's locale shows it. */
+export interface FilterChoice {
+  /** The value as a file stores it; an empty key stands for the blank cells. */
+  key: string;
+  label: string;
+}
+
+/** A column a sort orders by, counted on the sheet. */
+export interface SortKey {
+  column: number;
+  descending?: boolean;
+}
+
+/** A picture or a chart of the file, anchored at a cell; sizes in EMU, 9525 to a pixel. */
+export interface SheetPicture {
+  row: number;
+  column: number;
+  offsetXEmu: number;
+  offsetYEmu: number;
+  widthEmu: number;
+  heightEmu: number;
+  /** A chart is `image/svg+xml`, drawn from the values the file held when it was opened. */
+  contentType: string;
+  description: string | null;
 }
 
 export type ComparisonOperator =
@@ -782,6 +869,33 @@ export interface SheetDocument {
   validation(sheet: number, row: number, column: number): CellValidation;
   /** `[row, column]` of the cells their validation refuses. */
   invalidCells(sheet: number): [number, number][];
+  /**
+   * Continue a window over a target that holds it and reaches past it on one side, as the fill
+   * handle does: numbers follow their trend, a date counts days, a text ending in a number
+   * counts on, month and weekday names follow the calendar, formulas move, the rest repeats.
+   */
+  fillRange(sheet: number, source: CellWindow, target: CellWindow): void;
+  /** Freeze the first rows and columns so they stay in view; 0 and 0 unfreezes. */
+  setFrozen(sheet: number, rows: number, columns: number): void;
+  /**
+   * Sort the rows of a window by its columns, the first key first; with `hasHeader` the first
+   * row stays. Numbers come before text, text before booleans; blank cells go last.
+   */
+  sortRange(sheet: number, window: CellWindow, keys: SortKey[], hasHeader: boolean): void;
+  /** Put filter buttons on the first row of a window; null takes them off, showing every row. */
+  setAutoFilter(sheet: number, window: CellWindow | null): void;
+  /**
+   * Choose the values a filter column, counted from the filter's first, shows, by the keys of
+   * `filterChoices`; null shows the whole column. The rows are filtered again.
+   */
+  setFilterColumn(sheet: number, column: number, shown: string[] | null): void;
+  /** The values a filter column can show, in sort order. */
+  filterChoices(sheet: number, column: number): FilterChoice[];
+  /** The pictures and charts of the file; `pictureBytes` gives each one's bytes. */
+  pictures(sheet: number): SheetPicture[];
+  pictureBytes(sheet: number, index: number): Uint8Array;
+  /** The functions a formula can call, as the document's locale names them, sorted. */
+  functionNames(): string[];
   /** Today's date for TODAY() and NOW(), which WebAssembly cannot read; null unsets it. */
   setToday(today: Date | number | null): void;
   /** How a typed text would be read, without typing it. */
