@@ -63,9 +63,9 @@ length and nesting.
 
 ```toml
 [dependencies]
-rely-office-core = "0.6"    # reading, the document tree, writing docx and pptx
-rely-office-render = "0.6"  # PDF and PNG through Typst
-rely-office-sheet = "0.6"   # the editable spreadsheet
+rely-office-core = "0.7"    # reading, the document tree, writing docx and pptx
+rely-office-render = "0.7"  # PDF and PNG through Typst
+rely-office-sheet = "0.7"   # the editable spreadsheet
 ```
 
 ```rust
@@ -153,7 +153,7 @@ Renders use the fonts of the folder `RELY_OFFICE_FONTS` names, by default `./fon
 ## Roadmap
 
 <p align="center">
-  <img src="docs/assets/rely-office-roadmap.svg" width="100%" alt="Releases 0.1 to 0.6 are done; next, planned: React editor components for documents, sheets and slides.">
+  <img src="docs/assets/rely-office-roadmap.svg" width="100%" alt="Releases 0.1 to 0.6 read, render, write and edit every format; 0.7 adds the React editor components for documents, sheets and slides.">
 </p>
 
 Six releases took the library from text extraction to drawing and saving every format above;

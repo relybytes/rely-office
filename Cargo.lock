@@ -1797,7 +1797,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rely-office-cli"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "rely-office-core",
  "rely-office-render",
@@ -1806,7 +1806,7 @@ dependencies = [
 
 [[package]]
 name = "rely-office-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "calamine",
  "cfb",
@@ -1821,7 +1821,7 @@ dependencies = [
 
 [[package]]
 name = "rely-office-corpus"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "rely-office-render",
  "serde_json",
@@ -1830,7 +1830,7 @@ dependencies = [
 
 [[package]]
 name = "rely-office-render"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "comemo",
  "rely-office-core",
@@ -1846,7 +1846,7 @@ dependencies = [
 
 [[package]]
 name = "rely-office-render-wasm"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "rely-office-render",
  "rely-office-wasm",
@@ -1857,7 +1857,7 @@ dependencies = [
 
 [[package]]
 name = "rely-office-sheet"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "calamine",
  "quick-xml 0.42.0",
@@ -1870,7 +1870,7 @@ dependencies = [
 
 [[package]]
 name = "rely-office-sheet-wasm"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "rely-office-core",
  "rely-office-sheet",
@@ -1881,7 +1881,7 @@ dependencies = [
 
 [[package]]
 name = "rely-office-wasm"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "rely-office-core",
  "serde",

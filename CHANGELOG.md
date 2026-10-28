@@ -3,6 +3,43 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## 0.7.0
+
+### Added
+
+- `@relybytes/rely-office-react`, the frontend package: documents, presentations and spreadsheets
+  read and written in the browser (`initDocuments`, `readDocumentTree`, `writeDocx`,
+  `convertToDocx`, `readPresentation`, `writePptx`, `convertToPptx`, `initSheets`, `createSheet`,
+  `openSheet`), from the reading and spreadsheet modules bound for the web.
+- `DocumentEditor`, a React editor on TipTap over the document tree. `documentTreeToEditor` and
+  `editorToDocumentTree` map every block, mark and inline both ways, alignment, superscript and
+  subscript, font, size and colour, highlights, comments, tracked changes (accepted or rejected
+  from the toolbar), footnote references, equations, inline images and section breaks included;
+  what the editor does not show as text rides along and is written back. `openDocument` and
+  `saveDocument` open a docx, doc or odt and save a docx; `createRelyDocumentExtensions` serves a
+  host that draws its own editor.
+- `SheetGrid`, a spreadsheet grid over `SheetDocument`, drawn by window: a formula bar, styles,
+  number formats, merges, conditional formats with data bars and icons, validation that refuses a
+  value or offers its list, rows, columns and sheets, and the clipboard, which pastes a copy of
+  the workbook with its references moved.
+- `SlideEditor`, a slide editor over the slide model: thumbnails, shapes drawn with their
+  geometry, fill, gradient, picture and outline, moved, resized and written into with the
+  formatting of each run kept, text styling, pictures, tables, slides added, duplicated,
+  reordered and hidden, speaker notes; layout shapes show locked.
+- English and Italian labels for the three editors; the look is set by CSS custom properties.
+
+### Changed
+
+- The model is declared once, in `packages/rely-office-node/model.d.ts`, and the frontend package
+  compiles the same file, so the two packages declare the same shapes.
+- `@relybytes/rely-office` is the backend package only: its browser entry
+  `@relybytes/rely-office/web` moves into `@relybytes/rely-office-react`.
+
+### Fixed
+
+- A sum of nothing showed as `-0`: Rust's float sum starts from negative zero, and zero is now
+  shown as `0` in every number format.
+
 ## 0.6.0
 
 ### Added
