@@ -20,7 +20,9 @@ use super::fkp::{
 };
 use super::fonts::font_names;
 use super::lists::Lists;
-use super::pictures::{Drawings, ShapeAnchor, ShapeContent, inline_picture, shape_anchors};
+use super::pictures::{
+    Drawings, InlinePicture, ShapeAnchor, ShapeContent, inline_picture, shape_anchors,
+};
 use super::properties::{Character, Paragraph, Row, colour_reference};
 use super::sections::{SectionLayout, read_sections};
 use super::styles::StyleSheet;
@@ -188,6 +190,8 @@ pub(crate) fn read_doc_tree(
         in_note: false,
         object_pool: object_pool(&mut compound_file, limits),
         objects: Vec::new(),
+        legacy_pictures: false,
+        word6_drawings: HashMap::new(),
     };
     let mut converter = converter;
     converter.read_comments();
@@ -199,7 +203,7 @@ pub(crate) fn read_doc_tree(
 }
 
 /// Read a Word 6 or Word 95 document: its structures rewritten as Word 97 stores them, then the
-/// same conversion. Comments, drawings and pictures, stored another way, are left out.
+/// same conversion, with the pictures and the drawing objects Word 6 stores its own way.
 fn read_word6_tree(
     word_document: &[u8],
     limits: &Limits,
@@ -211,7 +215,9 @@ fn read_word6_tree(
     }
     let (text, offsets) = word6::text(word_document, &fib);
     let structure = |index: usize| fib.structure(word_document, index);
-    let converter = Converter {
+    let comment_references = word6::comment_references(structure(pair::COMMENT_REFERENCES));
+    let comment_owners = word6::comment_owners(structure(pair::COMMENT_OWNERS));
+    let mut converter = Converter {
         text: &text,
         offsets: &offsets,
         characters: word6::character_runs(word_document, &fib),
@@ -228,12 +234,29 @@ fn read_word6_tree(
             structure(pair::FOOTNOTE_TEXTS),
             fib.stories.footnotes_start(),
         ),
-        endnotes: HashMap::new(),
+        endnotes: references(
+            structure(pair::ENDNOTE_REFERENCES),
+            structure(pair::ENDNOTE_TEXTS),
+            fib.stories.endnotes_start(),
+        ),
         text_boxes: HashMap::new(),
         stories: fib.stories,
         limits,
-        report: ImportReport::default(),
-        stored_comments: Vec::new(),
+        report: ImportReport {
+            comments: plex(&comment_references, 30).map_or(0, |(_, entries)| entries.len()),
+            ..ImportReport::default()
+        },
+        stored_comments: read_comments(
+            &CommentTables {
+                references: &comment_references,
+                texts: structure(pair::COMMENT_TEXTS),
+                owners: &comment_owners,
+                bookmark_names: &[],
+                bookmark_firsts: &[],
+                bookmark_lasts: &[],
+            },
+            fib.stories.comments_start(),
+        ),
         comments: Vec::new(),
         reviewers: Vec::new(),
         tracked_changes: options.tracked_changes,
@@ -251,7 +274,10 @@ fn read_word6_tree(
         in_note: false,
         object_pool: HashMap::new(),
         objects: Vec::new(),
+        legacy_pictures: true,
+        word6_drawings: word6::drawings(word_document, &fib),
     };
+    converter.read_comments();
     Ok(converter.convert(
         &word6::sections(word_document, &fib),
         &positions(structure(pair::HEADERS)),
@@ -381,6 +407,10 @@ struct Converter<'a> {
     /// The objects of the object pool, each a compound file of its own, by storage number.
     object_pool: HashMap<u32, Vec<u8>>,
     objects: Vec<EmbeddedObject>,
+    /// The pictures are Word 6 `PIC`s in the `WordDocument` stream, not Word 97 drawings.
+    legacy_pictures: bool,
+    /// The Word 6 drawing objects, by the position that anchors each.
+    word6_drawings: HashMap<usize, word6::Word6Drawing>,
 }
 
 impl Converter<'_> {
@@ -1119,7 +1149,16 @@ impl Converter<'_> {
 
     /// The image of an inline picture, kept once however many times it is shown.
     fn inline_image(&mut self, offset: usize) -> Option<Inline> {
-        let picture = inline_picture(self.data, offset, self.word_document)?;
+        let picture = if self.legacy_pictures {
+            let (bytes, width, height) = word6::picture(self.word_document, offset)?;
+            InlinePicture {
+                bytes,
+                width,
+                height,
+            }
+        } else {
+            inline_picture(self.data, offset, self.word_document)?
+        };
         let media = if let Some(known) = self.pictures.get(&offset) {
             *known
         } else {
@@ -1164,6 +1203,9 @@ impl Converter<'_> {
     /// A floating shape anchored at `position`: a picture in its place, or a text box set after
     /// the paragraph; any other shape is counted.
     fn floating_shape(&mut self, position: usize) -> Option<Inline> {
+        if let Some(drawing) = self.word6_drawings.remove(&position) {
+            return self.word6_drawing(drawing);
+        }
         let anchor = *self.anchors.get(&position)?;
         let shape = self
             .drawings
@@ -1247,6 +1289,48 @@ impl Converter<'_> {
         self.floating = outer;
         self.floating.extend(blocks);
         None
+    }
+
+    /// A Word 6 drawing object: the picture of its shapes where it stands, and its text boxes set
+    /// after the paragraph, each a frame of its own over the text.
+    fn word6_drawing(&mut self, drawing: word6::Word6Drawing) -> Option<Inline> {
+        let shape = ShapeContent::default();
+        for text_box in drawing.text_boxes {
+            self.report.text_boxes += 1;
+            self.next_frame += 1;
+            let anchor = ShapeAnchor {
+                bounds: text_box.bounds,
+                ..drawing.anchor
+            };
+            let frame = TextFrame {
+                shape: text_box.rounded.then(|| "roundRect".to_owned()),
+                id: self.next_frame,
+                anchor: placement(&anchor, &shape),
+                fill: text_box.fill,
+                line: text_box.line,
+            };
+            let outer = std::mem::take(&mut self.floating);
+            let mut blocks = self.blocks(text_box.text);
+            while matches!(blocks.last(), Some(Block::Paragraph { content, .. }) if content.is_empty())
+            {
+                blocks.pop();
+            }
+            set_frame(&mut blocks, &frame);
+            self.floating = outer;
+            self.floating.extend(blocks);
+        }
+        let bytes = drawing.picture?;
+        let media = self.keep_image(bytes)?;
+        let [left, top, right, bottom] = drawing.anchor.bounds;
+        let pixels =
+            |twips: i32| (u32::try_from(twips.max(0)).unwrap_or(0) / TWIPS_PER_PIXEL).max(1);
+        Some(Inline::Image {
+            media,
+            alt: None,
+            width: Some(pixels(right - left)),
+            height: Some(pixels(bottom - top)),
+            anchor: Some(Box::new(placement(&drawing.anchor, &shape))),
+        })
     }
 
     /// A shape with no picture and no text, drawn as an SVG picture of its anchor's size: its

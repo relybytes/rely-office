@@ -28,7 +28,21 @@ const FLAG_COMPLEX: u16 = 0x0004;
 const FLAG_ENCRYPTED: u16 = 0x0100;
 /// Where the `fc`/`lcb` pairs begin, in the order Word 97 kept.
 const PAIRS_OFFSET: usize = 0x58;
-const PAIR_COUNT: usize = 34;
+/// The pairs every Word 6 FIB holds; those up to `PAIR_COUNT` are read where the FIB reaches.
+const REQUIRED_PAIRS: usize = 34;
+const PAIR_COUNT: usize = 60;
+/// From this pair on, the pairs stand after five words (a spare and the bin table page counts)
+/// that Word 97 moved elsewhere.
+const SPLIT_PAIR: usize = 38;
+const SPLIT_GAP: usize = 10;
+/// The size of a Word 6 `ATRD`, a comment's reference.
+const WORD6_ATRD_SIZE: usize = 20;
+/// The size of a Word 97 `ATRDPre10`, which the comment reader takes.
+const ATRD_SIZE: usize = 30;
+/// The mapping modes of a picture: a metafile up to this one, a TIFF file, a bitmap.
+const LAST_METAFILE_MODE: i16 = 8;
+const TIFF_MODE: i16 = 98;
+const BITMAP_MODE: i16 = 99;
 /// Where the story lengths begin: main text, footnotes, headers, macros, comments, endnotes,
 /// text boxes and header text boxes.
 const STORIES_OFFSET: usize = 0x34;
@@ -63,15 +77,23 @@ impl Word6Fib {
         let flags = u16_at(word_document, 10).ok_or_else(short)?;
         let long = |offset: usize| u32_at(word_document, offset).map(|value| value as usize);
         let story = |index: usize| long(STORIES_OFFSET + index * 4).unwrap_or(0);
+        let text_start = long(0x18).ok_or_else(short)?;
         let mut pairs = Vec::with_capacity(PAIR_COUNT);
         for index in 0..PAIR_COUNT {
-            let at = PAIRS_OFFSET + index * 8;
-            pairs.push((long(at).ok_or_else(short)?, long(at + 4).ok_or_else(short)?));
+            let at = pair_offset(index);
+            let pair = (long(at), long(at + 4));
+            match pair {
+                (Some(offset), Some(length)) if index < REQUIRED_PAIRS || at + 8 <= text_start => {
+                    pairs.push((offset, length));
+                }
+                _ if index < REQUIRED_PAIRS => return Err(short()),
+                _ => pairs.push((0, 0)),
+            }
         }
         Ok(Self {
             encrypted: flags & FLAG_ENCRYPTED != 0,
             complex: flags & FLAG_COMPLEX != 0,
-            text_start: long(0x18).ok_or_else(short)?,
+            text_start,
             stories: Stories {
                 main: story(0),
                 footnotes: story(1),
@@ -93,6 +115,112 @@ impl Word6Fib {
             .and_then(|(offset, length)| word_document.get(*offset..offset.checked_add(*length)?))
             .unwrap_or_default()
     }
+}
+
+/// Where the `index`th `fc`/`lcb` pair of the File Information Block stands.
+pub(super) fn pair_offset(index: usize) -> usize {
+    PAIRS_OFFSET + index * 8 + if index >= SPLIT_PAIR { SPLIT_GAP } else { 0 }
+}
+
+/// The comment references (`PlcfandRef`) rewritten as Word 97 stores them: each 20-byte `ATRD`,
+/// with its 8-bit initials, widened to an `ATRDPre10` of UTF-16 initials and no bookmark.
+pub(super) fn comment_references(plex: &[u8]) -> Vec<u8> {
+    let count = plex.len().saturating_sub(4) / (4 + WORD6_ATRD_SIZE);
+    let mut rewritten = plex.get(..(count + 1) * 4).unwrap_or_default().to_vec();
+    for index in 0..count {
+        let at = (count + 1) * 4 + index * WORD6_ATRD_SIZE;
+        let record = plex
+            .get(at..at + WORD6_ATRD_SIZE)
+            .unwrap_or(&[0; WORD6_ATRD_SIZE]);
+        let mut modern = vec![0_u8; ATRD_SIZE];
+        let length = usize::from(record[0]).min(9);
+        let (initials, _) = WINDOWS_1252.decode_without_bom_handling(&record[1..=length]);
+        let units: Vec<u16> = initials.encode_utf16().take(9).collect();
+        modern[..2].copy_from_slice(&u16::try_from(units.len()).unwrap_or(0).to_le_bytes());
+        for (position, unit) in units.iter().enumerate() {
+            modern[2 + position * 2..4 + position * 2].copy_from_slice(&unit.to_le_bytes());
+        }
+        modern[20..22].copy_from_slice(&record[10..12]);
+        modern[26..30].copy_from_slice(&(-1_i32).to_le_bytes());
+        rewritten.extend(modern);
+    }
+    rewritten
+}
+
+/// The comment authors (`GrpStAtnOwners`), 8-bit strings each after its length byte, as the
+/// UTF-16 `Xst`s Word 97 keeps.
+pub(super) fn comment_owners(group: &[u8]) -> Vec<u8> {
+    let mut rewritten = Vec::new();
+    let mut position = 0;
+    while let Some(&length) = group.get(position) {
+        let Some(name) = group.get(position + 1..position + 1 + usize::from(length)) else {
+            break;
+        };
+        let (name, _) = WINDOWS_1252.decode_without_bom_handling(name);
+        let units: Vec<u16> = name.encode_utf16().collect();
+        rewritten.extend_from_slice(&u16::try_from(units.len()).unwrap_or(0).to_le_bytes());
+        for unit in units {
+            rewritten.extend_from_slice(&unit.to_le_bytes());
+        }
+        position += 1 + usize::from(length);
+    }
+    rewritten
+}
+
+/// The picture whose `PIC` starts at `offset` of the `WordDocument` stream: a metafile drawn as
+/// SVG, a bitmap given the file header it lacks, a TIFF file as it is; its size in twips.
+pub(super) fn picture(word_document: &[u8], offset: usize) -> Option<(Option<Vec<u8>>, u32, u32)> {
+    let total = u32_at(word_document, offset)? as usize;
+    let header = usize::from(u16_at(word_document, offset + 4)?);
+    let picture = word_document.get(offset..offset.checked_add(total)?)?;
+    let mode = i16::from_le_bytes(u16_at(picture, 6)?.to_le_bytes());
+    let goal = |at: usize| u32::from(u16_at(picture, at).unwrap_or(0));
+    let width = goal(28) * goal(32).max(1) / 1000;
+    let height = goal(30) * goal(34).max(1) / 1000;
+    let data = picture.get(header..).unwrap_or_default();
+    let bytes = match mode {
+        1..=LAST_METAFILE_MODE => crate::metafile::convert_metafile_to_svg(data),
+        BITMAP_MODE => bitmap_file(data),
+        TIFF_MODE => Some(data.to_vec()).filter(|data| !data.is_empty()),
+        _ => None,
+    };
+    Some((bytes, width, height))
+}
+
+/// A device-independent bitmap as a BMP file: the file header before its info header, palette
+/// and pixels.
+fn bitmap_file(dib: &[u8]) -> Option<Vec<u8>> {
+    if dib.starts_with(b"BM") {
+        return Some(dib.to_vec());
+    }
+    let info = u32_at(dib, 0)?;
+    if !(12..=124).contains(&info) {
+        return None;
+    }
+    let (bits, compression, used) = if info == 12 {
+        (u16_at(dib, 10)?, 0, 0)
+    } else {
+        (u16_at(dib, 14)?, u32_at(dib, 16)?, u32_at(dib, 32)?)
+    };
+    let entry = if info == 12 { 3 } else { 4 };
+    let colours = match (used, bits) {
+        (0, 1 | 4 | 8) => 1_u32 << bits,
+        (used, _) => used,
+    };
+    let masks = if compression == 3 && info == 40 {
+        12
+    } else {
+        0
+    };
+    let pixels = 14 + info + colours * entry + masks;
+    let size = u32::try_from(dib.len()).ok()?.checked_add(14)?;
+    let mut file = Vec::with_capacity(size as usize);
+    file.extend_from_slice(b"BM");
+    file.extend_from_slice(&size.to_le_bytes());
+    file.extend_from_slice(&[0; 4]);
+    file.extend_from_slice(&pixels.to_le_bytes());
+    file.extend_from_slice(dib);
+    Some(file)
 }
 
 /// The characters of every story with the stream offset of each: one stretch from the start of
@@ -590,6 +718,10 @@ fn table_definition(operand: &[u8]) -> Vec<u8> {
     modern.extend_from_slice(&body);
     modern
 }
+
+mod drawings;
+
+pub(super) use drawings::{Word6Drawing, drawings};
 
 #[cfg(test)]
 mod tests;

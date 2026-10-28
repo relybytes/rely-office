@@ -21,12 +21,24 @@ struct Word6Paragraph {
     grpprl: Vec<u8>,
 }
 
-/// A Word 6 document as Word 6 writes it: the File Information Block, the 8-bit text from
-/// [`TEXT_START`], one page of character runs, one page of paragraph runs and the tables.
+/// A Word 6 document as Word 6 writes it: the File Information Block, the 8-bit text of its
+/// stories from [`TEXT_START`], the pictures and drawing objects after it, one page of
+/// character runs, one page of paragraph runs and the tables.
 struct Word6Builder {
     paragraphs: Vec<Word6Paragraph>,
-    /// Character runs by their range of characters, with their modifiers.
-    characters: Vec<(Range<usize>, Vec<u8>)>,
+    /// The comment story and the text box story.
+    comment_story: Vec<Word6Paragraph>,
+    box_story: Vec<Word6Paragraph>,
+    /// Character runs by their range of characters, with their modifiers and the blob a picture
+    /// location names.
+    characters: Vec<(Range<usize>, Vec<u8>, Option<usize>)>,
+    /// Bytes stored after the text: pictures and drawing objects.
+    blobs: Vec<Vec<u8>>,
+    /// The drawing objects of the main text: their anchor position, blob and text boxes.
+    drawings: Vec<(usize, usize, u16)>,
+    /// The comments: their reference position, initials and author.
+    comments: Vec<(usize, String, u16)>,
+    owners: Vec<String>,
     flags: u16,
     complex: bool,
 }
@@ -35,42 +47,132 @@ impl Word6Builder {
     fn new() -> Self {
         Self {
             paragraphs: Vec::new(),
+            comment_story: Vec::new(),
+            box_story: Vec::new(),
             characters: Vec::new(),
+            blobs: Vec::new(),
+            drawings: Vec::new(),
+            comments: Vec::new(),
+            owners: Vec::new(),
             flags: 0,
             complex: false,
         }
     }
 
-    fn paragraph(mut self, text: &str, style: u16, grpprl: &[u8]) -> Self {
+    fn encoded(text: &str, style: u16, grpprl: &[u8]) -> Word6Paragraph {
         let (encoded, _, _) = WINDOWS_1252.encode(text);
-        self.paragraphs.push(Word6Paragraph {
+        Word6Paragraph {
             text: encoded.into_owned(),
             style,
             grpprl: grpprl.to_vec(),
-        });
+        }
+    }
+
+    fn paragraph(mut self, text: &str, style: u16, grpprl: &[u8]) -> Self {
+        self.paragraphs.push(Self::encoded(text, style, grpprl));
         self
     }
 
     fn character(mut self, range: Range<usize>, grpprl: &[u8]) -> Self {
-        self.characters.push((range, grpprl.to_vec()));
+        self.characters.push((range, grpprl.to_vec(), None));
         self
     }
 
-    fn text(&self) -> Vec<u8> {
-        self.paragraphs
+    /// A picture at `position` of the main text, its `PIC` stored after the text.
+    fn picture(mut self, position: usize, pic: Vec<u8>) -> Self {
+        self.blobs.push(pic);
+        self.characters.push((
+            position..position + 1,
+            vec![117, 1],
+            Some(self.blobs.len() - 1),
+        ));
+        self
+    }
+
+    /// A drawing object anchored at `position` of the main text, holding `boxes` text boxes.
+    fn drawing(mut self, position: usize, object: Vec<u8>, boxes: u16) -> Self {
+        self.blobs.push(object);
+        self.drawings.push((position, self.blobs.len() - 1, boxes));
+        self.characters
+            .push((position..position + 1, vec![117, 1], None));
+        self
+    }
+
+    fn text_box(mut self, text: &str) -> Self {
+        self.box_story.push(Self::encoded(text, 0, &[]));
+        self
+    }
+
+    /// A comment whose reference stands at `position`, by `owner`, with its text.
+    fn comment(mut self, position: usize, initials: &str, owner: &str, text: &str) -> Self {
+        let owner_index = self
+            .owners
+            .iter()
+            .position(|known| known == owner)
+            .unwrap_or_else(|| {
+                self.owners.push(owner.to_owned());
+                self.owners.len() - 1
+            });
+        self.comments.push((
+            position,
+            initials.to_owned(),
+            u16::try_from(owner_index).unwrap(),
+        ));
+        self.comment_story.push(Self::encoded(text, 0, &[]));
+        self.characters
+            .push((position..position + 1, vec![117, 1], None));
+        self
+    }
+
+    fn story_text(story: &[Word6Paragraph]) -> Vec<u8> {
+        story
             .iter()
             .flat_map(|paragraph| paragraph.text.clone())
             .collect()
     }
 
-    fn character_page(&self, total: usize) -> Vec<u8> {
+    fn text(&self) -> Vec<u8> {
+        Self::story_text(&self.paragraphs)
+    }
+
+    fn has_stories(&self) -> bool {
+        !self.comment_story.is_empty() || !self.box_story.is_empty()
+    }
+
+    /// The length, style and modifiers of every paragraph of every story, the final mark after
+    /// them included.
+    fn all_paragraphs(&self) -> Vec<(usize, u16, Vec<u8>)> {
+        let mut all: Vec<(usize, u16, Vec<u8>)> = self
+            .paragraphs
+            .iter()
+            .chain(&self.comment_story)
+            .chain(&self.box_story)
+            .map(|paragraph| {
+                (
+                    paragraph.text.len(),
+                    paragraph.style,
+                    paragraph.grpprl.clone(),
+                )
+            })
+            .collect();
+        if self.has_stories() {
+            all.push((1, 0, Vec::new()));
+        }
+        all
+    }
+
+    fn character_page(&self, total: usize, blob_offsets: &[usize]) -> Vec<u8> {
         let mut runs: Vec<(usize, usize, Vec<u8>)> = Vec::new();
         let mut ranges = self.characters.clone();
-        ranges.sort_by_key(|(range, _)| range.start);
+        ranges.sort_by_key(|(range, _, _)| range.start);
         let mut position = 0;
-        for (range, grpprl) in ranges {
+        for (range, mut grpprl, blob) in ranges {
             if range.start > position {
                 runs.push((position, range.start, Vec::new()));
+            }
+            if let Some(blob) = blob {
+                grpprl.extend_from_slice(&[68, 4]);
+                grpprl.extend_from_slice(&u32::try_from(blob_offsets[blob]).unwrap().to_le_bytes());
             }
             runs.push((range.start, range.end, grpprl));
             position = range.end;
@@ -99,16 +201,17 @@ impl Word6Builder {
 
     fn paragraph_page(&self) -> Vec<u8> {
         let mut page = vec![0_u8; PAGE_SIZE];
-        let count = self.paragraphs.len();
+        let paragraphs = self.all_paragraphs();
+        let count = paragraphs.len();
         let mut free = PAGE_SIZE - 1;
         let mut start = 0;
-        for (index, paragraph) in self.paragraphs.iter().enumerate() {
-            let end = start + paragraph.text.len();
+        for (index, (length, style, grpprl)) in paragraphs.iter().enumerate() {
+            let end = start + length;
             page[index * 4..index * 4 + 4].copy_from_slice(&stream_offset(start).to_le_bytes());
             page[index * 4 + 4..index * 4 + 8].copy_from_slice(&stream_offset(end).to_le_bytes());
             start = end;
-            let mut properties = paragraph.style.to_le_bytes().to_vec();
-            properties.extend_from_slice(&paragraph.grpprl);
+            let mut properties = style.to_le_bytes().to_vec();
+            properties.extend_from_slice(grpprl);
             if properties.len() % 2 == 1 {
                 properties.push(0);
             }
@@ -127,31 +230,44 @@ impl Word6Builder {
         build_compound_file(&[("WordDocument", &word_document)])
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the stream is laid out in the order the offsets need"
+    )]
     fn word_document(&self) -> Vec<u8> {
-        let text = self.text();
+        use super::super::fib::pair;
+        let main = self.text().len();
+        let comments = Self::story_text(&self.comment_story);
+        let boxes = Self::story_text(&self.box_story);
+        let mut text = self.text();
+        text.extend_from_slice(&comments);
+        text.extend_from_slice(&boxes);
+        if self.has_stories() {
+            text.push(b'\r');
+        }
         let total = text.len();
         let mut stream = vec![0_u8; TEXT_START];
         stream.extend_from_slice(&text);
+        let mut blob_offsets = Vec::new();
+        for blob in &self.blobs {
+            if stream.len() % 2 == 1 {
+                stream.push(0);
+            }
+            blob_offsets.push(stream.len());
+            stream.extend_from_slice(blob);
+        }
         stream.resize(stream.len().next_multiple_of(PAGE_SIZE), 0);
         let character_page = stream.len() / PAGE_SIZE;
-        stream.extend(self.character_page(total));
+        stream.extend(self.character_page(total, &blob_offsets));
         let paragraph_page = stream.len() / PAGE_SIZE;
         stream.extend(self.paragraph_page());
 
         let mut pairs: Vec<(usize, usize, Vec<u8>)> = vec![
-            (super::super::fib::pair::STYLES, 0, style_sheet_bytes()),
-            (super::super::fib::pair::FONTS, 0, font_table_bytes()),
-            (
-                super::super::fib::pair::CHARACTER_PAGES,
-                0,
-                bin_table(total, character_page),
-            ),
-            (
-                super::super::fib::pair::PARAGRAPH_PAGES,
-                0,
-                bin_table(total, paragraph_page),
-            ),
-            (super::super::fib::pair::DOCUMENT_PROPERTIES, 0, dop_bytes()),
+            (pair::STYLES, 0, style_sheet_bytes()),
+            (pair::FONTS, 0, font_table_bytes()),
+            (pair::CHARACTER_PAGES, 0, bin_table(total, character_page)),
+            (pair::PARAGRAPH_PAGES, 0, bin_table(total, paragraph_page)),
+            (pair::DOCUMENT_PROPERTIES, 0, dop_bytes()),
         ];
         let section_modifiers: &[u8] = &[164, 0x82, 0x2E, 165, 0x7E, 0x41, 166, 0x6E, 0x04];
         let sepx_offset = stream.len();
@@ -163,27 +279,82 @@ impl Word6Builder {
         stream.extend_from_slice(section_modifiers);
         let mut sections = Vec::new();
         sections.extend_from_slice(&0_u32.to_le_bytes());
-        sections.extend_from_slice(&u32::try_from(total).unwrap().to_le_bytes());
+        sections.extend_from_slice(&u32::try_from(main).unwrap().to_le_bytes());
         sections.extend_from_slice(&0_u16.to_le_bytes());
         sections.extend_from_slice(&u32::try_from(sepx_offset).unwrap().to_le_bytes());
         sections.extend_from_slice(&0_u16.to_le_bytes());
         sections.extend_from_slice(&u32::MAX.to_le_bytes());
-        pairs.push((super::super::fib::pair::SECTIONS, 0, sections));
+        pairs.push((pair::SECTIONS, 0, sections));
+        let cp = |value: usize| u32::try_from(value).unwrap().to_le_bytes();
+        if !self.comments.is_empty() {
+            let mut references = Vec::new();
+            for (position, _, _) in &self.comments {
+                references.extend_from_slice(&cp(*position));
+            }
+            references.extend_from_slice(&cp(main));
+            for (_, initials, owner) in &self.comments {
+                let mut record = vec![0_u8; 20];
+                record[0] = u8::try_from(initials.len()).unwrap();
+                record[1..=initials.len()].copy_from_slice(initials.as_bytes());
+                record[10..12].copy_from_slice(&owner.to_le_bytes());
+                record[16..20].copy_from_slice(&(-1_i32).to_le_bytes());
+                references.extend(record);
+            }
+            pairs.push((pair::COMMENT_REFERENCES, 0, references));
+            let mut texts = Vec::new();
+            let mut start = 0;
+            for paragraph in &self.comment_story {
+                texts.extend_from_slice(&cp(start));
+                start += paragraph.text.len();
+            }
+            texts.extend_from_slice(&cp(start));
+            pairs.push((pair::COMMENT_TEXTS, 0, texts));
+            let mut owners = Vec::new();
+            for owner in &self.owners {
+                owners.push(u8::try_from(owner.len()).unwrap());
+                owners.extend_from_slice(owner.as_bytes());
+            }
+            pairs.push((pair::COMMENT_OWNERS, 0, owners));
+        }
+        if !self.drawings.is_empty() {
+            let mut objects = Vec::new();
+            for (position, _, _) in &self.drawings {
+                objects.extend_from_slice(&cp(*position));
+            }
+            objects.extend_from_slice(&cp(main));
+            for (_, blob, boxes) in &self.drawings {
+                objects.extend_from_slice(&cp(blob_offsets[*blob]));
+                objects.extend_from_slice(&boxes.to_le_bytes());
+            }
+            pairs.push((DRAWN_OBJECTS_PAIR, 0, objects));
+        }
+        if !self.box_story.is_empty() {
+            let mut texts = Vec::new();
+            let mut start = 0;
+            for paragraph in &self.box_story {
+                texts.extend_from_slice(&cp(start));
+                start += paragraph.text.len();
+            }
+            texts.extend_from_slice(&cp(start));
+            // Word closes the plex with a box of the story's last mark, which it does not show.
+            texts.extend_from_slice(&cp(start + 1));
+            pairs.push((TEXT_BOXES_PAIR, 0, texts));
+        }
         if self.complex {
             let mut clx = vec![2_u8];
             let mut table = Vec::new();
             let half = total / 2;
-            for cp in [0, half, total] {
-                table.extend_from_slice(&u32::try_from(cp).unwrap().to_le_bytes());
+            for value in [0, half, total] {
+                table.extend_from_slice(&cp(value));
             }
             for start in [0, half] {
                 table.extend_from_slice(&0_u16.to_le_bytes());
-                table.extend_from_slice(&u32::try_from(TEXT_START + start).unwrap().to_le_bytes());
+                table.extend_from_slice(&cp(TEXT_START + start));
                 table.extend_from_slice(&0_u16.to_le_bytes());
             }
-            clx.extend_from_slice(&u32::try_from(table.len()).unwrap().to_le_bytes());
+            clx.extend_from_slice(&cp(table.len()));
             clx.extend_from_slice(&table);
-            pairs.push((super::super::fib::pair::PIECE_TABLE, 0, clx));
+            pairs.push((pair::PIECE_TABLE, 0, clx));
         }
         for (_, offset, bytes) in &mut pairs {
             *offset = stream.len();
@@ -210,10 +381,12 @@ impl Word6Builder {
         put32(&mut stream, 0x1C, TEXT_START + total);
         let length = stream.len();
         put32(&mut stream, 0x20, length);
-        put32(&mut stream, STORIES_OFFSET, total);
+        put32(&mut stream, STORIES_OFFSET, main);
+        put32(&mut stream, STORIES_OFFSET + 16, comments.len());
+        put32(&mut stream, STORIES_OFFSET + 24, boxes.len());
         for (index, offset, bytes) in &pairs {
-            put32(&mut stream, PAIRS_OFFSET + index * 8, *offset);
-            put32(&mut stream, PAIRS_OFFSET + index * 8 + 4, bytes.len());
+            put32(&mut stream, pair_offset(*index), *offset);
+            put32(&mut stream, pair_offset(*index) + 4, bytes.len());
         }
         put16(&mut stream, 0x18A, u16::try_from(character_page).unwrap());
         put16(&mut stream, 0x18C, u16::try_from(paragraph_page).unwrap());
@@ -222,6 +395,9 @@ impl Word6Builder {
         stream
     }
 }
+
+const DRAWN_OBJECTS_PAIR: usize = 38;
+const TEXT_BOXES_PAIR: usize = 56;
 
 fn stream_offset(position: usize) -> u32 {
     u32::try_from(TEXT_START + position).unwrap()
@@ -353,6 +529,125 @@ fn sample() -> Word6Builder {
         .paragraph("\u{7}", 0, &row_modifiers())
         .paragraph("Fine.\r", 0, &[])
         .character(33..43, &[85, 1, 86, 1])
+}
+
+/// A metafile of no placeable header that fills a 100 by 50 window with red.
+fn wmf() -> Vec<u8> {
+    let records: Vec<Vec<u16>> = vec![
+        vec![0x020B, 0, 0],
+        vec![0x020C, 50, 100],
+        vec![0x02FC, 0, 0x00FF, 0, 0],
+        vec![0x012D, 0],
+        vec![0x041B, 50, 100, 0, 0],
+        vec![0x0000],
+    ];
+    let mut body = Vec::new();
+    let mut largest = 0;
+    for record in &records {
+        let words = u32::try_from(record.len() + 2).unwrap();
+        largest = largest.max(words);
+        body.extend_from_slice(&words.to_le_bytes());
+        for word in record {
+            body.extend_from_slice(&word.to_le_bytes());
+        }
+    }
+    let mut metafile = Vec::new();
+    for word in [1_u16, 9, 0x0300] {
+        metafile.extend_from_slice(&word.to_le_bytes());
+    }
+    metafile.extend_from_slice(&u32::try_from(9 + body.len() / 2).unwrap().to_le_bytes());
+    metafile.extend_from_slice(&1_u16.to_le_bytes());
+    metafile.extend_from_slice(&largest.to_le_bytes());
+    metafile.extend_from_slice(&0_u16.to_le_bytes());
+    metafile.extend(body);
+    metafile
+}
+
+/// A Word 6 `PIC` of `mode` holding `data`, set at 1,500 by 750 twips.
+fn pic(mode: i16, data: &[u8]) -> Vec<u8> {
+    const HEADER: usize = 0x3A;
+    let mut pic = vec![0_u8; HEADER];
+    pic[..4].copy_from_slice(&u32::try_from(HEADER + data.len()).unwrap().to_le_bytes());
+    pic[4..6].copy_from_slice(&u16::try_from(HEADER).unwrap().to_le_bytes());
+    pic[6..8].copy_from_slice(&mode.to_le_bytes());
+    pic[8..10].copy_from_slice(&2_646_u16.to_le_bytes());
+    pic[10..12].copy_from_slice(&1_323_u16.to_le_bytes());
+    for (at, value) in [(28, 1_500_u16), (30, 750), (32, 1_000), (34, 1_000)] {
+        pic[at..at + 2].copy_from_slice(&value.to_le_bytes());
+    }
+    pic.extend_from_slice(data);
+    pic
+}
+
+/// A heading, a paragraph with a picture and a comment, and one with four drawing objects: a
+/// group of a rectangle, an ellipse and a line, a text box, an arc and a triangle.
+fn rich_sample() -> Word6Builder {
+    use super::drawings::tests::{
+        BLUE, GREEN, RED, YELLOW, arc_body, drawing_object, group, line_body, polyline_body,
+        primitive, shape_body,
+    };
+    let heading = "Disegni e note\r";
+    let pictured = "Foto del mezzo \u{1} da rivedere\u{5}.\r";
+    let drawn = "Schema:\u{8}\u{8}\u{8}\u{8}\r";
+    let picture_at = heading.len() + 15;
+    let comment_at = heading.len() + pictured.find('\u{5}').unwrap();
+    let drawings_at = heading.len() + pictured.len() + 7;
+    let shapes = drawing_object(
+        2,
+        2,
+        &[group(
+            [0, 300, 0, 0],
+            &[
+                primitive(3, [0, 0, 1440, 720], &shape_body(RED, BLUE, 0, false)),
+                primitive(4, [1800, 0, 1440, 720], &shape_body(RED, YELLOW, 0, false)),
+                primitive(1, [0, 900, 0, 0], &line_body((0, 0), (3240, 0), RED)),
+            ],
+        )],
+    );
+    let text_box = drawing_object(
+        2,
+        2,
+        &[primitive(
+            2,
+            [3600, 300, 2880, 1080],
+            &shape_body(BLUE, YELLOW, 0, true),
+        )],
+    );
+    let arc = drawing_object(
+        2,
+        2,
+        &[primitive(
+            5,
+            [0, 1500, 1440, 1000],
+            &arc_body(GREEN, false, true),
+        )],
+    );
+    let triangle = drawing_object(
+        2,
+        2,
+        &[primitive(
+            6,
+            [2000, 1500, 1440, 1000],
+            &polyline_body(&[(0, 1000), (720, 0), (1440, 1000)], true, GREEN),
+        )],
+    );
+    Word6Builder::new()
+        .paragraph(heading, 1, &[])
+        .paragraph(pictured, 0, &[])
+        .paragraph(drawn, 0, &[22, 0x60, 0x09])
+        .paragraph("Fine.\r", 0, &[])
+        .picture(picture_at, pic(8, &wmf()))
+        .comment(
+            comment_at,
+            "MR",
+            "Mario Rossi",
+            "\u{5}Controllare la targa.\r",
+        )
+        .drawing(drawings_at, shapes, 0)
+        .drawing(drawings_at + 1, text_box, 1)
+        .drawing(drawings_at + 2, arc, 0)
+        .drawing(drawings_at + 3, triangle, 0)
+        .text_box("Casella di testo\r")
 }
 
 fn sample_tree() -> crate::document::DocumentTree {
@@ -589,5 +884,132 @@ fn sections_read_the_page_through_word97_codes() {
 #[ignore = "writes a file for a manual comparison"]
 fn write_word6_sample() {
     let path = std::env::var("WORD6_SAMPLE").unwrap_or_else(|_| "word6-sample.doc".to_owned());
-    std::fs::write(path, sample().build()).unwrap();
+    std::fs::write(&path, sample().build()).unwrap();
+    std::fs::write(path.replace(".doc", "-disegni.doc"), rich_sample().build()).unwrap();
+}
+
+#[test]
+fn a_comment_is_read_with_its_author_and_initials() {
+    let tree = read_document_tree(&rich_sample().build(), &Limits::default()).unwrap();
+    assert_eq!(tree.report.comments, 1);
+    assert_eq!(tree.comments.len(), 1);
+    let comment = &tree.comments[0];
+    assert_eq!(comment.author, "Mario Rossi");
+    assert_eq!(comment.initials.as_deref(), Some("MR"));
+    let Block::Paragraph { content, .. } = &comment.blocks[0] else {
+        panic!("{:?}", comment.blocks);
+    };
+    assert_eq!(plain_text(content), "Controllare la targa.");
+    let Block::Paragraph { content, .. } = &tree.blocks[1] else {
+        panic!("{:?}", tree.blocks[1]);
+    };
+    assert!(
+        content
+            .iter()
+            .any(|inline| matches!(inline, Inline::CommentAnchor { comment: 0 }))
+    );
+}
+
+#[test]
+fn a_metafile_picture_is_drawn_as_svg_at_its_size() {
+    let tree = read_document_tree(&rich_sample().build(), &Limits::default()).unwrap();
+    let Block::Paragraph { content, .. } = &tree.blocks[1] else {
+        panic!("{:?}", tree.blocks[1]);
+    };
+    let Some(Inline::Image {
+        media,
+        width,
+        height,
+        anchor: None,
+        ..
+    }) = content
+        .iter()
+        .find(|inline| matches!(inline, Inline::Image { .. }))
+    else {
+        panic!("{content:?}");
+    };
+    assert_eq!((*width, *height), (Some(100), Some(50)));
+    assert_eq!(tree.media[*media].content_type, "image/svg+xml");
+}
+
+#[test]
+fn pictures_of_each_mode_are_kept_as_their_files() {
+    let stream = [vec![0_u8; 8], pic(99, &bitmap())].concat();
+    let (bytes, width, height) = picture(&stream, 8).unwrap();
+    let bytes = bytes.unwrap();
+    assert!(bytes.starts_with(b"BM"));
+    assert_eq!(u32_at(&bytes, 10), Some(14 + 40 + 8));
+    assert_eq!((width, height), (1_500, 750));
+    let stream = [vec![0_u8; 8], pic(98, b"II*\0tiff")].concat();
+    assert_eq!(
+        picture(&stream, 8).unwrap().0.as_deref(),
+        Some(&b"II*\0tiff"[..])
+    );
+    let stream = [vec![0_u8; 8], pic(94, b"C:\\foto.bmp")].concat();
+    assert_eq!(picture(&stream, 8).unwrap().0, None);
+    assert_eq!(picture(&stream, 900), None);
+    assert_eq!(bitmap_file(b"BMgia"), Some(b"BMgia".to_vec()));
+    assert_eq!(bitmap_file(&[0; 8]), None);
+    let mut core = vec![0_u8; 12];
+    core[..4].copy_from_slice(&12_u32.to_le_bytes());
+    core[10..12].copy_from_slice(&24_u16.to_le_bytes());
+    assert_eq!(u32_at(&bitmap_file(&core).unwrap(), 10), Some(14 + 12));
+}
+
+/// A one-bit bitmap of one pixel with its two colours.
+fn bitmap() -> Vec<u8> {
+    let mut dib = vec![0_u8; 40];
+    dib[..4].copy_from_slice(&40_u32.to_le_bytes());
+    dib[4..8].copy_from_slice(&1_i32.to_le_bytes());
+    dib[8..12].copy_from_slice(&1_i32.to_le_bytes());
+    dib[12..14].copy_from_slice(&1_u16.to_le_bytes());
+    dib[14..16].copy_from_slice(&1_u16.to_le_bytes());
+    dib.extend_from_slice(&[0, 0, 0, 0, 255, 255, 255, 0]);
+    dib.extend_from_slice(&[0x80, 0, 0, 0]);
+    dib
+}
+
+#[test]
+fn drawing_objects_are_pictures_and_text_boxes_where_they_stand() {
+    let tree = read_document_tree(&rich_sample().build(), &Limits::default()).unwrap();
+    let Block::Paragraph { content, .. } = &tree.blocks[2] else {
+        panic!("{:?}", tree.blocks[2]);
+    };
+    let anchored: Vec<_> = content
+        .iter()
+        .filter_map(|inline| match inline {
+            Inline::Image {
+                media,
+                anchor: Some(anchor),
+                ..
+            } => Some((*media, anchor)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        anchored.len(),
+        3,
+        "the group, the arc and the triangle: {content:?}"
+    );
+    let (media, anchor) = &anchored[0];
+    assert_eq!(tree.media[*media].content_type, "image/svg+xml");
+    assert_eq!(anchor.horizontal.offset_emu, 0);
+    assert_eq!(anchor.vertical.offset_emu, 300 * 635);
+    assert_eq!(anchor.width_emu, 3_240 * 635);
+    assert_eq!(anchor.horizontal.base, crate::document::AnchorBase::Column);
+    assert_eq!(anchor.vertical.base, crate::document::AnchorBase::Paragraph);
+    let framed: Vec<&Block> = tree
+        .blocks
+        .iter()
+        .filter(|block| matches!(block, Block::Paragraph { look, .. } if look.frame.is_some()))
+        .collect();
+    assert_eq!(framed.len(), 1);
+    let Block::Paragraph { content, look, .. } = framed[0] else {
+        unreachable!();
+    };
+    assert_eq!(plain_text(content), "Casella di testo");
+    let frame = look.frame.as_ref().unwrap();
+    assert_eq!(frame.fill.as_deref(), Some("FFFF00"));
+    assert_eq!(frame.anchor.horizontal.offset_emu, 3_600 * 635);
+    assert_eq!(tree.report.text_boxes, 1);
 }
