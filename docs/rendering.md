@@ -51,12 +51,15 @@ The rules follow Word, the program most docx files come from, rather than Typst'
   first-page header is chosen against the page its marker lands on.
 - **Floating objects stand where their anchor puts them**, the nearest Typst can: an object in
   front of or behind the text is placed at its point of the page (measured from the page, the
-  margins, the column or the paragraph); one with text above and below on a line of its own. A
-  picture the text goes around is set at its side and the paragraph is broken line by line, each
-  line as wide as the room the picture leaves at its height, then the rest of the words at the full
-  width below it, justified as the paragraph is (`rely-flow` in the generated source). A square wrap
-  leaves the picture's rectangle; a tight or through wrap keeps its polygon as an outline of sixteen
-  bands (`WrapOutline`), which the lines follow. A text box draws its own fill and outline at its
+  margins, the column or the paragraph); one with text above and below on a line of its own. The
+  pictures the text goes around are set at their sides, a second one on the same side beside the
+  first, and the paragraph is broken line by line, each line as wide as the room all of them leave
+  at its height, then the rest of the words at the full width below them, justified as the
+  paragraph is (`rely-flow` in the generated source). A line with no room for its next word stays
+  empty, as Word leaves it. A tab moves the text after it to the next stop from the margin, the
+  paragraph's own or a default one, measured on the line it lands on. A square wrap leaves the
+  picture's rectangle; a tight or through wrap keeps its polygon as an outline of sixteen bands
+  (`WrapOutline`), which the lines follow. A text box draws its own fill and outline at its
   anchored size, in the outline of the preset its shape names.
 - **Drawn shapes are pictures.** A docx `wps` shape or `wpg` group, an odt rectangle, ellipse,
   line, polygon, path or custom shape, and a doc's OfficeArt shape become an SVG picture of their
@@ -236,22 +239,23 @@ SOFFICE=soffice node scripts/corpus.mjs                 # the corpus comparison
 
 ## Known gaps
 
-- Text flows around one picture of a paragraph. A paragraph with a tab, with more than one
-  picture the text goes around, or with one wider than most of the column has the picture set
-  beside the whole paragraph.
+- A tab beside a picture goes to a left stop: a centred, right or decimal stop is taken as a left
+  one there. A list item, and a paragraph with an object nearly as wide as the column, keep the
+  picture beside the whole paragraph.
 - A drawing anchored in a sheet is placed at its anchor cell and offset at its own size; it does
   not stretch with the cells of a two-cell anchor.
 - A table cell's fill is a solid colour; gradients and pictures fill shapes and backgrounds only.
-- A Word 6 or Word 95 document is read for its text, styles, formatting, tables, sections and
-  footnotes; its comments, drawings and pictures, stored another way, are left out.
+- A Word 6 or Word 95 document's drawing objects are drawn in front of the text, and their
+  shadows and line dashes are left out; its pictures linked from outside the file are missing.
+  The reader was checked against LibreOffice on synthetic files only.
 - An OLE object is drawn as its replacement picture, as Word draws it; nothing runs the program
   that made it. An odt's embedded ODF document other than a chart or a formula is its picture too.
 - EMF+ drawings are drawn from the plain EMF records beside them, so what only EMF+ holds
   (antialiased gradients, GDI+ text effects) is lost.
-- A ppt's shape takes the adjust values it sets for the types whose handles map onto a
-  `DrawingML` preset (rounded rectangle, plaque, triangle, moon, parallelogram, hexagon, octagon,
-  plus, cube, can, donut, bevel, the wedge callouts, the four arrows, the home plate and the
-  chevron); other types are drawn with the preset's defaults. LibreOffice writes the shapes it
+- A ppt's or a doc's shape takes the adjust values it sets for about sixty shape types, each
+  mapping checked against the preset's defaults; the bent, curved, circular and U-turn arrows,
+  the left-up and left-right-up arrows, the quad arrow callout, the elliptical ribbons and the
+  action buttons are drawn with the preset's defaults. LibreOffice writes the shapes it
   exports to ppt from `DrawingML` as free forms with guide constants cut to sixteen bits, so those
   outlines come out wrong; LibreOffice cannot draw them back either.
 - A preview draws the slides, not their speaker notes, transitions or animations, which the slide

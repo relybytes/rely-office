@@ -45,11 +45,13 @@ below 1.0, a minor version may change the API.
   carried through an xlsx; `write_ods`, npm `saveOds` and the CLI's `ods` command.
 - Surface charts and the Office 2016 kinds of `cx:chartSpace`: waterfall, funnel, treemap,
   sunburst, histogram, Pareto and box and whisker.
-- A ppt's shapes take the adjust values they set, for the shape types whose handles map onto a
-  DrawingML preset.
+- A ppt's and a doc's shapes take the adjust values they set, for about sixty shape types whose
+  handles map onto their DrawingML preset; the binary trapezoid is drawn the right way up.
 - Text flows around a picture along its outline (`Wrap::Contour`, `WrapOutline`), a tight wrap
-  written back as `wp:wrapPolygon`.
-- Word 6 and Word 95 documents read into the document tree.
+  written back as `wp:wrapPolygon`; a paragraph flows around several pictures at once, with its
+  tabs.
+- Word 6 and Word 95 documents read into the document tree, with their comments, endnotes,
+  pictures and drawing objects.
 - Embedded objects in `DocumentTree::objects` (`EmbeddedObject`): the package or OLE compound file
   of a docx, the `draw:object-ole` of an odt and the object pool storage of a doc, each with the
   picture that shows it, written back by `write_docx` under `word/embeddings`; npm

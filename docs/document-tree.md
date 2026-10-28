@@ -270,8 +270,14 @@ A Word 6 or Word 95 file (`nFib` below 192) is read into the same tree: its shor
 Information Block, its 8-bit text, its formatting pages with two-byte page numbers and seven-byte
 paragraph entries, its style sheet of 8-bit names and its one-byte property modifiers are each
 rewritten as Word 97 stores them, so the same converter builds the tree. Text, styles, headings,
-character and paragraph formatting, tables, sections and footnotes are read; comments, drawings
-and pictures, which Word 6 stores another way, are left out.
+character and paragraph formatting, tables, sections, footnotes and endnotes are read, and the
+comments, from their 20-byte references and the 8-bit table of authors. A picture is the `PIC` of
+the `WordDocument` stream: a metafile becomes SVG, a bitmap a BMP, a TIFF stays as it is. The
+drawing layer comes from the drawing objects (`DO`) the text anchors: lines, rectangles, rounded
+rectangles, ellipses, arcs, polylines, groups, text boxes and callouts. An object's shapes become
+one `image/svg+xml` picture over their bounding box, anchored where the object stands; each text
+box becomes a frame with its text, from the text box story. The pairs of the File Information
+Block past the 38th stand after five words Word 97 moved elsewhere.
 
 ## Trying it
 

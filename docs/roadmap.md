@@ -98,10 +98,9 @@ binary formats.
 
 ## Next
 
-- Text flowing around more than one picture of a paragraph, and around a picture in a paragraph
-  with tabs.
-- The comments, drawings and pictures of a Word 6 or 95 document.
-- The adjust values of the ppt shape types whose handles map onto no `DrawingML` preset.
+- The adjust values of the bent, curved, circular and U-turn arrows, the quad arrow callout, the
+  elliptical ribbons and the action buttons of ppt and doc.
+- A real Word 6 or 95 sample in the tests, beside the synthetic ones.
 - A larger corpus with documents made by Word and pptx and odp pages, and the corpus figure as a
   CI gate once it is stable.
 - Publishing to the public npm registry (issue #1).

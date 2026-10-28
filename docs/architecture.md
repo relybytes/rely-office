@@ -83,7 +83,8 @@ spreadsheet features past values, formulas, number formats and column widths.
   Information Block, 8-bit text, formatting pages, style sheet, font table and sections rewritten
   as Word 97 stores them, and its one-byte property modifiers turned into Word 97's two-byte ones,
   so one converter reads both. A modifier this reader does not know ends its list, since its
-  length is unknown.
+  length is unknown. The comments are rewritten the same way; the pictures and the drawing layer,
+  which have no Word 97 shape, are read on their own (`doc/word6/drawings`).
 - **PowerPoint 97-2003 through its records.** The `PowerPoint Document` stream is walked linearly:
   stepping into a container is moving past its header, so no recursion is needed. Text comes from
   `TextCharsAtom` (UTF-16LE) and `TextBytesAtom` (the low bytes of UTF-16); masters and handouts
