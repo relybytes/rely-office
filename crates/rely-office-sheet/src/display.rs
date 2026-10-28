@@ -22,7 +22,10 @@ pub(crate) fn display(
 ) -> String {
     if let Some(code) = code {
         match value {
-            Value::Number(number) => return format_number(*number, code, locale.into()).text,
+            Value::Number(number) => {
+                let number = if *number == 0.0 { 0.0 } else { *number };
+                return format_number(number, code, locale.into()).text;
+            }
             Value::Text(text) => return format_text(text, code),
             _ => {}
         }
@@ -30,7 +33,7 @@ pub(crate) fn display(
     let Value::Number(number) = value else {
         return locale.display(value);
     };
-    let number = *number;
+    let number = if *number == 0.0 { 0.0 } else { *number };
     match format {
         NumberFormat::General => locale.format_number(number),
         NumberFormat::Percent => format!("{}%", locale.format_number(round(number * 100.0, 10))),
@@ -66,6 +69,22 @@ fn round(value: f64, decimals: i32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shows_negative_zero_as_zero() {
+        let italian = Locale::Italian;
+        let zero = Value::Number(-0.0);
+        assert_eq!(display(&zero, NumberFormat::General, None, italian), "0");
+        assert_eq!(
+            display(&zero, NumberFormat::Decimals(2), None, italian),
+            "0,00"
+        );
+        assert_eq!(
+            display(&zero, NumberFormat::General, Some("0.0"), italian),
+            "0,0"
+        );
+        assert_eq!(italian.format_number(-0.0), "0");
+    }
 
     #[test]
     fn shows_numbers_with_their_format() {

@@ -236,6 +236,8 @@ impl Locale {
         if !value.is_finite() {
             return ErrorKind::Num.code().to_owned();
         }
+        // A sum of nothing is -0 in IEEE arithmetic; a spreadsheet shows 0.
+        let value = if value == 0.0 { 0.0 } else { value };
         let (decimal, _) = self.separators();
         let magnitude = value.abs();
         let text = if magnitude != 0.0 && !(1e-9..1e15).contains(&magnitude) {
