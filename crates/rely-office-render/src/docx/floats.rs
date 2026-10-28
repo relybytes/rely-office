@@ -6,9 +6,9 @@
 
 //! Floating pictures and text boxes. Typst sets no text around an object, so each wrapping is
 //! drawn the nearest way it can: an object in front of or behind the text is placed where its
-//! anchor puts it on the page, one the text goes around is set beside its paragraph on the
-//! side it stands, and one the text goes above and below is set before its paragraph, moved
-//! across as its anchor says.
+//! anchor puts it on the page, the objects the text goes around are set at their sides with the
+//! paragraph broken line by line beside them, and one the text goes above and below is set
+//! before its paragraph, moved across as its anchor says.
 
 use std::borrow::Cow;
 use std::fmt::Write;
@@ -62,38 +62,66 @@ fn emu(value: i64) -> f64 {
     value / EMU_PER_POINT
 }
 
-/// Sets a paragraph around an object at one side: each line as wide as the room the object
-/// leaves at its height, `reaches` saying how much it takes line by line, then the rest of the
-/// words at the full width, the block at least as tall as the object.
-pub(super) const FLOW_FUNCTION: &str = r"#let rely-flow(object, on-right, drop, height, reaches, leading, justify, indent, words, style) = layout(size => {
+/// Sets a paragraph around the objects at its sides: each line as wide as the room `lefts` and
+/// `rights` leave it, a line with no room for a word left empty, a tab moved to the next stop
+/// from the margin, then the rest of the words at the full width, the block at least as tall as
+/// its tallest object. Each object is `(content, on-right, dx, dy)`.
+pub(super) const FLOW_FUNCTION: &str = r"#let rely-flow(objects, tall, lefts, rights, row, leading, justify, indent, origin, step, stops, tabbed, words, style) = layout(size => {
   let full = size.width
+  let set-line(tokens, start) = {
+    let pieces = ()
+    let after-word = false
+    for (token, tab) in tokens {
+      if tab {
+        let x = start + if pieces.len() == 0 { 0pt } else { measure(style(pieces.join())).width }
+        let found = stops.find(stop => stop > x + 0.5pt)
+        let position = if found == none { (calc.floor((x + 0.5pt) / step) + 1) * step } else { found }
+        pieces.push(h(position - x))
+      } else {
+        if after-word { pieces.push([ ]) }
+        pieces.push(token)
+      }
+      after-word = not tab
+    }
+    if pieces.len() == 0 { [] } else { pieces.join() }
+  }
   let lines = ()
   let index = 0
   let line = 0
-  while index < words.len() and line < reaches.len() {
-    let first = if line == 0 { indent } else { 0pt }
-    let room = calc.max(full - reaches.at(line) - first, 1pt)
+  while index < words.len() {
+    let first = if index == 0 { indent } else { 0pt }
+    if line >= lefts.len() and not tabbed {
+      lines.push(pad(left: first, block(width: full - first, style(words.slice(index).map(word => word.at(0)).join([ ])))))
+      break
+    }
+    let reach-left = if line < lefts.len() { lefts.at(line) } else { 0pt }
+    let reach-right = if line < rights.len() { rights.at(line) } else { 0pt }
+    let room = full - reach-left - reach-right - first
+    let start = origin + reach-left + first
+    let fits(count) = measure(style(set-line(words.slice(index, index + count), start))).width <= room
+    if reach-left + reach-right > 0pt and (room < 1pt or not fits(1)) {
+      lines.push(block(height: row))
+      line += 1
+      continue
+    }
     let count = 1
-    while index + count < words.len() and measure(style(words.slice(index, index + count + 1).join([ ]))).width <= room {
+    while index + count < words.len() and fits(count + 1) {
       count += 1
     }
-    let body = words.slice(index, index + count).join([ ])
+    let body = set-line(words.slice(index, index + count), start)
     if justify and index + count < words.len() { body = body + linebreak(justify: true) }
-    let shift = if on-right { 0pt } else { reaches.at(line) }
-    lines.push(pad(left: shift + first, block(width: room, style(body))))
+    lines.push(pad(left: reach-left + first, block(width: calc.max(room, 1pt), style(body))))
     index += count
     line += 1
-  }
-  if index < words.len() {
-    let first = if line == 0 { indent } else { 0pt }
-    lines.push(pad(left: first, block(width: full - first, style(words.slice(index).join([ ])))))
   }
   let body = stack(spacing: leading, ..lines)
   let used = measure(block(width: full, body)).height
   block(width: full, {
-    place(top + (if on-right { right } else { left }), dy: drop, object)
+    for (object, on-right, dx, dy) in objects {
+      place(top + (if on-right { right } else { left }), dx: if on-right { -dx } else { dx }, dy: dy, object)
+    }
     body
-    if used < drop + height { v(drop + height - used) }
+    if used < tall { v(tall - used) }
   })
 })
 ";
@@ -107,13 +135,27 @@ fn usize_of(value: f64) -> usize {
     value.clamp(0.0, 1_000.0) as usize
 }
 
+/// An object the text goes around, measured for the lines beside it.
+struct Beside {
+    expression: String,
+    right: bool,
+    top: f64,
+    height: f64,
+    /// The room it takes on its side at each line, its gap included.
+    reaches: Vec<f64>,
+    /// How far from its side it stands, past the objects beside it at the same height.
+    offset: f64,
+    width: f64,
+}
+
 impl Writer<'_> {
-    /// A paragraph that flows around the one object it anchors beside it, line by line along
-    /// the object's outline or its rectangle, then on at the full width below it; `None` for
-    /// one that sets no such object, or whose text holds a tab.
+    /// A paragraph that flows around the objects it anchors beside it, line by line along each
+    /// object's outline or its rectangle, then on at the full width below them; the objects it
+    /// sets are taken out of `floats`. `None` for one that sets no such object, a list item, or
+    /// one with an object too wide for any text beside it.
     #[expect(
         clippy::too_many_lines,
-        reason = "the object's side, gap and outline give the room of each line"
+        reason = "the objects, the room of each line, the stops and the words go into one call"
     )]
     pub(super) fn flowed(
         &mut self,
@@ -122,21 +164,126 @@ impl Writer<'_> {
         look: &ParagraphLook,
         floats: &mut Vec<Float>,
     ) -> Option<Placed> {
-        let [float] = floats.as_slice() else {
-            return None;
-        };
-        let anchor = float.anchor;
-        let outline = match anchor.wrap {
-            Wrap::Around => None,
-            Wrap::Contour(outline) => Some(outline),
-            _ => return None,
-        };
-        if emu(anchor.width_emu) > self.text_width * 0.6 || look.list_label.is_some() {
+        let wraps = |float: &Float| matches!(float.anchor.wrap, Wrap::Around | Wrap::Contour(_));
+        if look.list_label.is_some()
+            || !floats.iter().any(wraps)
+            || floats
+                .iter()
+                .filter(|float| wraps(float))
+                .any(|float| emu(float.anchor.width_emu) > self.text_width * 0.9)
+        {
             return None;
         }
         let words = self.words(content, &look.font)?;
         let parts = self.paragraph_parts(content, look, None, 0.0);
-        let width = emu(anchor.width_emu).min(self.text_width * 0.8).max(1.0);
+        let line_height = parts.line_height.max(1.0);
+        let (beside, kept): (Vec<Float>, Vec<Float>) = std::mem::take(floats)
+            .into_iter()
+            .partition(|float| wraps(float));
+        *floats = kept;
+        let mut objects: Vec<Beside> = beside
+            .into_iter()
+            .map(|float| self.beside_object(float, line_height))
+            .collect();
+        for index in 0..objects.len() {
+            let offset = objects[..index]
+                .iter()
+                .filter(|earlier| {
+                    earlier.right == objects[index].right
+                        && earlier.top < objects[index].top + objects[index].height
+                        && objects[index].top < earlier.top + earlier.height
+                })
+                .map(|earlier| earlier.offset + earlier.width + DEFAULT_GAP)
+                .fold(0.0, f64::max);
+            objects[index].offset = offset;
+        }
+        let rows = objects
+            .iter()
+            .map(|object| object.reaches.len())
+            .max()
+            .unwrap_or(0);
+        let side = |right: bool| {
+            let mut list = String::new();
+            for row in 0..rows {
+                let reach = objects
+                    .iter()
+                    .filter(|object| object.right == right)
+                    .filter_map(|object| {
+                        let reach = *object.reaches.get(row)?;
+                        (reach > 0.0).then_some(object.offset + reach)
+                    })
+                    .fold(0.0, f64::max);
+                let _ = write!(list, "{}, ", points(reach.min(self.text_width)));
+            }
+            list
+        };
+        let (lefts, rights) = (side(false), side(true));
+        let tall = objects
+            .iter()
+            .map(|object| object.top + object.height)
+            .fold(0.0, f64::max);
+        let mut placed = String::new();
+        for object in &objects {
+            let _ = write!(
+                placed,
+                "({}, {}, {}, {}), ",
+                object.expression,
+                object.right,
+                points(object.offset),
+                points(object.top)
+            );
+        }
+        let tabbed = words.iter().any(|(_, tab)| *tab);
+        let mut list = String::new();
+        for (word, tab) in &words {
+            let _ = write!(list, "([{word}], {tab}), ");
+        }
+        let left = parts.left.max(0.0);
+        let mut stops = String::new();
+        for stop in super::tab_stops(look, parts.left, parts.first_line) {
+            let _ = write!(
+                stops,
+                "{}, ",
+                points(f64::from(stop.position_twips) / super::TWIPS_PER_POINT)
+            );
+        }
+        let justify = align == Some(Alignment::Justify);
+        let mut expression = format!(
+            "rely-flow(({placed}), {}, ({lefts}), ({rights}), {}, {}, {justify}, {}, {}, {}, ({stops}), {tabbed}, ({list}), it => text({}, par(leading: {}, justify: {justify}, it)))",
+            points(tall),
+            points((line_height - parts.leading).max(1.0)),
+            points(parts.leading),
+            points(parts.first_line.max(0.0)),
+            points(left),
+            points(self.default_tab),
+            parts.text_arguments,
+            points(parts.leading),
+        );
+        if parts.left > 0.0 || parts.right > 0.0 {
+            expression = format!(
+                "pad(left: {}, right: {}, {expression})",
+                points(left),
+                points(parts.right.max(0.0))
+            );
+        }
+        Some(Placed {
+            expression,
+            before: parts.before,
+            after: parts.after,
+            trailing: parts.leading,
+            page_break: parts.page_break,
+        })
+    }
+
+    /// An object the text goes around: its side, its drop from the paragraph's top and the room
+    /// it takes at each line, along its outline when it has one.
+    fn beside_object(&self, float: Float, line_height: f64) -> Beside {
+        let anchor = float.anchor;
+        let outline = match anchor.wrap {
+            Wrap::Contour(outline) => Some(outline),
+            _ => None,
+        };
+        let width = emu(anchor.width_emu).min(self.text_width).max(1.0);
         let height = emu(anchor.height_emu).max(1.0);
         let start = match anchor.horizontal.base {
             AnchorBase::Page => emu(anchor.horizontal.offset_emu) - self.page.left,
@@ -180,10 +327,10 @@ impl Writer<'_> {
                 })
                 .fold(0.0, f64::max)
         };
-        let mut reaches = String::new();
+        let mut reaches = Vec::new();
         let mut y = 0.0;
         while y < top + height + below {
-            let (from, to) = (y - top + above.min(top), y - top + parts.line_height);
+            let (from, to) = (y - top + above.min(top), y - top + line_height);
             let reach = if to < -above || from > height + below {
                 0.0
             } else {
@@ -194,39 +341,18 @@ impl Writer<'_> {
                     0.0
                 }
             };
-            let _ = write!(reaches, "{}, ", points(reach.min(self.text_width)));
-            y += parts.line_height;
+            reaches.push(reach);
+            y += line_height;
         }
-        let mut list = String::new();
-        for word in &words {
-            let _ = write!(list, "[{word}], ");
+        Beside {
+            expression: float.expression,
+            right,
+            top,
+            height,
+            reaches,
+            offset: 0.0,
+            width,
         }
-        let object = std::mem::take(floats).remove(0).expression;
-        let mut expression = format!(
-            "rely-flow({object}, {right}, {}, {}, ({reaches}), {}, {}, {}, ({list}), it => text({}, par(leading: {}, justify: {}, it)))",
-            points(top),
-            points(height),
-            points(parts.leading),
-            align == Some(Alignment::Justify),
-            points(parts.first_line.max(0.0)),
-            parts.text_arguments,
-            points(parts.leading),
-            align == Some(Alignment::Justify),
-        );
-        if parts.left > 0.0 || parts.right > 0.0 {
-            expression = format!(
-                "pad(left: {}, right: {}, {expression})",
-                points(parts.left.max(0.0)),
-                points(parts.right.max(0.0))
-            );
-        }
-        Some(Placed {
-            expression,
-            before: parts.before,
-            after: parts.after,
-            trailing: parts.leading,
-            page_break: parts.page_break,
-        })
     }
 
     /// The content of a paragraph without its floating images, and those images written out.

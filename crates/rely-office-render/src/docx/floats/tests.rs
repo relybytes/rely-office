@@ -494,31 +494,33 @@ fn flows_a_paragraph_around_its_object_line_by_line() {
         position(AnchorBase::Column, 0, Some(AnchorAlign::Start)),
         position(AnchorBase::Paragraph, 0, None),
     );
+    let mut floats = vec![float(left)];
     let flowed = writer
-        .flowed(
-            &content,
-            Some(Alignment::Justify),
-            &look,
-            &mut vec![float(left)],
-        )
+        .flowed(&content, Some(Alignment::Justify), &look, &mut floats)
         .expect("a paragraph beside its object");
+    assert!(floats.is_empty(), "the object is set by the flow");
     assert!(
         flowed
             .expression
-            .starts_with("rely-flow(O, false, 0pt, 50pt, (109pt, "),
+            .starts_with("rely-flow(((O, false, 0pt, 0pt), ), 50pt, (109pt, "),
         "{}",
         flowed.expression
     );
     assert!(
-        flowed.expression.contains("[#\"Una\"], "),
+        flowed.expression.contains("([#\"Una\"], false), "),
         "{}",
         flowed.expression
     );
     assert!(
         flowed
             .expression
-            .contains(r##"[#"gira"#text(weight: "bold", "attorno")]"##),
+            .contains(r##"([#"gira"#text(weight: "bold", "attorno")], false)"##),
         "runs with no space between stay one word: {}",
+        flowed.expression
+    );
+    assert!(
+        flowed.expression.contains(", false, ((["),
+        "no tab: {}",
         flowed.expression
     );
     assert!(flowed.expression.contains("justify: true, it)))"));
@@ -538,26 +540,20 @@ fn flows_a_paragraph_around_its_object_line_by_line() {
         .flowed(&content, None, &look, &mut vec![float(contour)])
         .unwrap();
     assert!(
-        flowed
-            .expression
-            .starts_with("rely-flow(O, true, 0pt, 50pt, (104pt, 0pt, "),
-        "the object reaches only its first band: {}",
+        flowed.expression.starts_with(
+            "rely-flow(((O, true, 0pt, 0pt), ), 50pt, (0pt, 0pt, 0pt, 0pt, ), (104pt, 0pt, "
+        ),
+        "the object reaches only its first band, on the right: {}",
         flowed.expression
     );
     let mut wide = left;
-    wide.width_emu = 300 * 12_700;
+    wide.width_emu = 380 * 12_700;
     assert!(
         writer
             .flowed(&content, None, &look, &mut vec![float(wide)])
-            .is_none()
+            .is_none(),
+        "no text fits beside an object nearly as wide as the column"
     );
-    assert!(
-        writer
-            .flowed(&[text("con\ttab")], None, &look, &mut vec![float(left)])
-            .is_none()
-    );
-    let mut two = vec![float(left), float(left)];
-    assert!(writer.flowed(&content, None, &look, &mut two).is_none());
     let mut behind = left;
     behind.wrap = Wrap::Behind;
     assert!(
@@ -565,5 +561,102 @@ fn flows_a_paragraph_around_its_object_line_by_line() {
             .flowed(&content, None, &look, &mut vec![float(behind)])
             .is_none()
     );
+    let listed = ParagraphLook {
+        list_label: Some(rely_office_core::ListLabel {
+            text: "1.".to_owned(),
+            suffix: rely_office_core::LabelSuffix::Tab,
+            font: RunLook::default(),
+        }),
+        ..ParagraphLook::default()
+    };
+    assert!(
+        writer
+            .flowed(&content, None, &listed, &mut vec![float(left)])
+            .is_none()
+    );
     assert!(FLOW_FUNCTION.starts_with("#let rely-flow("));
+}
+
+#[test]
+fn flows_a_paragraph_between_several_objects_and_leaves_the_others() {
+    let mut writer = writer(&[]);
+    let look = ParagraphLook::default();
+    let left = anchor(
+        Wrap::Around,
+        position(AnchorBase::Column, 0, Some(AnchorAlign::Start)),
+        position(AnchorBase::Paragraph, 0, None),
+    );
+    let mut right = left;
+    right.horizontal = position(AnchorBase::Column, 0, Some(AnchorAlign::End));
+    right.height_emu = 20 * 12_700;
+    let mut behind = left;
+    behind.wrap = Wrap::Behind;
+    let mut floats = vec![float(left), float(right), float(left), float(behind)];
+    let flowed = writer
+        .flowed(&[text("parole accanto")], None, &look, &mut floats)
+        .unwrap();
+    assert_eq!(
+        floats.len(),
+        1,
+        "the object behind the text stays for the overlay"
+    );
+    assert!(
+        flowed.expression.starts_with(
+            "rely-flow(((O, false, 0pt, 0pt), (O, true, 0pt, 0pt), (O, false, 109pt, 0pt), ), 50pt, (218pt, "
+        ),
+        "a second object on the same side stands beside the first: {}",
+        flowed.expression
+    );
+    assert!(
+        flowed.expression.contains("), (109pt, 109pt, 0pt, "),
+        "the right object reaches only its own lines: {}",
+        flowed.expression
+    );
+}
+
+#[test]
+fn flows_a_paragraph_with_tabs_against_its_stops() {
+    let mut writer = writer(&[]);
+    let look = ParagraphLook {
+        indent_left_twips: Some(720),
+        tabs: vec![rely_office_core::TabStop {
+            position_twips: 2_880,
+            kind: rely_office_core::TabKind::Left,
+            leader: rely_office_core::TabLeader::None,
+        }],
+        ..ParagraphLook::default()
+    };
+    let left = anchor(
+        Wrap::Around,
+        position(AnchorBase::Column, 0, Some(AnchorAlign::Start)),
+        position(AnchorBase::Paragraph, 0, None),
+    );
+    let flowed = writer
+        .flowed(
+            &[text("Voce\tvalore 7")],
+            None,
+            &look,
+            &mut vec![float(left)],
+        )
+        .unwrap();
+    assert!(
+        flowed
+            .expression
+            .starts_with("pad(left: 36pt, right: 0pt, rely-flow("),
+        "{}",
+        flowed.expression
+    );
+    assert!(
+        flowed
+            .expression
+            .contains(", 36pt, 35.4pt, (144pt, ), true, (([#\"Voce\"], false), ([], true), ([#\"valore\"], false), ([#\"7\"], false), ),"),
+        "the origin, the default step, the stops and the tab as a word: {}",
+        flowed.expression
+    );
+    assert!(
+        writer
+            .flowed(&[text("\t")], None, &look, &mut vec![float(left)])
+            .is_none(),
+        "a paragraph of only a tab has no word"
+    );
 }

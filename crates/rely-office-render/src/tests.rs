@@ -594,3 +594,65 @@ fn draws_metafile_pictures_as_svg_and_leaves_the_rest() {
     assert_eq!(media[2].bytes, vec![1]);
     assert_eq!(metafile_svg("image/png", b"x"), None);
 }
+
+#[test]
+fn typesets_a_paragraph_between_two_pictures_with_tabs() {
+    use rely_office_core::{
+        Anchor, AnchorAlign, AnchorBase, AnchorPosition, Block, DocumentTree, Inline, Media,
+        ParagraphLook, RunLook, Wrap, write_docx,
+    };
+    let side = |align| Anchor {
+        horizontal: AnchorPosition {
+            base: AnchorBase::Column,
+            offset_emu: 0,
+            align: Some(align),
+        },
+        vertical: AnchorPosition {
+            base: AnchorBase::Paragraph,
+            offset_emu: 0,
+            align: None,
+        },
+        width_emu: 1_200_000,
+        height_emu: 900_000,
+        wrap: Wrap::Around,
+        distance_emu: [0; 4],
+    };
+    let image = |align| Inline::Image {
+        media: 0,
+        alt: None,
+        width: Some(126),
+        height: Some(94),
+        anchor: Some(Box::new(side(align))),
+    };
+    let words = "Voce\tvalore e un testo che gira attorno alle due figure. ".repeat(20);
+    let tree = DocumentTree {
+        blocks: vec![Block::Paragraph {
+            content: vec![
+                image(AnchorAlign::Start),
+                image(AnchorAlign::End),
+                Inline::Text {
+                    text: words,
+                    marks: Vec::new(),
+                    look: RunLook::default(),
+                },
+            ],
+            align: None,
+            look: ParagraphLook::default(),
+        }],
+        media: vec![Media {
+            content_type: "image/svg+xml",
+            bytes: br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>"#.to_vec(),
+        }],
+        ..DocumentTree::default()
+    };
+    let bytes = write_docx(&tree).unwrap();
+    let source = RENDERER
+        .typst_source(&bytes, Some("figure.docx"), &render_limits())
+        .unwrap()
+        .source;
+    assert!(source.contains("#rely-flow(((box(image("), "{source}");
+    let rendered = RENDERER
+        .render(&bytes, Some("figure.docx"), &thumbnail_request(200))
+        .unwrap();
+    assert_eq!(rendered.page_count, 1);
+}
