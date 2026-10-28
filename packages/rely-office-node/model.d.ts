@@ -733,6 +733,10 @@ export interface SheetDocument {
   sheets(): SheetSummary[];
   /** The cells with content or a look of their own in a window, at most 250,000 cells. */
   cells(sheet: number, window: CellWindow): SheetCell[];
+  /**
+   * What was typed into a cell, as the document's locale writes it: in Italian
+   * `=SOMMA(A1;0,5)`, `1234,5`, `VERO`. Typed back with `setInput`, it gives the same cell.
+   */
   input(sheet: number, row: number, column: number): string;
   /** Type into a cell: `=` starts a formula; an empty text clears the cell. */
   setInput(sheet: number, row: number, column: number, text: string): void;
@@ -786,5 +790,14 @@ export interface SheetDocument {
   save(): Uint8Array;
   /** The workbook as ods; pictures, charts and pivot tables are kept by `save` only. */
   saveOds(): Uint8Array;
+  /**
+   * Put back the workbook as it was before the last edit; false when there is none. Every call
+   * that changes the workbook is a step, up to 100 steps and 2,000,000 cells held together.
+   */
+  undo(): boolean;
+  /** Put back the edit the last `undo` took away; false when there is none. */
+  redo(): boolean;
+  canUndo(): boolean;
+  canRedo(): boolean;
   free(): void;
 }

@@ -95,6 +95,12 @@ impl Sheet {
         self.cells.get(&cell)
     }
 
+    /// How many cells have content or a style of their own: the size a copy of the sheet takes.
+    #[must_use]
+    pub fn cell_count(&self) -> usize {
+        self.cells.len() + self.styles.len()
+    }
+
     /// Every cell with content, row by row.
     pub fn cells(&self) -> impl Iterator<Item = (CellRef, &Cell)> {
         self.cells.iter().map(|(cell, content)| (*cell, content))

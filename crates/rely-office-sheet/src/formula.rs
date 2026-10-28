@@ -9,12 +9,14 @@
 //!
 //! What a person types is accepted too: the Italian names of the common functions (`SOMMA`,
 //! `SE`, `CERCA.VERT`) become their English ones, and a formula that separates arguments with
-//! `;` reads `,` as the decimal separator, as Italian spreadsheets do.
+//! `;` reads `,` as the decimal separator, as Italian spreadsheets do. [`parse_formula_in`] reads
+//! a formula typed in a locale and [`print_formula_in`] shows one in it, so what an Italian
+//! editor shows (`=SOMMA(A1;1,5)`) is what it reads back.
 
 use std::fmt::Write as _;
 
 use crate::address::{CellRef, MAX_ROWS, column_index, column_name, parse_cell};
-use crate::value::ErrorKind;
+use crate::value::{ErrorKind, Locale};
 
 /// The deepest nesting a formula may have; a deeper one is refused rather than overflowing.
 const MAX_DEPTH: usize = 128;
@@ -156,6 +158,42 @@ enum Token {
 /// [`FormulaError`] for text that is not a formula, a formula longer than
 /// [`MAX_FORMULA_CHARS`] or nested deeper than 128 levels.
 pub fn parse_formula(formula: &str) -> Result<Expr, FormulaError> {
+    let comma = if has_semicolon_outside_text(formula) {
+        Comma::Decimal
+    } else {
+        Comma::Separator
+    };
+    parse_with(formula, comma)
+}
+
+/// Parse a formula as a person types it in a locale. In Italian a `,` between two digits is the
+/// decimal separator even with no `;` in the formula, so `=A1*1,5` reads as Italian Excel reads
+/// it; a `.` there is read as a decimal point too, as a formula pasted from English would have it.
+///
+/// # Errors
+///
+/// [`FormulaError`] as [`parse_formula`].
+pub fn parse_formula_in(formula: &str, locale: Locale) -> Result<Expr, FormulaError> {
+    let comma = match locale {
+        Locale::English => Comma::Separator,
+        Locale::Italian if has_semicolon_outside_text(formula) => Comma::Decimal,
+        Locale::Italian => Comma::DecimalBetweenDigits,
+    };
+    parse_with(formula, comma)
+}
+
+/// How a `,` reads in a formula.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Comma {
+    /// Between arguments, as files and English write it.
+    Separator,
+    /// In numbers, with `;` between arguments, as Italian writes it.
+    Decimal,
+    /// In a number when it has a digit on both sides, between arguments otherwise.
+    DecimalBetweenDigits,
+}
+
+fn parse_with(formula: &str, comma: Comma) -> Result<Expr, FormulaError> {
     let formula = formula.strip_prefix('=').unwrap_or(formula);
     if formula.chars().count() > MAX_FORMULA_CHARS {
         return Err(FormulaError {
@@ -163,7 +201,7 @@ pub fn parse_formula(formula: &str) -> Result<Expr, FormulaError> {
             reason: "the formula is too long".to_owned(),
         });
     }
-    let tokens = tokenize(formula)?;
+    let tokens = tokenize(formula, comma)?;
     let mut parser = Parser {
         tokens,
         position: 0,
@@ -176,8 +214,7 @@ pub fn parse_formula(formula: &str) -> Result<Expr, FormulaError> {
     Ok(expression)
 }
 
-fn tokenize(formula: &str) -> Result<Vec<(Token, usize)>, FormulaError> {
-    let italian = has_semicolon_outside_text(formula);
+fn tokenize(formula: &str, comma: Comma) -> Result<Vec<(Token, usize)>, FormulaError> {
     let characters: Vec<char> = formula.chars().collect();
     let mut tokens = Vec::new();
     let mut index = 0;
@@ -235,10 +272,10 @@ fn tokenize(formula: &str) -> Result<Vec<(Token, usize)>, FormulaError> {
             }
             digit
                 if digit.is_ascii_digit()
-                    || (digit == '.' && !italian)
-                    || (digit == ',' && italian) =>
+                    || (digit == '.' && comma != Comma::Decimal)
+                    || (digit == ',' && comma == Comma::Decimal) =>
             {
-                let number = read_number(&characters, &mut index, if italian { ',' } else { '.' });
+                let number = read_number(&characters, &mut index, comma);
                 // A number glued to letters is a cell such as `1A`, which is not one.
                 if characters
                     .get(index)
@@ -253,7 +290,7 @@ fn tokenize(formula: &str) -> Result<Vec<(Token, usize)>, FormulaError> {
             }
             symbol => {
                 let next = characters.get(index + 1).copied();
-                let Some((token, length)) = symbol_token(symbol, next, italian) else {
+                let Some((token, length)) = symbol_token(symbol, next, comma) else {
                     return Err(error(start, "unexpected character"));
                 };
                 index += length;
@@ -265,14 +302,14 @@ fn tokenize(formula: &str) -> Result<Vec<(Token, usize)>, FormulaError> {
 }
 
 /// The token of a symbol and how many characters it takes; `None` for no symbol of formulas.
-fn symbol_token(symbol: char, next: Option<char>, italian: bool) -> Option<(Token, usize)> {
+fn symbol_token(symbol: char, next: Option<char>, comma: Comma) -> Option<(Token, usize)> {
     let operator = |text: &'static str| Some((Token::Operator(text), text.len()));
     match (symbol, next) {
         ('(', _) => Some((Token::Open, 1)),
         (')', _) => Some((Token::Close, 1)),
         (':', _) => Some((Token::Colon, 1)),
         (';', _) => Some((Token::Separator, 1)),
-        (',', _) if !italian => Some((Token::Separator, 1)),
+        (',', _) if comma != Comma::Decimal => Some((Token::Separator, 1)),
         ('<', Some('=')) => operator("<="),
         ('<', Some('>')) => operator("<>"),
         ('>', Some('=')) => operator(">="),
@@ -290,14 +327,22 @@ fn symbol_token(symbol: char, next: Option<char>, italian: bool) -> Option<(Toke
     }
 }
 
-/// The digits of a number at `index`, with `decimal` as the decimal separator and an optional
+/// The digits of a number at `index`, with the decimal separator `comma` says and an optional
 /// exponent, written with a `.` for Rust to parse; `index` ends past the number.
-fn read_number(characters: &[char], index: &mut usize, decimal: char) -> String {
+fn read_number(characters: &[char], index: &mut usize, comma: Comma) -> String {
     let mut number = String::new();
     while let Some(&next) = characters.get(*index) {
+        let digit_after = characters.get(*index + 1).is_some_and(char::is_ascii_digit);
+        let decimal = match comma {
+            Comma::Separator => next == '.',
+            Comma::Decimal => next == ',',
+            Comma::DecimalBetweenDigits => {
+                next == '.' || (next == ',' && digit_after && !number.is_empty())
+            }
+        };
         if next.is_ascii_digit() {
             number.push(next);
-        } else if next == decimal {
+        } else if decimal && !number.contains('.') {
             number.push('.');
         } else if matches!(next, 'e' | 'E')
             && characters
@@ -636,8 +681,150 @@ fn parse_column(word: &str) -> Option<(u32, bool)> {
     column_index(letters).map(|column| (column, absolute))
 }
 
+/// The Italian names of the functions and their English ones, as Excel names them in each language.
+const ITALIAN_FUNCTION_NAMES: [(&str, &str); 139] = [
+    ("SOMMA", "SUM"),
+    ("MEDIA", "AVERAGE"),
+    ("CONTA.NUMERI", "COUNT"),
+    ("CONTA.VALORI", "COUNTA"),
+    ("CONTA.VUOTE", "COUNTBLANK"),
+    ("SE", "IF"),
+    ("SE.ERRORE", "IFERROR"),
+    ("E", "AND"),
+    ("O", "OR"),
+    ("NON", "NOT"),
+    ("ARROTONDA", "ROUND"),
+    ("ARROTONDA.PER.ECC", "ROUNDUP"),
+    ("ARROTONDA.PER.DIF", "ROUNDDOWN"),
+    ("ASS", "ABS"),
+    ("INT", "INT"),
+    ("RESTO", "MOD"),
+    ("POTENZA", "POWER"),
+    ("RADQ", "SQRT"),
+    ("CONCATENA", "CONCATENATE"),
+    ("LUNGHEZZA", "LEN"),
+    ("SINISTRA", "LEFT"),
+    ("DESTRA", "RIGHT"),
+    ("STRINGA.ESTRAI", "MID"),
+    ("MAIUSC", "UPPER"),
+    ("MINUSC", "LOWER"),
+    ("ANNULLA.SPAZI", "TRIM"),
+    ("SOMMA.SE", "SUMIF"),
+    ("CONTA.SE", "COUNTIF"),
+    ("MEDIA.SE", "AVERAGEIF"),
+    ("CERCA.VERT", "VLOOKUP"),
+    ("CERCA.ORIZZ", "HLOOKUP"),
+    ("INDICE", "INDEX"),
+    ("CONFRONTA", "MATCH"),
+    ("PRODOTTO", "PRODUCT"),
+    ("VAL.VUOTO", "ISBLANK"),
+    ("VAL.NUMERO", "ISNUMBER"),
+    ("VAL.TESTO", "ISTEXT"),
+    ("VAL.ERRORE", "ISERROR"),
+    ("OGGI", "TODAY"),
+    ("ADESSO", "NOW"),
+    ("DATA", "DATE"),
+    ("ANNO", "YEAR"),
+    ("MESE", "MONTH"),
+    ("GIORNO", "DAY"),
+    ("VERO", "TRUE"),
+    ("FALSO", "FALSE"),
+    ("SOMMA.PIÙ.SE", "SUMIFS"),
+    ("CONTA.PIÙ.SE", "COUNTIFS"),
+    ("MATR.SOMMA.PRODOTTO", "SUMPRODUCT"),
+    ("ARROTONDA.ECCESSO", "CEILING"),
+    ("ARROTONDA.DIFETTO", "FLOOR"),
+    ("ARROTONDA.ECCESSO.MAT", "CEILING.MATH"),
+    ("ARROTONDA.DIFETTO.MAT", "FLOOR.MATH"),
+    ("ARROTONDA.MULTIPLO", "MROUND"),
+    ("TRONCA", "TRUNC"),
+    ("PARI", "EVEN"),
+    ("DISPARI", "ODD"),
+    ("FATTORIALE", "FACT"),
+    ("MCD", "GCD"),
+    ("MCM", "LCM"),
+    ("QUOZIENTE", "QUOTIENT"),
+    ("SOMMA.Q", "SUMSQ"),
+    ("RADIANTI", "RADIANS"),
+    ("GRADI", "DEGREES"),
+    ("SEN", "SIN"),
+    ("ARCSEN", "ASIN"),
+    ("ARCCOS", "ACOS"),
+    ("ARCTAN", "ATAN"),
+    ("MEDIANA", "MEDIAN"),
+    ("GRANDE", "LARGE"),
+    ("PICCOLO", "SMALL"),
+    ("RANGO", "RANK"),
+    ("RANGO.UG", "RANK.EQ"),
+    ("DEV.ST", "STDEV"),
+    ("DEV.ST.C", "STDEV.S"),
+    ("DEV.ST.POP", "STDEVP"),
+    ("DEV.ST.P", "STDEV.P"),
+    ("VAR.C", "VAR.S"),
+    ("VAR.POP", "VARP"),
+    ("MODA", "MODE"),
+    ("MODA.SNGL", "MODE.SNGL"),
+    ("MAX.PIÙ.SE", "MAXIFS"),
+    ("MIN.PIÙ.SE", "MINIFS"),
+    ("MEDIA.PIÙ.SE", "AVERAGEIFS"),
+    ("PIÙ.SE", "IFS"),
+    ("SE.NON.DISP.", "IFNA"),
+    ("NON.DISP", "NA"),
+    ("VAL.NON.DISP", "ISNA"),
+    ("VAL.ERR", "ISERR"),
+    ("VAL.LOGICO", "ISLOGICAL"),
+    ("VAL.NON.TESTO", "ISNONTEXT"),
+    ("VAL.PARI", "ISEVEN"),
+    ("VAL.DISPARI", "ISODD"),
+    ("TESTO", "TEXT"),
+    ("VALORE", "VALUE"),
+    ("SOSTITUISCI", "SUBSTITUTE"),
+    ("RIMPIAZZA", "REPLACE"),
+    ("TROVA", "FIND"),
+    ("RICERCA", "SEARCH"),
+    ("RIPETI", "REPT"),
+    ("TESTO.UNISCI", "TEXTJOIN"),
+    ("IDENTICO", "EXACT"),
+    ("MAIUSC.INIZ", "PROPER"),
+    ("CODICE.CARATT", "CHAR"),
+    ("CODICE", "CODE"),
+    ("LIBERA", "CLEAN"),
+    ("NUM", "N"),
+    ("SCEGLI", "CHOOSE"),
+    ("RIGHE", "ROWS"),
+    ("COLONNE", "COLUMNS"),
+    ("RIF.RIGA", "ROW"),
+    ("RIF.COLONNA", "COLUMN"),
+    ("CERCA.X", "XLOOKUP"),
+    ("CERCA", "LOOKUP"),
+    ("DATA.DIFF", "DATEDIF"),
+    ("DATA.MESE", "EDATE"),
+    ("FINE.MESE", "EOMONTH"),
+    ("GIORNO.SETTIMANA", "WEEKDAY"),
+    ("NUM.SETTIMANA", "WEEKNUM"),
+    ("NUM.SETTIMANA.ISO.ANNO", "ISOWEEKNUM"),
+    ("GIORNI.LAVORATIVI.TOT", "NETWORKDAYS"),
+    ("GIORNO.LAVORATIVO", "WORKDAY"),
+    ("GIORNI", "DAYS"),
+    ("ORA", "HOUR"),
+    ("MINUTO", "MINUTE"),
+    ("SECONDO", "SECOND"),
+    ("ORARIO", "TIME"),
+    ("DATA.VALORE", "DATEVALUE"),
+    ("ORARIO.VALORE", "TIMEVALUE"),
+    ("FRAZIONE.ANNO", "YEARFRAC"),
+    ("RATA", "PMT"),
+    ("VAL.FUT", "FV"),
+    ("VA", "PV"),
+    ("NUM.RATE", "NPER"),
+    ("VAN", "NPV"),
+    ("TIR.COST", "IRR"),
+    ("TASSO", "RATE"),
+    ("INTERESSI", "IPMT"),
+    ("P.RATA", "PPMT"),
+];
+
 /// The English name of a function typed in Italian or English, in capitals.
-#[expect(clippy::too_many_lines, reason = "a table of names, one line each")]
 fn canonical_function_name(name: &str) -> String {
     let upper = name.to_uppercase();
     // Files store the functions newer than Excel 2007 with a prefix.
@@ -646,149 +833,19 @@ fn canonical_function_name(name: &str) -> String {
         .or_else(|| upper.strip_prefix("_XLFN."))
         .or_else(|| upper.strip_prefix("_XLWS."))
         .map_or_else(|| upper.clone(), str::to_owned);
-    let english = match upper.as_str() {
-        "SOMMA" => "SUM",
-        "MEDIA" => "AVERAGE",
-        "CONTA.NUMERI" => "COUNT",
-        "CONTA.VALORI" => "COUNTA",
-        "CONTA.VUOTE" => "COUNTBLANK",
-        "SE" => "IF",
-        "SE.ERRORE" => "IFERROR",
-        "E" => "AND",
-        "O" => "OR",
-        "NON" => "NOT",
-        "ARROTONDA" => "ROUND",
-        "ARROTONDA.PER.ECC" => "ROUNDUP",
-        "ARROTONDA.PER.DIF" => "ROUNDDOWN",
-        "ASS" => "ABS",
-        "INT" => "INT",
-        "RESTO" => "MOD",
-        "POTENZA" => "POWER",
-        "RADQ" => "SQRT",
-        "CONCATENA" => "CONCATENATE",
-        "LUNGHEZZA" => "LEN",
-        "SINISTRA" => "LEFT",
-        "DESTRA" => "RIGHT",
-        "STRINGA.ESTRAI" => "MID",
-        "MAIUSC" => "UPPER",
-        "MINUSC" => "LOWER",
-        "ANNULLA.SPAZI" => "TRIM",
-        "SOMMA.SE" => "SUMIF",
-        "CONTA.SE" => "COUNTIF",
-        "MEDIA.SE" => "AVERAGEIF",
-        "CERCA.VERT" => "VLOOKUP",
-        "CERCA.ORIZZ" => "HLOOKUP",
-        "INDICE" => "INDEX",
-        "CONFRONTA" => "MATCH",
-        "PRODOTTO" => "PRODUCT",
-        "VAL.VUOTO" => "ISBLANK",
-        "VAL.NUMERO" => "ISNUMBER",
-        "VAL.TESTO" => "ISTEXT",
-        "VAL.ERRORE" => "ISERROR",
-        "OGGI" => "TODAY",
-        "ADESSO" => "NOW",
-        "DATA" => "DATE",
-        "ANNO" => "YEAR",
-        "MESE" => "MONTH",
-        "GIORNO" => "DAY",
-        "VERO" => "TRUE",
-        "FALSO" => "FALSE",
-        "SOMMA.PIÙ.SE" => "SUMIFS",
-        "CONTA.PIÙ.SE" => "COUNTIFS",
-        "MATR.SOMMA.PRODOTTO" => "SUMPRODUCT",
-        "ARROTONDA.ECCESSO" => "CEILING",
-        "ARROTONDA.DIFETTO" => "FLOOR",
-        "ARROTONDA.ECCESSO.MAT" => "CEILING.MATH",
-        "ARROTONDA.DIFETTO.MAT" => "FLOOR.MATH",
-        "ARROTONDA.MULTIPLO" => "MROUND",
-        "TRONCA" => "TRUNC",
-        "PARI" => "EVEN",
-        "DISPARI" => "ODD",
-        "FATTORIALE" => "FACT",
-        "MCD" => "GCD",
-        "MCM" => "LCM",
-        "QUOZIENTE" => "QUOTIENT",
-        "SOMMA.Q" => "SUMSQ",
-        "RADIANTI" => "RADIANS",
-        "GRADI" => "DEGREES",
-        "SEN" => "SIN",
-        "ARCSEN" => "ASIN",
-        "ARCCOS" => "ACOS",
-        "ARCTAN" => "ATAN",
-        "MEDIANA" => "MEDIAN",
-        "GRANDE" => "LARGE",
-        "PICCOLO" => "SMALL",
-        "RANGO" => "RANK",
-        "RANGO.UG" => "RANK.EQ",
-        "DEV.ST" => "STDEV",
-        "DEV.ST.C" => "STDEV.S",
-        "DEV.ST.POP" => "STDEVP",
-        "DEV.ST.P" => "STDEV.P",
-        "VAR.C" => "VAR.S",
-        "VAR.POP" => "VARP",
-        "MODA" => "MODE",
-        "MODA.SNGL" => "MODE.SNGL",
-        "MAX.PIÙ.SE" => "MAXIFS",
-        "MIN.PIÙ.SE" => "MINIFS",
-        "MEDIA.PIÙ.SE" => "AVERAGEIFS",
-        "PIÙ.SE" => "IFS",
-        "SE.NON.DISP." => "IFNA",
-        "NON.DISP" => "NA",
-        "VAL.NON.DISP" => "ISNA",
-        "VAL.ERR" => "ISERR",
-        "VAL.LOGICO" => "ISLOGICAL",
-        "VAL.NON.TESTO" => "ISNONTEXT",
-        "VAL.PARI" => "ISEVEN",
-        "VAL.DISPARI" => "ISODD",
-        "TESTO" => "TEXT",
-        "VALORE" => "VALUE",
-        "SOSTITUISCI" => "SUBSTITUTE",
-        "RIMPIAZZA" => "REPLACE",
-        "TROVA" => "FIND",
-        "RICERCA" => "SEARCH",
-        "RIPETI" => "REPT",
-        "TESTO.UNISCI" => "TEXTJOIN",
-        "IDENTICO" => "EXACT",
-        "MAIUSC.INIZ" => "PROPER",
-        "CODICE.CARATT" => "CHAR",
-        "CODICE" => "CODE",
-        "LIBERA" => "CLEAN",
-        "NUM" => "N",
-        "SCEGLI" => "CHOOSE",
-        "RIGHE" => "ROWS",
-        "COLONNE" => "COLUMNS",
-        "RIF.RIGA" => "ROW",
-        "RIF.COLONNA" => "COLUMN",
-        "CERCA.X" => "XLOOKUP",
-        "CERCA" => "LOOKUP",
-        "DATA.DIFF" => "DATEDIF",
-        "DATA.MESE" => "EDATE",
-        "FINE.MESE" => "EOMONTH",
-        "GIORNO.SETTIMANA" => "WEEKDAY",
-        "NUM.SETTIMANA" => "WEEKNUM",
-        "NUM.SETTIMANA.ISO.ANNO" => "ISOWEEKNUM",
-        "GIORNI.LAVORATIVI.TOT" => "NETWORKDAYS",
-        "GIORNO.LAVORATIVO" => "WORKDAY",
-        "GIORNI" => "DAYS",
-        "ORA" => "HOUR",
-        "MINUTO" => "MINUTE",
-        "SECONDO" => "SECOND",
-        "ORARIO" => "TIME",
-        "DATA.VALORE" => "DATEVALUE",
-        "ORARIO.VALORE" => "TIMEVALUE",
-        "FRAZIONE.ANNO" => "YEARFRAC",
-        "RATA" => "PMT",
-        "VAL.FUT" => "FV",
-        "VA" => "PV",
-        "NUM.RATE" => "NPER",
-        "VAN" => "NPV",
-        "TIR.COST" => "IRR",
-        "TASSO" => "RATE",
-        "INTERESSI" => "IPMT",
-        "P.RATA" => "PPMT",
-        other => other,
-    };
-    english.to_owned()
+    ITALIAN_FUNCTION_NAMES
+        .iter()
+        .find(|(italian, _)| *italian == upper)
+        .map_or(upper.clone(), |(_, english)| (*english).to_owned())
+}
+
+/// The Italian name of a function, for a formula shown in Italian; the English one when Excel
+/// gives it no other.
+fn italian_function_name(english: &str) -> &str {
+    ITALIAN_FUNCTION_NAMES
+        .iter()
+        .find(|(_, name)| *name == english)
+        .map_or(english, |(italian, _)| italian)
 }
 
 /// The functions an xlsx stores with the `_xlfn.` prefix, as Excel 2010 and later write them.
@@ -818,17 +875,34 @@ pub(crate) const PREFIXED_FUNCTIONS: [&str; 19] = [
 #[must_use]
 pub fn print_formula(expression: &Expr) -> String {
     let mut text = String::new();
-    print(expression, &mut text, 0);
+    print(expression, &mut text, 0, Locale::English);
     text
 }
 
-fn print(expression: &Expr, text: &mut String, parent_precedence: u8) {
+/// A formula as a person reads it in a locale, without the leading `=`: in Italian the Italian
+/// names of the functions, `;` between arguments and `,` in numbers. [`parse_formula_in`] reads
+/// it back to the same formula.
+#[must_use]
+pub fn print_formula_in(expression: &Expr, locale: Locale) -> String {
+    let mut text = String::new();
+    print(expression, &mut text, 0, locale);
+    text
+}
+
+fn print(expression: &Expr, text: &mut String, parent_precedence: u8, locale: Locale) {
+    let italian = locale == Locale::Italian;
     match expression {
+        Expr::Number(value) if italian => text.push_str(&number_text(*value).replace('.', ",")),
         Expr::Number(value) => text.push_str(&number_text(*value)),
         Expr::Text(value) => {
             let _ = write!(text, "\"{}\"", value.replace('"', "\"\""));
         }
-        Expr::Bool(value) => text.push_str(if *value { "TRUE" } else { "FALSE" }),
+        Expr::Bool(value) => text.push_str(match (italian, *value) {
+            (true, true) => "VERO",
+            (true, false) => "FALSO",
+            (false, true) => "TRUE",
+            (false, false) => "FALSE",
+        }),
         Expr::Error(kind) => text.push_str(kind.code()),
         Expr::Cell(address) => {
             print_sheet(address.sheet.as_deref(), text);
@@ -857,15 +931,15 @@ fn print(expression: &Expr, text: &mut String, parent_precedence: u8) {
                 UnaryOperator::Plus => '+',
                 UnaryOperator::Minus => '-',
             });
-            print(operand, text, 6);
+            print(operand, text, 6, locale);
         }
         Expr::Percent(operand) => {
-            print(operand, text, 7);
+            print(operand, text, 7, locale);
             text.push('%');
         }
         Expr::Group(inner) => {
             text.push('(');
-            print(inner, text, 0);
+            print(inner, text, 0, locale);
             text.push(')');
         }
         Expr::Binary(operator, left, right) => {
@@ -874,23 +948,27 @@ fn print(expression: &Expr, text: &mut String, parent_precedence: u8) {
             if parenthesize {
                 text.push('(');
             }
-            print(left, text, precedence);
+            print(left, text, precedence, locale);
             text.push_str(operator.symbol());
             // Operators are left-associative: a right operand of the same level needs brackets.
-            print(right, text, precedence + 1);
+            print(right, text, precedence + 1, locale);
             if parenthesize {
                 text.push(')');
             }
         }
         Expr::Call(name, arguments) => {
-            text.push_str(name);
+            text.push_str(if italian {
+                italian_function_name(name)
+            } else {
+                name
+            });
             text.push('(');
             for (index, argument) in arguments.iter().enumerate() {
                 if index > 0 {
-                    text.push(',');
+                    text.push(if italian { ';' } else { ',' });
                 }
                 if !matches!(argument, Expr::Text(value) if value.is_empty()) {
-                    print(argument, text, 0);
+                    print(argument, text, 0, locale);
                 }
             }
             text.push(')');

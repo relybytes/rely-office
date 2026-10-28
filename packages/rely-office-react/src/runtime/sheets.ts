@@ -229,6 +229,22 @@ class BrowserSheetDocument implements SheetDocument {
     return call(() => this.document.saveOds());
   }
 
+  undo(): boolean {
+    return this.document.undo();
+  }
+
+  redo(): boolean {
+    return this.document.redo();
+  }
+
+  canUndo(): boolean {
+    return this.document.canUndo();
+  }
+
+  canRedo(): boolean {
+    return this.document.canRedo();
+  }
+
   free(): void {
     this.document.free();
   }

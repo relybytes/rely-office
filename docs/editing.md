@@ -168,7 +168,15 @@ Formulas are stored and printed in the syntax xlsx files use: English function n
 arguments, `.` in numbers. What a person types is accepted too: the Italian names of the common
 functions (`SOMMA`, `SE`, `CERCA.VERT`, `SE.ERRORE`, `CONTA.SE`, ...) become the English ones, and a
 formula that separates arguments with `;` reads `,` as the decimal separator, so
-`=SE(A1>1,5;"sì";"no")` is stored as `IF(A1>1.5,"sì","no")`.
+`=SE(A1>1,5;"sì";"no")` is stored as `IF(A1>1.5,"sì","no")`. Typed in the Italian locale, a `,`
+between two digits is a decimal comma even with no `;` in the formula (`=A1*1,5`), as Italian Excel
+reads it.
+
+An editor shows a formula as its locale writes it: `Input::text_in` and `print_formula_in` give
+Italian names, `;` between arguments and `,` in numbers (`=SOMMA(A1;0,5)`), `VERO` and `FALSO`, and
+a number as `1234,5`; a text that would read as something else gets its leading `'`. What they
+give reads back to the same cell, and the file keeps the English syntax. A function Italian Excel
+does not rename (`XOR`, `INT`) keeps its name.
 
 - **References**: `A1`, `$A$1`, `A$1`, ranges `A1:B9`, whole columns `A:C`, other sheets
   `Riepilogo!A1` and `'Vendite 2026'!B2:C9`, sheet names case-insensitive.
@@ -195,6 +203,14 @@ formula that separates arguments with `;` reads `,` as the decimal separator, so
 Recalculation computes every formula once, each after the formulas it reads, walking its own stack
 rather than recursing: a chain of 100,000 formulas computes in WebAssembly without exhausting the
 stack (tested).
+
+### Undo
+
+`EditHistory` keeps the workbook as it was before each edit (`record`, then `undo` and `redo`),
+and a new edit drops what could be redone. A step is a whole copy rather than the inverse of the
+edit, because an edit that moves rows rewrites formulas on every sheet: a copy cannot be wrong.
+The copies are bounded, at most 100 steps and 2,000,000 cells together, the oldest going first, so
+a large workbook keeps fewer steps rather than its size a hundred times over.
 
 ### Edits that move cells
 
@@ -246,7 +262,10 @@ each with its `input`, `display`, `kind` and `format`) and sends each action as 
 `mergesJson` give the styles and merges to draw, `conditionalFormats`, `validations`,
 `conditionalLooks`, `validation` and `invalidCells` the rules and what they make of the cells. A
 cell of `cells` carries its `style`.
-Undo is the editor's: it keeps what it changed. Failures throw a `RelyOfficeError` with a stable
+Every call that changes the workbook is a step of its history: `undo()` and `redo()` move along
+it and `canUndo()` and `canRedo()` say whether they can; a call that is refused leaves no step.
+`input` gives a cell as the document's locale writes it, Italian names and `;` in Italian. Failures
+throw a `RelyOfficeError` with a stable
 code (`INVALID_FORMULA`, `NO_SUCH_SHEET`, `DUPLICATE_SHEET_NAME`, `INVALID_SHEET_NAME`,
 `LAST_SHEET`, `OUT_OF_BOUNDS`, `INVALID_INPUT`, `INVALID_LOCALE`, `INVALID_STYLE`, and the
 reading codes on open).

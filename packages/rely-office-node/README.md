@@ -196,7 +196,10 @@ were.
 sheet, `validations` and `setValidations` its data validations; `conditionalLooks` gives the fill,
 font, data bar or icon each cell takes from the current values, `validation(sheet, row, column)`
 what a cell accepts and the items of its list, and `invalidCells` the cells their validation
-refuses. `save()` writes an xlsx and `saveOds()` an ods, which keeps everything but the pictures,
+refuses. `input(sheet, row, column)` gives what a cell holds as the document's locale writes it, so in
+Italian `=SOMMA(A1;0,5)`, and it reads back the same through `setInput`. `undo()` and `redo()`
+go back and forth over the edits, up to 100 of them, with `canUndo()` and `canRedo()` for the
+buttons. `save()` writes an xlsx and `saveOds()` an ods, which keeps everything but the pictures,
 charts and pivot tables. The formulas, functions, rules and edits are described in
 [docs/editing.md](https://github.com/relybytes/rely-office/blob/main/docs/editing.md).
 

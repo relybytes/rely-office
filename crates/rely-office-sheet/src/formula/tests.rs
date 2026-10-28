@@ -126,3 +126,67 @@ fn writes_numbers_that_read_back() {
     }
     assert_eq!(number_text(12.0), "12");
 }
+
+fn italian(formula: &str) -> String {
+    print_formula_in(
+        &parse_formula_in(formula, Locale::Italian).unwrap(),
+        Locale::Italian,
+    )
+}
+
+#[test]
+fn shows_a_formula_in_italian_and_reads_it_back() {
+    let expression = parse_formula("IF(SUM(A1:A3)>1.5,TRUE,ROUND(B1,2))").unwrap();
+
+    let shown = print_formula_in(&expression, Locale::Italian);
+
+    assert_eq!(shown, "SE(SOMMA(A1:A3)>1,5;VERO;ARROTONDA(B1;2))");
+    assert_eq!(
+        parse_formula_in(&shown, Locale::Italian).unwrap(),
+        expression
+    );
+    assert_eq!(
+        print_formula_in(&expression, Locale::English),
+        print_formula(&expression)
+    );
+}
+
+#[test]
+fn keeps_the_english_name_of_a_function_italian_does_not_rename() {
+    assert_eq!(italian("XOR(A1;B1)"), "XOR(A1;B1)");
+    assert_eq!(italian("INT(A1)"), "INT(A1)");
+}
+
+#[test]
+fn reads_an_italian_decimal_comma_with_no_semicolon() {
+    assert_eq!(
+        parse_formula_in("A1*1,5", Locale::Italian).unwrap(),
+        parse_formula("A1*1.5").unwrap()
+    );
+    assert_eq!(
+        parse_formula_in("SOMMA(A1,B1)", Locale::Italian).unwrap(),
+        parse_formula("SUM(A1,B1)").unwrap()
+    );
+    assert_eq!(
+        parse_formula_in("A1*1.5", Locale::Italian).unwrap(),
+        parse_formula("A1*1.5").unwrap()
+    );
+    assert_eq!(italian("A1*1,5"), "A1*1,5");
+}
+
+#[test]
+fn reads_english_as_files_write_it() {
+    assert_eq!(
+        parse_formula_in("ROUND(A1,2)", Locale::English).unwrap(),
+        parse_formula("ROUND(A1,2)").unwrap()
+    );
+    assert!(parse_formula_in("ROUND(A1;2)", Locale::English).is_ok());
+}
+
+#[test]
+fn texts_and_sheet_names_are_not_translated() {
+    assert_eq!(
+        italian("SE(Costi!A1=\"SUM\";1;0)"),
+        "SE(Costi!A1=\"SUM\";1;0)"
+    );
+}

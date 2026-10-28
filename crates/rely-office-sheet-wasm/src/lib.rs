@@ -14,7 +14,7 @@
 use rely_office_core::{Limits, OfficeError};
 use rely_office_sheet::{
     Border, BorderPlacement, CellLook, CellRef, ConditionalFormat, DataValidation, EditError,
-    Input, Locale, MAX_COLUMNS, MAX_ROWS, NumberFormat, StylePatch, Value, Workbook,
+    EditHistory, Input, Locale, MAX_COLUMNS, MAX_ROWS, NumberFormat, StylePatch, Value, Workbook,
     read_spreadsheet, write_ods, write_xlsx,
 };
 use serde::{Deserialize, Serialize};
@@ -161,6 +161,7 @@ impl From<NumberFormat> for Format {
 pub struct SheetDocument {
     workbook: Workbook,
     locale: Locale,
+    history: EditHistory,
 }
 
 impl SheetDocument {
@@ -173,6 +174,7 @@ impl SheetDocument {
         Ok(Self {
             workbook: Workbook::new(),
             locale: parse_locale(locale)?,
+            history: EditHistory::new(),
         })
     }
 
@@ -186,7 +188,21 @@ impl SheetDocument {
         Ok(Self {
             workbook: read_spreadsheet(bytes, file_name, &Limits::default(), locale)?,
             locale,
+            history: EditHistory::new(),
         })
+    }
+
+    /// Run an edit as one step of the history; a refused edit leaves no step.
+    fn recorded<T>(
+        &mut self,
+        edit: impl FnOnce(&mut Self) -> Result<T, JsError>,
+    ) -> Result<T, JsError> {
+        self.history.record(&self.workbook);
+        let result = edit(self);
+        if result.is_err() {
+            self.history.discard_last();
+        }
+        result
     }
 
     /// The sheets: name, used area and column widths.
@@ -279,7 +295,7 @@ impl SheetDocument {
                 column: position.column,
                 input: content
                     .cell(position)
-                    .map(|cell| cell.input.text())
+                    .map(|cell| cell.input.text_in(self.locale))
                     .unwrap_or_default(),
                 display: self.workbook.display(sheet, position, self.locale),
                 kind: match value {
@@ -620,7 +636,8 @@ impl SheetDocument {
             .map_err(|failure| throw(&failure))
     }
 
-    /// What was typed into a cell, `=` and all; empty for an empty cell.
+    /// What was typed into a cell, `=` and all, as the document's locale writes it: in Italian
+    /// `=SOMMA(A1;0,5)`; empty for an empty cell. Typed back, it gives the same cell.
     #[wasm_bindgen]
     #[must_use]
     pub fn input(&self, sheet: usize, row: u32, column: u32) -> String {
@@ -628,8 +645,32 @@ impl SheetDocument {
             .sheets()
             .get(sheet)
             .and_then(|content| content.cell(CellRef::new(row, column)))
-            .map(|cell| cell.input.text())
+            .map(|cell| cell.input.text_in(self.locale))
             .unwrap_or_default()
+    }
+
+    /// Put back the workbook as it was before the last edit; false when there is none.
+    #[wasm_bindgen]
+    pub fn undo(&mut self) -> bool {
+        self.history.undo(&mut self.workbook)
+    }
+
+    /// Put back the edit the last undo took away; false when there is none.
+    #[wasm_bindgen]
+    pub fn redo(&mut self) -> bool {
+        self.history.redo(&mut self.workbook)
+    }
+
+    #[wasm_bindgen(js_name = canUndo)]
+    #[must_use]
+    pub fn can_undo(&self) -> bool {
+        self.history.can_undo()
+    }
+
+    #[wasm_bindgen(js_name = canRedo)]
+    #[must_use]
+    pub fn can_redo(&self) -> bool {
+        self.history.can_redo()
     }
 
     /// Type into a cell; an empty text clears it.
@@ -645,9 +686,12 @@ impl SheetDocument {
         column: u32,
         text: &str,
     ) -> Result<(), JsError> {
-        self.workbook
-            .set_input(sheet, CellRef::new(row, column), text, self.locale)
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .set_input(sheet, CellRef::new(row, column), text, document.locale)
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// Type several cells in one recalculation: `[[row, column, text], ...]`.
@@ -657,8 +701,11 @@ impl SheetDocument {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = setInputs)]
     pub fn set_inputs(&mut self, sheet: usize, inputs_json: &str) -> Result<(), JsError> {
-        self.set_inputs_json(sheet, inputs_json)
-            .map_err(|failure| throw(&failure))
+        self.recorded(|document| {
+            document
+                .set_inputs_json(sheet, inputs_json)
+                .map_err(|failure| throw(&failure))
+        })
     }
 
     /// Set a cell's number format, as JSON.
@@ -674,8 +721,11 @@ impl SheetDocument {
         column: u32,
         format_json: &str,
     ) -> Result<(), JsError> {
-        self.set_format_json(sheet, row, column, format_json)
-            .map_err(|failure| throw(&failure))
+        self.recorded(|document| {
+            document
+                .set_format_json(sheet, row, column, format_json)
+                .map_err(|failure| throw(&failure))
+        })
     }
 
     /// Set a column's width in characters; a negative width restores the default.
@@ -690,9 +740,12 @@ impl SheetDocument {
         column: u32,
         width: f64,
     ) -> Result<(), JsError> {
-        self.workbook
-            .set_column_width(sheet, column, (width >= 0.0).then_some(width))
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .set_column_width(sheet, column, (width >= 0.0).then_some(width))
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// Change the look of a rectangle with a JSON patch.
@@ -710,12 +763,15 @@ impl SheetDocument {
         right: u32,
         patch_json: &str,
     ) -> Result<(), JsError> {
-        self.set_style_json(
-            sheet,
-            (CellRef::new(top, left), CellRef::new(bottom, right)),
-            patch_json,
-        )
-        .map_err(|failure| throw(&failure))
+        self.recorded(|document| {
+            document
+                .set_style_json(
+                    sheet,
+                    (CellRef::new(top, left), CellRef::new(bottom, right)),
+                    patch_json,
+                )
+                .map_err(|failure| throw(&failure))
+        })
     }
 
     /// Put a border, as JSON or `null`, on the edges of a rectangle a placement names.
@@ -738,13 +794,16 @@ impl SheetDocument {
         placement: &str,
         border_json: &str,
     ) -> Result<(), JsError> {
-        self.set_borders_json(
-            sheet,
-            (CellRef::new(top, left), CellRef::new(bottom, right)),
-            placement,
-            border_json,
-        )
-        .map_err(|failure| throw(&failure))
+        self.recorded(|document| {
+            document
+                .set_borders_json(
+                    sheet,
+                    (CellRef::new(top, left), CellRef::new(bottom, right)),
+                    placement,
+                    border_json,
+                )
+                .map_err(|failure| throw(&failure))
+        })
     }
 
     /// Give a rectangle the default look.
@@ -761,12 +820,15 @@ impl SheetDocument {
         bottom: u32,
         right: u32,
     ) -> Result<(), JsError> {
-        self.workbook
-            .clear_styles(
-                sheet,
-                (CellRef::new(top, left), CellRef::new(bottom, right)),
-            )
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .clear_styles(
+                    sheet,
+                    (CellRef::new(top, left), CellRef::new(bottom, right)),
+                )
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// `[{ font, fill, borders, horizontal, vertical, wrap, numberFormat }]`: the looks
@@ -805,12 +867,15 @@ impl SheetDocument {
         bottom: u32,
         right: u32,
     ) -> Result<(), JsError> {
-        self.workbook
-            .merge_cells(
-                sheet,
-                (CellRef::new(top, left), CellRef::new(bottom, right)),
-            )
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .merge_cells(
+                    sheet,
+                    (CellRef::new(top, left), CellRef::new(bottom, right)),
+                )
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// Split the merged ranges a rectangle overlaps.
@@ -827,12 +892,15 @@ impl SheetDocument {
         bottom: u32,
         right: u32,
     ) -> Result<(), JsError> {
-        self.workbook
-            .unmerge_cells(
-                sheet,
-                (CellRef::new(top, left), CellRef::new(bottom, right)),
-            )
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .unmerge_cells(
+                    sheet,
+                    (CellRef::new(top, left), CellRef::new(bottom, right)),
+                )
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// Set a row's height in points, 0 hiding it; a negative height lets it fit its content.
@@ -842,9 +910,12 @@ impl SheetDocument {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = setRowHeight)]
     pub fn set_row_height(&mut self, sheet: usize, row: u32, height: f64) -> Result<(), JsError> {
-        self.workbook
-            .set_row_height(sheet, row, (height >= 0.0).then_some(height))
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .set_row_height(sheet, row, (height >= 0.0).then_some(height))
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// Empty a rectangle; its look stays.
@@ -861,12 +932,15 @@ impl SheetDocument {
         bottom: u32,
         right: u32,
     ) -> Result<(), JsError> {
-        self.workbook
-            .clear_range(
-                sheet,
-                (CellRef::new(top, left), CellRef::new(bottom, right)),
-            )
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .clear_range(
+                    sheet,
+                    (CellRef::new(top, left), CellRef::new(bottom, right)),
+                )
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// Copy a rectangle so its top-left corner lands on `(row, column)` of `target_sheet`.
@@ -890,14 +964,17 @@ impl SheetDocument {
         row: u32,
         column: u32,
     ) -> Result<(), JsError> {
-        self.workbook
-            .copy_range(
-                sheet,
-                (CellRef::new(top, left), CellRef::new(bottom, right)),
-                target_sheet,
-                CellRef::new(row, column),
-            )
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .copy_range(
+                    sheet,
+                    (CellRef::new(top, left), CellRef::new(bottom, right)),
+                    target_sheet,
+                    CellRef::new(row, column),
+                )
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// # Errors
@@ -905,9 +982,12 @@ impl SheetDocument {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = insertRows)]
     pub fn insert_rows(&mut self, sheet: usize, at: u32, count: u32) -> Result<(), JsError> {
-        self.workbook
-            .insert_rows(sheet, at, count)
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .insert_rows(sheet, at, count)
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// # Errors
@@ -915,9 +995,12 @@ impl SheetDocument {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = deleteRows)]
     pub fn delete_rows(&mut self, sheet: usize, at: u32, count: u32) -> Result<(), JsError> {
-        self.workbook
-            .delete_rows(sheet, at, count)
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .delete_rows(sheet, at, count)
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// # Errors
@@ -925,9 +1008,12 @@ impl SheetDocument {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = insertColumns)]
     pub fn insert_columns(&mut self, sheet: usize, at: u32, count: u32) -> Result<(), JsError> {
-        self.workbook
-            .insert_columns(sheet, at, count)
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .insert_columns(sheet, at, count)
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// # Errors
@@ -935,9 +1021,12 @@ impl SheetDocument {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = deleteColumns)]
     pub fn delete_columns(&mut self, sheet: usize, at: u32, count: u32) -> Result<(), JsError> {
-        self.workbook
-            .delete_columns(sheet, at, count)
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .delete_columns(sheet, at, count)
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// Add a sheet at the end and return its index.
@@ -947,9 +1036,12 @@ impl SheetDocument {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = addSheet)]
     pub fn add_sheet(&mut self, name: &str) -> Result<usize, JsError> {
-        self.workbook
-            .add_sheet(name)
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .add_sheet(name)
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// # Errors
@@ -957,9 +1049,12 @@ impl SheetDocument {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = renameSheet)]
     pub fn rename_sheet(&mut self, sheet: usize, name: &str) -> Result<(), JsError> {
-        self.workbook
-            .rename_sheet(sheet, name)
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .rename_sheet(sheet, name)
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// # Errors
@@ -967,9 +1062,12 @@ impl SheetDocument {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = removeSheet)]
     pub fn remove_sheet(&mut self, sheet: usize) -> Result<(), JsError> {
-        self.workbook
-            .remove_sheet(sheet)
-            .map_err(|error| throw(&error.into()))
+        self.recorded(|document| {
+            document
+                .workbook
+                .remove_sheet(sheet)
+                .map_err(|error| throw(&error.into()))
+        })
     }
 
     /// The conditional formats of a sheet, as JSON.
@@ -994,8 +1092,11 @@ impl SheetDocument {
         sheet: usize,
         formats_json: &str,
     ) -> Result<(), JsError> {
-        self.set_conditional_formats_json(sheet, formats_json)
-            .map_err(|failure| throw(&failure))
+        self.recorded(|document| {
+            document
+                .set_conditional_formats_json(sheet, formats_json)
+                .map_err(|failure| throw(&failure))
+        })
     }
 
     /// The data validations of a sheet, as JSON.
@@ -1016,8 +1117,11 @@ impl SheetDocument {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = setValidations)]
     pub fn set_validations(&mut self, sheet: usize, validations_json: &str) -> Result<(), JsError> {
-        self.set_validations_json(sheet, validations_json)
-            .map_err(|failure| throw(&failure))
+        self.recorded(|document| {
+            document
+                .set_validations_json(sheet, validations_json)
+                .map_err(|failure| throw(&failure))
+        })
     }
 
     /// The look the conditional formats give each cell they change: `[{ row, column, fill,

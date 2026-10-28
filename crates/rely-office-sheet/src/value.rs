@@ -7,7 +7,9 @@
 //! What a cell holds: the input a person typed, the value it computes to, and how a value is
 //! shown.
 
-use crate::formula::{Expr, FormulaError, number_text, parse_formula, print_formula};
+use crate::formula::{
+    Expr, FormulaError, number_text, parse_formula_in, print_formula, print_formula_in,
+};
 
 /// The errors a formula computes to, as spreadsheets spell them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -136,7 +138,7 @@ impl Input {
         if let Some(formula) = typed.strip_prefix('=')
             && !formula.trim().is_empty()
         {
-            return parse_formula(formula)
+            return parse_formula_in(formula, locale)
                 .map(|expression| Some(Self::Formula(Box::new(expression))));
         }
         match typed.trim().to_ascii_uppercase().as_str() {
@@ -158,6 +160,24 @@ impl Input {
             Self::Text(text) => text.clone(),
             Self::Bool(value) => if *value { "TRUE" } else { "FALSE" }.to_owned(),
             Self::Formula(expression) => format!("={}", print_formula(expression)),
+        }
+    }
+
+    /// The input as a person reads and types it in a locale: in Italian a formula with the Italian
+    /// names and `;`, a number with `,`, `VERO` and `FALSO`. A text that would read as something
+    /// else gets the leading `'` that keeps it a text. [`Input::parse`] reads it back as it is.
+    #[must_use]
+    pub fn text_in(&self, locale: Locale) -> String {
+        let italian = locale == Locale::Italian;
+        match self {
+            Self::Number(value) if italian => number_text(*value).replace('.', ","),
+            Self::Bool(value) if italian => if *value { "VERO" } else { "FALSO" }.to_owned(),
+            Self::Formula(expression) => format!("={}", print_formula_in(expression, locale)),
+            Self::Text(text) => match Self::parse(text, locale) {
+                Ok(Some(Self::Text(read))) if read == *text => text.clone(),
+                _ => format!("'{text}"),
+            },
+            other => other.text(),
         }
     }
 }
@@ -292,6 +312,34 @@ fn digits_before_point(magnitude: f64) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shows_an_input_as_the_locale_types_it() {
+        let italian = Locale::Italian;
+        let read = |typed: &str| Input::parse(typed, italian).unwrap().unwrap();
+
+        assert_eq!(read("=somma(A1;0,5)").text_in(italian), "=SOMMA(A1;0,5)");
+        assert_eq!(read("=somma(A1;0,5)").text(), "=SUM(A1,0.5)");
+        assert_eq!(read("1234,5").text_in(italian), "1234,5");
+        assert_eq!(read("vero").text_in(italian), "VERO");
+        assert_eq!(read("Rossi").text_in(italian), "Rossi");
+        assert_eq!(
+            read("=somma(A1;0,5)").text_in(Locale::English),
+            "=SUM(A1,0.5)"
+        );
+        assert_eq!(read("vero").text_in(Locale::English), "TRUE");
+    }
+
+    #[test]
+    fn keeps_a_text_that_would_read_as_something_else_a_text() {
+        let italian = Locale::Italian;
+        for typed in ["'123", "'=SOMMA(1)", "'VERO", "''citato"] {
+            let input = Input::parse(typed, italian).unwrap().unwrap();
+            let shown = input.text_in(italian);
+            assert_eq!(shown, typed);
+            assert_eq!(Input::parse(&shown, italian).unwrap().unwrap(), input);
+        }
+    }
 
     #[test]
     fn reads_what_a_person_types() {

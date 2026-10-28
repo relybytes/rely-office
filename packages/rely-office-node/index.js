@@ -373,6 +373,22 @@ class SheetDocument {
     return call(() => this.document.saveOds());
   }
 
+  undo() {
+    return this.document.undo();
+  }
+
+  redo() {
+    return this.document.redo();
+  }
+
+  canUndo() {
+    return this.document.canUndo();
+  }
+
+  canRedo() {
+    return this.document.canRedo();
+  }
+
   free() {
     this.document.free();
   }

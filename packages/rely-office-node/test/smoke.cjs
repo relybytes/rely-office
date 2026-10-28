@@ -392,7 +392,13 @@ test('edits a spreadsheet and saves it as xlsx', () => {
     sheet.setFormat(0, 2, 0, { type: 'decimals', decimals: 2 });
     assert.equal(sheet.cells(0, { top: 2, left: 0, bottom: 2, right: 0 })[0].display, '3,50');
     sheet.insertRows(0, 0);
-    assert.equal(sheet.input(0, 3, 0), '=SUM(A2:A3)');
+    assert.equal(sheet.input(0, 3, 0), '=SOMMA(A2:A3)');
+    assert.equal(sheet.input(0, 1, 0), '1,5');
+    assert.equal(sheet.undo(), true);
+    assert.equal(sheet.input(0, 2, 0), '=SOMMA(A1:A2)');
+    assert.equal(sheet.canRedo(), true);
+    assert.equal(sheet.redo(), true);
+    assert.equal(sheet.input(0, 3, 0), '=SOMMA(A2:A3)');
     assert.equal(sheet.addSheet('Riepilogo'), 1);
     sheet.setInput(1, 0, 0, '=Foglio1!A4*2');
     sheet.setToday(new Date(2026, 9, 27));

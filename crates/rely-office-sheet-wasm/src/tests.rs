@@ -31,14 +31,15 @@ fn edits_and_shows_a_window_of_cells() {
         json!({
             "row": 2,
             "column": 0,
-            "input": "=SUM(A1:A2)",
+            "input": "=SOMMA(A1:A2)",
             "display": "3,50",
             "kind": "number",
             "format": { "type": "decimals", "decimals": 2 },
             "style": 0
         })
     );
-    assert_eq!(document.input(0, 2, 0), "=SUM(A1:A2)");
+    assert_eq!(document.input(0, 2, 0), "=SOMMA(A1:A2)");
+    assert_eq!(document.input(0, 0, 0), "1,5");
     assert_eq!(document.input(0, 9, 9), "");
     let sheets = parse(&document.sheets_summary().unwrap());
     assert_eq!(
