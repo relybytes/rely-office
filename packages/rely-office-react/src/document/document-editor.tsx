@@ -12,17 +12,20 @@ import {
   useImperativeHandle,
   useMemo,
   useRef,
+  useState,
   type ReactElement,
   type Ref,
 } from 'react';
-import type { Block, DocumentTree, MediaItem } from '../model.js';
+import type { DocumentTree, MediaItem } from '../model.js';
 import { saveDocument } from './document-files.js';
+import { DocumentSidePanel } from './document-side-panel.js';
 import { DocumentToolbar } from './document-toolbar.js';
-import type { EditorDocument } from './editor-document.js';
+import type { DocumentAside, EditorDocument } from './editor-document.js';
 import { editorToDocumentTree } from './editor-to-tree.js';
 import { createRelyDocumentExtensions } from './extensions.js';
 import { ENGLISH_DOCUMENT_EDITOR_LABELS, type DocumentEditorLabels } from './labels.js';
 import { mediaDataUrl, sniffImageType } from './media.js';
+import { contentReferences, type ContentReferences } from './references.js';
 
 /** What a host can ask of a mounted document editor. */
 export interface DocumentEditorHandle {
@@ -56,28 +59,11 @@ export interface DocumentEditorProps {
   imageSource?: (item: MediaItem) => string;
   /** The host's extensions, added after the ones the tree needs. */
   extensions?: AnyExtension[];
+  /** Who writes the comments and replies added here; `labels.you` by default. */
+  author?: { name: string; initials?: string };
+  /** False hides the panel of comments, notes and headers, for a host that edits them itself. */
+  sidePanel?: boolean;
   className?: string;
-}
-
-function blocksToText(blocks: Block[]): string {
-  return blocks
-    .map((block) => {
-      switch (block.type) {
-        case 'heading':
-        case 'paragraph':
-        case 'listItem':
-          return block.content.map((inline) => (inline.type === 'text' ? inline.text : '')).join('');
-        case 'blockquote':
-          return blocksToText(block.blocks);
-        case 'codeBlock':
-          return block.text;
-        case 'table':
-          return block.rows.map((row) => row.cells.map((cell) => blocksToText(cell.blocks)).join(' ')).join('\n');
-        default:
-          return '';
-      }
-    })
-    .join('\n');
 }
 
 /** The bytes of a chosen file; FileReader where `Blob.arrayBuffer` is missing (Safari before 14). */
@@ -108,6 +94,8 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
     onImageFile = readImageFile,
     imageSource = mediaDataUrl,
     extensions,
+    author,
+    sidePanel = true,
     className,
   }: DocumentEditorProps,
   ref: Ref<DocumentEditorHandle>,
@@ -117,14 +105,19 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const allExtensions = useMemo(() => createRelyDocumentExtensions({ extensions }), [extensions]);
+  const [aside, setAsideState] = useState<DocumentAside>(document.aside);
+  const asideRef = useRef(aside);
+  const [references, setReferences] = useState<ContentReferences>(() => contentReferences(document.content));
+  const [focusComment, setFocusComment] = useState<number | null>(null);
+  const writer = author ?? { name: words.you };
 
   const current = useCallback(
     (editor: Editor): EditorDocument => ({
       content: editor.getJSON(),
       media: media.current,
-      aside: document.aside,
+      aside: asideRef.current,
     }),
-    [document.aside],
+    [],
   );
 
   const editor = useEditor({
@@ -133,8 +126,52 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
     editable,
     immediatelyRender: false,
     editorProps: { attributes: { class: 'rely-document-content' } },
-    onUpdate: ({ editor: updated }) => onChangeRef.current?.(current(updated)),
+    onUpdate: ({ editor: updated }) => {
+      const now = current(updated);
+      setReferences(contentReferences(now.content));
+      onChangeRef.current?.(now);
+    },
   });
+
+  const setAside = useCallback(
+    (next: DocumentAside) => {
+      asideRef.current = next;
+      setAsideState(next);
+      if (editor) onChangeRef.current?.(current(editor));
+    },
+    [editor, current],
+  );
+
+  const addComment = useCallback(() => {
+    if (!editor || editor.state.selection.empty) return;
+    const comments = asideRef.current.comments ?? [];
+    const index = comments.length;
+    setAside({
+      ...asideRef.current,
+      comments: [
+        ...comments,
+        {
+          author: writer.name,
+          ...(writer.initials ? { initials: writer.initials } : {}),
+          date: new Date().toISOString(),
+          blocks: [{ type: 'paragraph', content: [] }],
+          resolved: false,
+        },
+      ],
+    });
+    setFocusComment(index);
+    editor.chain().focus().setMark('comment', { comment: index }).run();
+  }, [editor, setAside, writer.name, writer.initials]);
+
+  const insertFootnote = useCallback(() => {
+    if (!editor) return;
+    const index = asideRef.current.notes.length;
+    setAside({
+      ...asideRef.current,
+      notes: [...asideRef.current.notes, { kind: 'footnote', blocks: [{ type: 'paragraph', content: [] }] }],
+    });
+    editor.chain().focus().insertNoteReference(index).run();
+  }, [editor, setAside]);
 
   const insertImage = useCallback(
     async (file: File) => {
@@ -156,37 +193,41 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
   useImperativeHandle(
     ref,
     () => ({
-      getDocument: () =>
-        editor ? current(editor) : { ...document, media: media.current },
-      getTree: () => editorToDocumentTree(editor ? current(editor) : document),
-      saveDocx: () => saveDocument(editor ? current(editor) : document),
+      getDocument: () => (editor ? current(editor) : { ...document, media: media.current, aside: asideRef.current }),
+      getTree: () => editorToDocumentTree(editor ? current(editor) : { ...document, aside: asideRef.current }),
+      saveDocx: () => saveDocument(editor ? current(editor) : { ...document, aside: asideRef.current }),
       editor,
     }),
     [editor, current, document],
   );
 
-  const comments = document.aside.comments ?? [];
   return (
     <div className={['rely-document-editor', className].filter(Boolean).join(' ')}>
       {toolbar && editable && editor ? (
-        <DocumentToolbar editor={editor} labels={words} onImage={insertImage} />
+        <DocumentToolbar
+          editor={editor}
+          labels={words}
+          onImage={insertImage}
+          onComment={addComment}
+          onFootnote={insertFootnote}
+        />
       ) : null}
       <div className="rely-document-body">
         <EditorContent editor={editor} className="rely-document-page" />
-        {comments.length > 0 ? (
-          <aside className="rely-document-comments" aria-label={words.comments}>
-            <h2>{words.comments}</h2>
-            <ol>
-              {comments.map((comment, index) => (
-                <li key={index} data-comment={index} className={comment.resolved ? 'rely-resolved' : undefined}>
-                  <strong>{comment.author}</strong>
-                  {comment.date ? <time dateTime={comment.date}> {comment.date.slice(0, 10)}</time> : null}
-                  {comment.resolved ? <span> ({words.resolved})</span> : null}
-                  <p>{blocksToText(comment.blocks)}</p>
-                </li>
-              ))}
-            </ol>
-          </aside>
+        {sidePanel ? (
+          <DocumentSidePanel
+            aside={aside}
+            references={references}
+            media={media.current}
+            imageSource={imageSource}
+            editable={editable}
+            labels={words}
+            author={writer}
+            focusComment={focusComment}
+            onAsideChange={setAside}
+            onDeleteComments={(comments) => editor?.chain().focus().removeComments(comments).run()}
+            onDeleteNote={(note) => editor?.chain().focus().removeNoteReferences([note]).run()}
+          />
         ) : null}
       </div>
     </div>

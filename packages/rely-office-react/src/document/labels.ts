@@ -54,6 +54,24 @@ export interface DocumentEditorLabels {
   comments: string;
   resolved: string;
   sectionBreak: string;
+  addComment: string;
+  commentText: string;
+  reply: string;
+  deleteComment: string;
+  insertFootnote: string;
+  notes: string;
+  noteText: (number: number) => string;
+  deleteNote: string;
+  headersFooters: string;
+  header: string;
+  footer: string;
+  firstHeader: string;
+  firstFooter: string;
+  evenHeader: string;
+  evenFooter: string;
+  section: (number: number) => string;
+  /** The author of a comment when the host names none. */
+  you: string;
 }
 
 export const ENGLISH_DOCUMENT_EDITOR_LABELS: DocumentEditorLabels = {
@@ -105,6 +123,23 @@ export const ENGLISH_DOCUMENT_EDITOR_LABELS: DocumentEditorLabels = {
   comments: 'Comments',
   resolved: 'Resolved',
   sectionBreak: 'Section break',
+  addComment: 'Add comment',
+  commentText: 'Comment',
+  reply: 'Reply',
+  deleteComment: 'Delete comment',
+  insertFootnote: 'Insert footnote',
+  notes: 'Notes',
+  noteText: (number) => `Note ${number}`,
+  deleteNote: 'Delete note',
+  headersFooters: 'Headers and footers',
+  header: 'Header',
+  footer: 'Footer',
+  firstHeader: 'First page header',
+  firstFooter: 'First page footer',
+  evenHeader: 'Even page header',
+  evenFooter: 'Even page footer',
+  section: (number) => `Section ${number}`,
+  you: 'You',
 };
 
 export const ITALIAN_DOCUMENT_EDITOR_LABELS: DocumentEditorLabels = {
@@ -156,4 +191,21 @@ export const ITALIAN_DOCUMENT_EDITOR_LABELS: DocumentEditorLabels = {
   comments: 'Commenti',
   resolved: 'Risolto',
   sectionBreak: 'Interruzione di sezione',
+  addComment: 'Aggiungi commento',
+  commentText: 'Commento',
+  reply: 'Rispondi',
+  deleteComment: 'Elimina commento',
+  insertFootnote: 'Inserisci nota a piè di pagina',
+  notes: 'Note',
+  noteText: (number) => `Nota ${number}`,
+  deleteNote: 'Elimina nota',
+  headersFooters: 'Intestazioni e piè di pagina',
+  header: 'Intestazione',
+  footer: 'Piè di pagina',
+  firstHeader: 'Intestazione della prima pagina',
+  firstFooter: 'Piè di pagina della prima pagina',
+  evenHeader: 'Intestazione delle pagine pari',
+  evenFooter: 'Piè di pagina delle pagine pari',
+  section: (number) => `Sezione ${number}`,
+  you: 'Tu',
 };

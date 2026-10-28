@@ -49,6 +49,8 @@ const MAXIMUM_STAGE_WIDTH = 1280;
 const NUDGE_EMU = 45_720;
 const FONT_SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 54, 60, 72];
 const HANDLES: ResizeHandle[] = ['topLeft', 'topRight', 'bottomLeft', 'bottomRight'];
+/** The most changes the editor can undo. */
+const MAX_UNDO_STEPS = 100;
 
 interface Drag {
   shape: number;
@@ -117,6 +119,19 @@ export const SlideEditor = forwardRef(function SlideEditor(
   latest.current = presentation;
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  // The presentation as the last finished change left it, and the ones before and after it.
+  const committed = useRef(presentation);
+  const past = useRef<Presentation[]>([]);
+  const future = useRef<Presentation[]>([]);
+  const [, setHistoryVersion] = useState(0);
+
+  /** Record the change that led to the presentation as it is now. */
+  const commit = useCallback(() => {
+    past.current = [...past.current.slice(-(MAX_UNDO_STEPS - 1)), committed.current];
+    future.current = [];
+    committed.current = latest.current;
+    setHistoryVersion((version) => version + 1);
+  }, []);
 
   const media: MediaUrls = useMemo(
     () => new Map(presentation.media.map((item) => [item.index, mediaDataUrl(item)])),
@@ -133,8 +148,28 @@ export const SlideEditor = forwardRef(function SlideEditor(
     const next = change(latest.current);
     latest.current = next;
     setPresentation(next);
-    if (notify) onChangeRef.current?.(next);
-  }, []);
+    if (notify) {
+      commit();
+      onChangeRef.current?.(next);
+    }
+  }, [commit]);
+
+  /** Go one change back (`undo`) or forward (`redo`). */
+  const travel = (direction: 'undo' | 'redo') => {
+    const from = direction === 'undo' ? past : future;
+    const to = direction === 'undo' ? future : past;
+    const target = from.current[from.current.length - 1];
+    if (!editable || target === undefined) return;
+    from.current = from.current.slice(0, -1);
+    to.current = [...to.current, latest.current];
+    latest.current = target;
+    committed.current = target;
+    setPresentation(target);
+    setHistoryVersion((version) => version + 1);
+    setEditingText(null);
+    setSelected((current) => (current !== null && current < (target.slides[slideIndex]?.shapes?.length ?? 0) ? current : null));
+    onChangeRef.current?.(target);
+  };
 
   const updateSlide = useCallback(
     (change: (current: Slide) => Slide, notify = true) =>
@@ -180,7 +215,10 @@ export const SlideEditor = forwardRef(function SlideEditor(
       updateSlide((each) => withShape(each, current.shape, (target) => ({ ...target, frame })), false);
     };
     const end = () => {
-      if (drag.current?.moved) onChangeRef.current?.(latest.current);
+      if (drag.current?.moved) {
+        commit();
+        onChangeRef.current?.(latest.current);
+      }
       drag.current = null;
     };
     window.addEventListener('pointermove', move);
@@ -189,7 +227,7 @@ export const SlideEditor = forwardRef(function SlideEditor(
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
     };
-  }, [scale, updateSlide]);
+  }, [scale, updateSlide, commit]);
 
   useImperativeHandle(
     ref,
@@ -269,9 +307,26 @@ export const SlideEditor = forwardRef(function SlideEditor(
   );
 
   return (
-    <div className={['rely-slide-editor', className].filter(Boolean).join(' ')}>
+    <div
+      className={['rely-slide-editor', className].filter(Boolean).join(' ')}
+      onKeyDown={(event) => {
+        // Text being written and the notes keep the browser's own undo.
+        const target = event.target as HTMLElement;
+        if (editingText !== null || target.isContentEditable || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') return;
+        const key = event.key.toLowerCase();
+        if (!(event.ctrlKey || event.metaKey)) return;
+        if (key === 'z' && !event.shiftKey) travel('undo');
+        else if (key === 'y' || (key === 'z' && event.shiftKey)) travel('redo');
+        else return;
+        event.preventDefault();
+      }}
+    >
       {editable ? (
         <div className="rely-toolbar" role="toolbar" aria-label={words.toolbar}>
+          <div className="rely-tool-group">
+            {tool(words.undo, () => travel('undo'), '\u21b6', { disabled: past.current.length === 0 })}
+            {tool(words.redo, () => travel('redo'), '\u21b7', { disabled: future.current.length === 0 })}
+          </div>
           <div className="rely-tool-group">
             {tool(words.addSlide, () => {
               update((current) => ({ ...current, slides: [...current.slides.slice(0, slideIndex + 1), { shapes: [] }, ...current.slides.slice(slideIndex + 1)] }));

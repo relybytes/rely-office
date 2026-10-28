@@ -184,6 +184,43 @@ describe('SlideEditor', () => {
     expect((screen.getByLabelText('Speaker notes') as HTMLTextAreaElement).value).toBe('');
   });
 
+  test('changes are undone and redone one at a time, a drag as one change', () => {
+    const { ref, shape } = mount();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+
+    fireEvent.pointerDown(shape('Shape 3'), { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(window, { clientX: 30, clientY: 0 });
+    fireEvent.pointerMove(window, { clientX: 60, clientY: 0 });
+    fireEvent.pointerUp(window);
+    const stage = shape('Shape 3').closest('.rely-slide-stage')!;
+    fireEvent.keyDown(stage, { key: 'Delete' });
+    expect(current(ref).slides[0].shapes).toHaveLength(2);
+
+    fireEvent.keyDown(stage, { key: 'z', ctrlKey: true });
+    expect(current(ref).slides[0].shapes).toHaveLength(3);
+    expect(current(ref).slides[0].shapes![2].frame.x).toBeGreaterThan(6_000_000);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(current(ref).slides[0].shapes![2].frame.x).toBe(6_000_000);
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+
+    fireEvent.keyDown(stage, { key: 'y', ctrlKey: true });
+    expect(current(ref).slides[0].shapes![2].frame.x).toBeGreaterThan(6_000_000);
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    expect(current(ref).slides[0].shapes).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Redo' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  test('a new change after an undo drops what could be redone', () => {
+    const { ref } = mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Text box' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ellipse' }));
+
+    expect(screen.getByRole('button', { name: 'Redo' }).hasAttribute('disabled')).toBe(true);
+    expect(current(ref).slides[0].shapes!.at(-1)!.geometry).toEqual({ type: 'ellipse' });
+  });
+
   test('read only, there is no toolbar and a shape cannot be moved', () => {
     const { ref, shape } = mount({ editable: false });
 

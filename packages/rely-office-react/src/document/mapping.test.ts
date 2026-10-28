@@ -42,6 +42,11 @@ const PAGE: DocumentTree['page'] = {
   marginsTwips: [1440, 1440, 1440, 1440],
 };
 const LANDSCAPE: DocumentTree['page'] = { ...PAGE, widthTwips: 16838, heightTwips: 11906 };
+/** The headers of the last section, which are the document's. */
+const HEADERS: DocumentTree['headersFooters'] = {
+  header: [{ type: 'paragraph', content: [{ type: 'image', media: 0 }] }],
+  footer: [],
+};
 
 /** A tree that uses every block, inline and mark the tree has. */
 function richTree(): DocumentTree {
@@ -111,11 +116,11 @@ function richTree(): DocumentTree {
     media: [PNG, JPEG, UNUSED],
     report: EMPTY_REPORT,
     notes: [{ kind: 'footnote', blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'nota' }] }] }],
-    headersFooters: { header: [{ type: 'paragraph', content: [{ type: 'image', media: 0 }] }], footer: [] },
+    headersFooters: HEADERS,
     page: LANDSCAPE,
     sections: [
       { endBlock: 11, page: PAGE, headersFooters: { header: [], footer: [] }, continuous: false },
-      { endBlock: 12, page: LANDSCAPE, headersFooters: { header: [], footer: [] }, continuous: false },
+      { endBlock: 12, page: LANDSCAPE, headersFooters: HEADERS, continuous: false },
     ],
     comments: [
       { author: 'Anna', date: '2026-10-01T10:00:00Z', blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'Rivedere' }] }], resolved: false },

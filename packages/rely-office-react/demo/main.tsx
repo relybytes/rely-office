@@ -46,13 +46,17 @@ function sampleDocument(): EditorDocument {
         type: 'paragraph',
         content: [
           { type: 'text', text: 'Presenti: ' },
-          { type: 'text', text: 'Anna Bianchi', marks: [{ type: 'bold' }] },
+          { type: 'text', text: 'Anna Bianchi', marks: [{ type: 'bold' }, { type: 'comment', comment: 0 }] },
           { type: 'text', text: ', Marco Rossi e ' },
           { type: 'text', text: 'Giulia Verdi', marks: [{ type: 'textStyle', color: '#C00000' }] },
           { type: 'text', text: '.' },
         ],
       },
-      { type: 'heading', level: 2, content: [{ type: 'text', text: 'Ordine del giorno' }] },
+      {
+        type: 'heading',
+        level: 2,
+        content: [{ type: 'text', text: 'Ordine del giorno' }, { type: 'noteReference', note: 0 }],
+      },
       { type: 'listItem', ordered: true, level: 0, listId: 1, content: [{ type: 'text', text: 'Budget del trimestre' }] },
       { type: 'listItem', ordered: true, level: 1, listId: 1, content: [{ type: 'text', text: 'Costi del personale' }] },
       { type: 'listItem', ordered: true, level: 0, listId: 1, content: [{ type: 'text', text: 'Nuovi clienti' }] },
@@ -73,6 +77,19 @@ function sampleDocument(): EditorDocument {
       {
         type: 'blockquote',
         blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'La prossima riunione si terrà lunedì.' }] }],
+      },
+    ],
+    notes: [{ kind: 'footnote', blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'Approvato il 10 ottobre.' }] }] }],
+    headersFooters: {
+      header: [{ type: 'paragraph', content: [{ type: 'text', text: 'Rely Platform - riservato' }] }],
+      footer: [],
+    },
+    comments: [
+      {
+        author: 'Marco Rossi',
+        date: '2026-10-28T09:00:00Z',
+        blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'Confermare la presenza.' }] }],
+        resolved: false,
       },
     ],
   });

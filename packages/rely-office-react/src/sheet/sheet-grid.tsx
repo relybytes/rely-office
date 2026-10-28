@@ -286,13 +286,13 @@ export const SheetGrid = forwardRef(function SheetGrid(
     (move?: { rows: number; columns: number }) => {
       if (!editing) return;
       const { row, column, text } = editing;
-      const previous = sheet.input(workbook.index, row, column);
       const done = mutate(() => {
         sheet.setInput(workbook.index, row, column, text);
         const check = sheet.validation(workbook.index, row, column);
         const rule = check.validation;
         if (!check.valid && rule && rule.showError !== false && (rule.errorStyle ?? 'stop') === 'stop') {
-          sheet.setInput(workbook.index, row, column, previous);
+          // Undo rather than type the old value back, so the refused value is no step of the history.
+          sheet.undo();
           throw new Error(rule.error ?? words.invalidValue);
         }
       });
@@ -312,6 +312,16 @@ export const SheetGrid = forwardRef(function SheetGrid(
     setEditing({ ...anchor, text: text ?? sheet.input(workbook.index, anchor.row, anchor.column), source: 'cell' });
   };
 
+  const step = (direction: 'undo' | 'redo') => {
+    if (!editable) return;
+    const moved = direction === 'undo' ? sheet.undo() : sheet.redo();
+    if (!moved) return;
+    setEditing(null);
+    setMessage(null);
+    refresh();
+    onChange?.();
+  };
+
   const activeStyle = workbook.styles[cellAt(selection.anchor)?.style ?? 0] ?? workbook.styles[0];
   const toggle = (key: 'bold' | 'italic' | 'underline' | 'strike') =>
     mutate(() => sheet.setStyle(workbook.index, selected, { [key]: !(activeStyle?.font[key] ?? false) }));
@@ -328,7 +338,12 @@ export const SheetGrid = forwardRef(function SheetGrid(
       ArrowLeft: [0, -1],
       ArrowRight: [0, 1],
     };
-    if (event.key in steps) {
+    const key = event.key.toLowerCase();
+    if (command && key === 'z' && !event.shiftKey) {
+      step('undo');
+    } else if (command && (key === 'y' || (key === 'z' && event.shiftKey))) {
+      step('redo');
+    } else if (event.key in steps) {
       const [rowStep, columnStep] = steps[event.key];
       moveTo({ row: from.row + rowStep, column: from.column + columnStep }, event.shiftKey);
     } else if (event.key === 'Tab' || event.key === 'Enter') {
@@ -495,6 +510,28 @@ export const SheetGrid = forwardRef(function SheetGrid(
     <div className={['rely-sheet-grid', className].filter(Boolean).join(' ')}>
       {editable ? (
         <div className="rely-toolbar" role="toolbar" aria-label={words.toolbar}>
+          <div className="rely-tool-group">
+            <button
+              type="button"
+              className="rely-tool"
+              aria-label={words.undo}
+              title={words.undo}
+              disabled={!sheet.canUndo()}
+              onClick={() => step('undo')}
+            >
+              {'↶'}
+            </button>
+            <button
+              type="button"
+              className="rely-tool"
+              aria-label={words.redo}
+              title={words.redo}
+              disabled={!sheet.canRedo()}
+              onClick={() => step('redo')}
+            >
+              {'↷'}
+            </button>
+          </div>
           <div className="rely-tool-group">
             {(['bold', 'italic', 'underline', 'strike'] as const).map((key) => (
               <button

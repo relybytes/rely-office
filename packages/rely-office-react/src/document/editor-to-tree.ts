@@ -18,6 +18,7 @@ import type {
 } from '../model.js';
 import type { EditorDocument } from './editor-document.js';
 import { mapBlockImages } from './media.js';
+import { compactComments, compactNotes } from './references.js';
 
 const ALIGNMENTS: ReadonlySet<string> = new Set(['left', 'center', 'right', 'justify']);
 const SAFE_LINK = /^(https?:|mailto:)/i;
@@ -74,7 +75,7 @@ export function editorToDocumentTree(document: EditorDocument): DocumentTree {
   }
 
   const { aside } = document;
-  const sections = buildSections(aside.sections, context.sectionEnds, blocks.length);
+  const sections = buildSections(aside.sections, context.sectionEnds, blocks.length, aside.headersFooters);
   const tree: DocumentTree = {
     blocks,
     media: document.media,
@@ -86,7 +87,13 @@ export function editorToDocumentTree(document: EditorDocument): DocumentTree {
     ...(aside.comments === undefined ? {} : { comments: aside.comments }),
     ...(aside.objects === undefined ? {} : { objects: aside.objects }),
   };
-  return compactMedia(tree);
+  return compactMedia(compactComments(compactNotes(tree)));
+}
+
+/** The content of an editor of blocks outside the body (a header, a note, a comment) as blocks. */
+export function editorContentToBlocks(content: JSONContent): Block[] {
+  const context: WalkContext = { sectionEnds: [], nextListId: firstFreeListId(content), usedListIds: new Set() };
+  return mapNodes(content.content, context);
 }
 
 /** The sections whose break is still in the text, each ending where its break now is. */
@@ -94,6 +101,7 @@ function buildSections(
   original: Section[] | undefined,
   ends: { section: number; endBlock: number }[],
   total: number,
+  lastHeadersFooters: HeadersFooters,
 ): Section[] | undefined {
   if (original === undefined || original.length === 0) return undefined;
   const kept: Section[] = [];
@@ -103,7 +111,8 @@ function buildSections(
       kept.push({ ...section, endBlock: end.endBlock });
     }
   }
-  kept.push({ ...original[original.length - 1], endBlock: total });
+  // The last section's headers are the document's, which the editor changes.
+  kept.push({ ...original[original.length - 1], endBlock: total, headersFooters: lastHeadersFooters });
   return kept.length > 1 ? kept : undefined;
 }
 

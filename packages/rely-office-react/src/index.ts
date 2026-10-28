@@ -18,15 +18,24 @@ export type {
   EditorMappingReport,
   TreeToEditorOptions,
 } from './document/editor-document.js';
-export { editorToDocumentTree } from './document/editor-to-tree.js';
+export { BlocksEditor } from './document/blocks-editor.js';
+export { DocumentSidePanel } from './document/document-side-panel.js';
+export { editorContentToBlocks, editorToDocumentTree } from './document/editor-to-tree.js';
+export {
+  compactComments,
+  compactNotes,
+  contentReferences,
+  threadRoot,
+  type ContentReferences,
+} from './document/references.js';
 export { createRelyDocumentExtensions, type RelyDocumentExtensionOptions } from './document/extensions.js';
 export {
   ENGLISH_DOCUMENT_EDITOR_LABELS,
   ITALIAN_DOCUMENT_EDITOR_LABELS,
   type DocumentEditorLabels,
 } from './document/labels.js';
-export { mediaDataUrl, sniffImageType } from './document/media.js';
-export { documentTreeToEditor } from './document/tree-to-editor.js';
+export { mapBlockImages, mapBlockInlines, mediaDataUrl, sniffImageType } from './document/media.js';
+export { blocksToEditorContent, documentTreeToEditor } from './document/tree-to-editor.js';
 
 export {
   GridAxis,

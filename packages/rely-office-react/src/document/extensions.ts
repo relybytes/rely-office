@@ -8,7 +8,8 @@ import { Extension, Mark, Node, mergeAttributes, type AnyExtension } from '@tipt
 import Image from '@tiptap/extension-image';
 import { TableKit } from '@tiptap/extension-table';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
-import type { EditorState, Transaction } from '@tiptap/pm/state';
+import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/pm/state';
+import type { EditorView } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import type { Alignment } from '../model.js';
 
@@ -32,6 +33,16 @@ declare module '@tiptap/core' {
     };
     relyMath: {
       insertMath: (latex: string, display?: boolean) => ReturnType;
+    };
+    relyNoteReference: {
+      /** Insert a reference to the note of an index of the document's notes. */
+      insertNoteReference: (note: number) => ReturnType;
+    };
+    relyReferences: {
+      /** Take out the marks and anchors of the comments of these indexes. */
+      removeComments: (comments: number[]) => ReturnType;
+      /** Take out the references to the notes of these indexes. */
+      removeNoteReferences: (notes: number[]) => ReturnType;
     };
     relyTrackedChanges: {
       /** Keep every tracked insertion and drop every tracked deletion. */
@@ -274,6 +285,40 @@ export const RelyTrackedChanges = Extension.create({
   },
 });
 
+/** Remove what refers to a comment or a note, for a comment or a note the person deletes. */
+export const RelyReferences = Extension.create({
+  name: 'relyReferences',
+  addCommands() {
+    const remove =
+      (kind: 'comment' | 'note') =>
+      (indexes: number[]) =>
+      ({ tr, state, dispatch }: { tr: Transaction; state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+        const wanted = new Set(indexes);
+        const deletions: [number, number][] = [];
+        state.doc.descendants((node: ProseMirrorNode, position: number) => {
+          if (kind === 'comment') {
+            if (node.type.name === 'commentAnchor' && wanted.has(Number(node.attrs.comment))) {
+              deletions.push([position, position + node.nodeSize]);
+            }
+            for (const mark of node.marks) {
+              if (mark.type.name === 'comment' && wanted.has(Number(mark.attrs.comment))) {
+                tr.removeMark(position, position + node.nodeSize, mark);
+              }
+            }
+          } else if (node.type.name === 'noteReference' && wanted.has(Number(node.attrs.note))) {
+            deletions.push([position, position + node.nodeSize]);
+          }
+        });
+        if (dispatch) {
+          for (const [from, to] of deletions.reverse()) tr.delete(from, to);
+          dispatch(tr);
+        }
+        return true;
+      };
+    return { removeComments: remove('comment'), removeNoteReferences: remove('note') };
+  },
+});
+
 /** A footnote or endnote reference, shown with its number. */
 export const RelyNoteReference = Node.create({
   name: 'noteReference',
@@ -296,6 +341,37 @@ export const RelyNoteReference = Node.create({
     String(Number(node.attrs.note) + 1),
   ],
   renderText: ({ node }) => `[${Number(node.attrs.note) + 1}]`,
+  addProseMirrorPlugins() {
+    // Notes are numbered in the order the text refers to them, as Word numbers them.
+    const renumber = (view: EditorView) => {
+      const order = new Map<number, number>();
+      view.state.doc.descendants((node, position) => {
+        if (node.type.name !== this.name) return;
+        const note = Number(node.attrs.note);
+        if (!order.has(note)) order.set(note, order.size + 1);
+        const dom = view.nodeDOM(position);
+        const number = String(order.get(note));
+        if (dom instanceof HTMLElement && dom.textContent !== number) dom.textContent = number;
+      });
+    };
+    return [
+      new Plugin({
+        key: new PluginKey('relyNoteNumbers'),
+        view: (view) => {
+          renumber(view);
+          return { update: renumber };
+        },
+      }),
+    ];
+  },
+  addCommands() {
+    return {
+      insertNoteReference:
+        (note) =>
+        ({ commands }) =>
+          commands.insertContent({ type: this.name, attrs: { note } }),
+    };
+  },
 });
 
 /** A comment on a point of the text rather than on a stretch of it. */
@@ -410,6 +486,7 @@ export function createRelyDocumentExtensions(options: RelyDocumentExtensionOptio
     RelyInsertion,
     RelyDeletion,
     RelyTrackedChanges,
+    RelyReferences,
     RelyNoteReference,
     RelyCommentAnchor,
     RelyMath,

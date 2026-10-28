@@ -7,6 +7,8 @@
 /** The words of the slide editor; a host passes its own language. */
 export interface SlideEditorLabels {
   toolbar: string;
+  undo: string;
+  redo: string;
   slides: string;
   slide: (number: number) => string;
   addSlide: string;
@@ -42,6 +44,8 @@ export interface SlideEditorLabels {
 
 export const ENGLISH_SLIDE_EDITOR_LABELS: SlideEditorLabels = {
   toolbar: 'Slide tools',
+  undo: 'Undo',
+  redo: 'Redo',
   slides: 'Slides',
   slide: (number) => `Slide ${number}`,
   addSlide: 'New slide',
@@ -77,6 +81,8 @@ export const ENGLISH_SLIDE_EDITOR_LABELS: SlideEditorLabels = {
 
 export const ITALIAN_SLIDE_EDITOR_LABELS: SlideEditorLabels = {
   toolbar: 'Strumenti della diapositiva',
+  undo: 'Annulla',
+  redo: 'Ripeti',
   slides: 'Diapositive',
   slide: (number) => `Diapositiva ${number}`,
   addSlide: 'Nuova diapositiva',

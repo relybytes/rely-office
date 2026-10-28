@@ -58,6 +58,23 @@ export function documentTreeToEditor(
   };
 }
 
+/**
+ * Blocks outside the body (a header, a footer, a note, a comment) as the content of an editor of
+ * their own, their images shown from the document's media.
+ */
+export function blocksToEditorContent(
+  blocks: Block[],
+  media: MediaItem[],
+  options: TreeToEditorOptions = {},
+): JSONContent {
+  const context: MappingContext = {
+    media: new Map(media.map((item) => [item.index, item])),
+    imageSource: options.imageSource ?? mediaDataUrl,
+    report: { marksDropped: 0, imagesLeftOut: 0 },
+  };
+  return { type: 'doc', content: mapBlocks(blocks, context) };
+}
+
 /** The top level, with a section break where each section but the last ends. */
 function mapTopLevelBlocks(
   blocks: Block[],

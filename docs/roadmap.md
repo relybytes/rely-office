@@ -110,6 +110,9 @@ frontend one, and both declare the same model from `packages/rely-office-node/mo
 | 7.2 | `DocumentEditor` on TipTap: toolbar, tables, inline images, comments, tracked changes accepted or rejected, equations, links; opening and saving docx, doc and odt through the browser build | done (0.7.0) |
 | 7.3 | `SheetGrid` over `SheetDocument`: drawn by window, formulas, styles, formats, merges, conditional formats and validation, rows, columns and sheets, the clipboard with references moved | done (0.7.0) |
 | 7.4 | `SlideEditor` over the slide model: shapes moved, resized and written into with their run formatting kept, pictures, tables, slides and speaker notes, saving pptx | done (0.7.0) |
+| 7.5 | Formulas shown in the locale's names and separators, `=SOMMA(A1;0,5)`, and read back the same | done (0.7.0) |
+| 7.6 | Comments, notes, headers and footers edited in a panel beside the document | done (0.7.0) |
+| 7.7 | Undo and redo in the spreadsheet, from the engine's history, and in the slide editor | done (0.7.0) |
 
 The host application keeps what is its own: where a file is stored, who may open it, locking and
 autosave, and where an inserted image goes, all through the components' props.
@@ -122,11 +125,6 @@ autosave, and where an inserted image goes, all through the components' props.
 - A larger corpus with documents made by Word and pptx and odp pages, and the corpus figure as a
   CI gate once it is stable.
 - Publishing to the public npm registry (issue #1).
-- Formulas shown in the locale's own function names and separators: the engine reads `SOMMA` and
-  keeps `SUM`, so the grid's formula bar shows the English name.
-- Editing the notes and the comments of a document, and the headers and footers, in the document
-  editor: today they are kept and written back, not edited.
-- Undo in the spreadsheet grid and the slide editor; the document editor has it from TipTap.
 
 ## Known risks
 

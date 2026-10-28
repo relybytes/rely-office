@@ -29,14 +29,10 @@ export function sniffImageType(bytes: Uint8Array): string {
   return 'application/octet-stream';
 }
 
-/** Apply `visit` to every image inline of the blocks, nested ones included. */
-export function mapBlockImages(
-  blocks: Block[],
-  visit: (image: Extract<Inline, { type: 'image' }>) => Inline | null,
-): Block[] {
+/** Apply `visit` to every inline of the blocks, nested ones included; null drops the inline. */
+export function mapBlockInlines(blocks: Block[], visit: (inline: Inline) => Inline | null): Block[] {
   const inlines = (content: Inline[]): Inline[] =>
     content.flatMap((inline) => {
-      if (inline.type !== 'image') return [inline];
       const mapped = visit(inline);
       return mapped === null ? [] : [mapped];
     });
@@ -47,17 +43,25 @@ export function mapBlockImages(
       case 'listItem':
         return { ...block, content: inlines(block.content) };
       case 'blockquote':
-        return { ...block, blocks: mapBlockImages(block.blocks, visit) };
+        return { ...block, blocks: mapBlockInlines(block.blocks, visit) };
       case 'table':
         return {
           ...block,
           rows: block.rows.map((row) => ({
             ...row,
-            cells: row.cells.map((cell) => ({ ...cell, blocks: mapBlockImages(cell.blocks, visit) })),
+            cells: row.cells.map((cell) => ({ ...cell, blocks: mapBlockInlines(cell.blocks, visit) })),
           })),
         };
       default:
         return block;
     }
   });
+}
+
+/** Apply `visit` to every image inline of the blocks, nested ones included. */
+export function mapBlockImages(
+  blocks: Block[],
+  visit: (image: Extract<Inline, { type: 'image' }>) => Inline | null,
+): Block[] {
+  return mapBlockInlines(blocks, (inline) => (inline.type === 'image' ? visit(inline) : inline));
 }

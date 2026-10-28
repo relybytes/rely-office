@@ -4,7 +4,8 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { Editor } from '@tiptap/core';
 import { createRef } from 'react';
 import type { DocumentTree } from '../model.js';
 import { DocumentEditor, type DocumentEditorHandle } from './document-editor.js';
@@ -34,6 +35,19 @@ function tree(): DocumentTree {
   };
 }
 
+/** Type into a small editor of the side panel, as a person would with the caret at its end. */
+async function typeInto(box: HTMLElement, text: string): Promise<void> {
+  // TipTap keeps its editor on the element it edits.
+  const editor = await waitFor(() => {
+    const found = (box as unknown as { editor?: Editor }).editor;
+    expect(found).toBeTruthy();
+    return found!;
+  });
+  act(() => {
+    editor.chain().focus('end').insertContent(text).run();
+  });
+}
+
 function open(): EditorDocument {
   return documentTreeToEditor(tree()).document;
 }
@@ -52,8 +66,8 @@ describe('DocumentEditor', () => {
 
     expect(screen.getByText('Testo del verbale')).toBeTruthy();
     expect(screen.getByRole('toolbar', { name: 'Formattazione' })).toBeTruthy();
-    expect(screen.getByRole('complementary', { name: 'Commenti' }).textContent).toContain('Marco Rossi');
-    expect(screen.getByText('Da rivedere')).toBeTruthy();
+    expect(screen.getByRole('list', { name: 'Commenti' }).textContent).toContain('Marco Rossi');
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Commento Marco Rossi' }).textContent).toBe('Da rivedere'));
   });
 
   test('a toolbar button formats the selection, and the change reaches the host', async () => {
@@ -142,6 +156,81 @@ describe('DocumentEditor', () => {
     const blocks = ref.current!.getTree().blocks;
     expect(JSON.stringify(blocks)).toContain('"href":"https://relybytes.com"');
     expect(JSON.stringify(blocks)).toContain('"latex":"x^2"');
+  });
+
+  test('a comment is added on the selection, written, answered and resolved', async () => {
+    const { ref, editor } = await mount({ author: { name: 'Lucia Neri', initials: 'LN' } });
+    act(() => {
+      editor.commands.setTextSelection({ from: 20, to: 28 });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+    const box = await screen.findByRole('textbox', { name: 'Comment Lucia Neri' });
+    await typeInto(box, 'Controllare le cifre');
+    const thread = box.closest('li')!;
+    fireEvent.click(within(thread as HTMLElement).getByRole('button', { name: 'Reply' }));
+    fireEvent.click(within(thread as HTMLElement).getByRole('checkbox', { name: 'Resolved' }));
+
+    const tree = ref.current!.getTree();
+    expect(tree.comments).toHaveLength(3);
+    expect(tree.comments![1]).toMatchObject({ author: 'Lucia Neri', initials: 'LN', resolved: true });
+    expect(tree.comments![1].blocks).toEqual([{ type: 'paragraph', content: [{ type: 'text', text: 'Controllare le cifre' }] }]);
+    expect(tree.comments![2]).toMatchObject({ author: 'Lucia Neri', parent: 1 });
+    const second = tree.blocks[1];
+    expect(second.type === 'paragraph' && second.content[0]).toMatchObject({
+      text: 'aggiunto',
+      marks: [{ type: 'comment', comment: 1 }, { type: 'insertion' }],
+    });
+  });
+
+  test('a deleted comment leaves the text, and the saved tree, with its replies', async () => {
+    const { ref } = await mount();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete comment' }));
+
+    const tree = ref.current!.getTree();
+    expect(tree.comments).toBeUndefined();
+    expect(tree.blocks[0]).toEqual({ type: 'paragraph', content: [{ type: 'text', text: 'Testo del verbale' }] });
+    expect(screen.queryByRole('textbox', { name: 'Comment Marco Rossi' })).toBeNull();
+  });
+
+  test('a footnote is inserted, numbered, written and deleted', async () => {
+    const { ref, editor } = await mount();
+    act(() => {
+      editor.commands.setTextSelection(6);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Insert footnote' }));
+    const note = await screen.findByRole('textbox', { name: 'Note 1' });
+    await typeInto(note, 'Fonte: bilancio 2025');
+
+    let tree = ref.current!.getTree();
+    expect(tree.notes).toEqual([{ kind: 'footnote', blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'Fonte: bilancio 2025' }] }] }]);
+    expect(JSON.stringify(tree.blocks[0])).toContain('"noteReference","note":0');
+    expect(document.querySelector('.rely-note-reference')!.textContent).toBe('1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete note' }));
+    tree = ref.current!.getTree();
+    expect(tree.notes).toEqual([]);
+    expect(JSON.stringify(tree.blocks)).not.toContain('noteReference');
+  });
+
+  test('the header and the footer are edited beside the text', async () => {
+    const { ref, onChange } = await mount();
+
+    fireEvent.click(screen.getByText('Headers and footers'));
+    await typeInto(await screen.findByRole('textbox', { name: 'Header' }), 'Riservato');
+
+    expect(ref.current!.getTree().headersFooters.header).toEqual([
+      { type: 'paragraph', content: [{ type: 'text', text: 'Riservato' }] },
+    ]);
+    expect(onChange.mock.calls.at(-1)![0].aside.headersFooters.header).toHaveLength(1);
+  });
+
+  test('without the side panel, nothing beside the text is shown', async () => {
+    await mount({ sidePanel: false });
+
+    expect(screen.queryByText('Headers and footers')).toBeNull();
   });
 
   test('read only, the document shows without a toolbar', async () => {

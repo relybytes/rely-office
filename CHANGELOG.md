@@ -27,6 +27,15 @@ below 1.0, a minor version may change the API.
   formatting of each run kept, text styling, pictures, tables, slides added, duplicated,
   reordered and hidden, speaker notes; layout shapes show locked.
 - English and Italian labels for the three editors; the look is set by CSS custom properties.
+- The document editor's side panel: comments with replies and resolved state, footnotes and
+  endnotes, headers and footers (a section's own included), each in a small editor of the same
+  schema (`BlocksEditor`); a comment on the selection and a footnote at the caret from the toolbar.
+  On save only what the text still refers to is kept, the notes numbered in order
+  (`compactNotes`, `compactComments`).
+- Formulas in the locale: `parse_formula_in` and `print_formula_in` read and write the Italian
+  names, `;` and the decimal comma; `Input::text_in` shows a cell as its locale types it.
+- Undo and redo: `EditHistory` in `rely-office-sheet`, `undo`, `redo`, `canUndo` and `canRedo` on
+  every `SheetDocument`, and in the grid and the slide editor with Ctrl+Z and Ctrl+Y.
 
 ### Changed
 
@@ -34,6 +43,10 @@ below 1.0, a minor version may change the API.
   compiles the same file, so the two packages declare the same shapes.
 - `@relybytes/rely-office` is the backend package only: its browser entry
   `@relybytes/rely-office/web` moves into `@relybytes/rely-office-react`.
+- `SheetDocument.input` and the `input` of `cells` give a cell in the document's locale
+  (`=SOMMA(A1;0,5)` in Italian) instead of the file's English syntax; `setInput` reads both.
+- In the Italian locale a `,` between two digits of a typed formula is a decimal comma even with
+  no `;` in it: `=SOMMA(1,5)` is now one argument, 1.5, as Italian Excel reads it.
 
 ### Fixed
 

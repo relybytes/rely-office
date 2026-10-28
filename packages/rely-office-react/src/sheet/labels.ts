@@ -7,6 +7,8 @@
 /** The words of the spreadsheet grid; a host passes its own language. */
 export interface SheetGridLabels {
   toolbar: string;
+  undo: string;
+  redo: string;
   grid: string;
   sheets: string;
   cellName: string;
@@ -44,6 +46,8 @@ export interface SheetGridLabels {
 
 export const ENGLISH_SHEET_GRID_LABELS: SheetGridLabels = {
   toolbar: 'Formatting',
+  undo: 'Undo',
+  redo: 'Redo',
   grid: 'Sheet',
   sheets: 'Sheets',
   cellName: 'Cell',
@@ -80,6 +84,8 @@ export const ENGLISH_SHEET_GRID_LABELS: SheetGridLabels = {
 
 export const ITALIAN_SHEET_GRID_LABELS: SheetGridLabels = {
   toolbar: 'Formattazione',
+  undo: 'Annulla',
+  redo: 'Ripeti',
   grid: 'Foglio',
   sheets: 'Fogli',
   cellName: 'Cella',

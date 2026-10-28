@@ -42,7 +42,7 @@ describe('SheetGrid', () => {
     expect(cell('A3').textContent).toBe('30');
     expect(cell('B1').textContent).toBe('Totale');
     fireEvent.mouseDown(cell('A3'));
-    expect((screen.getByLabelText('Contents') as HTMLInputElement).value).toBe('=SUM(A1:A2)');
+    expect((screen.getByLabelText('Contents') as HTMLInputElement).value).toBe('=SOMMA(A1:A2)');
     expect((screen.getByLabelText('Cell') as HTMLInputElement).value).toBe('A3');
   });
 
@@ -135,7 +135,7 @@ describe('SheetGrid', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Insert row above' }));
 
-    expect(sheet.input(0, 3, 0)).toBe('=SUM(A2:A3)');
+    expect(sheet.input(0, 3, 0)).toBe('=SOMMA(A2:A3)');
   });
 
   test('a copy within the workbook pastes the formula with its references moved', () => {
@@ -149,7 +149,7 @@ describe('SheetGrid', () => {
     fireEvent.mouseDown(cell('B3'));
     fireEvent.paste(grid, { clipboardData });
 
-    expect(sheet.input(0, 2, 1)).toBe('=SUM(B1:B2)');
+    expect(sheet.input(0, 2, 1)).toBe('=SOMMA(B1:B2)');
   });
 
   test('text from elsewhere is pasted as typed cells', () => {
@@ -200,6 +200,34 @@ describe('SheetGrid', () => {
 
     expect(screen.getByRole('alert').textContent).toBe('Scegli Sì o No');
     expect(sheet.input(0, 4, 0)).toBe('');
+  });
+
+  test('Ctrl+Z undoes an edit and Ctrl+Y redoes it, and so do the toolbar buttons', () => {
+    const { cell, grid } = mount();
+    fireEvent.mouseDown(cell('A1'));
+    fireEvent.keyDown(grid, { key: 'Delete' });
+    expect(cell('A3').textContent).toBe('20');
+
+    fireEvent.keyDown(grid, { key: 'z', ctrlKey: true });
+    expect(cell('A3').textContent).toBe('30');
+    expect(screen.getByRole('button', { name: 'Redo' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.keyDown(grid, { key: 'y', ctrlKey: true });
+    expect(cell('A3').textContent).toBe('20');
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(sheet.input(0, 0, 0)).toBe('10');
+  });
+
+  test('a formula typed in Italian shows in Italian and decimals take a comma', () => {
+    const { cell, grid } = mount();
+    fireEvent.mouseDown(cell('C1'));
+    fireEvent.keyDown(grid, { key: 'F2' });
+    const editor = screen.getByRole('textbox', { name: 'C1' });
+    fireEvent.change(editor, { target: { value: '=se(A1>5;A1*1,5;0)' } });
+    fireEvent.keyDown(editor, { key: 'Enter' });
+
+    fireEvent.mouseDown(cell('C1'));
+    expect((screen.getByLabelText('Contents') as HTMLInputElement).value).toBe('=SE(A1>5;A1*1,5;0)');
+    expect(cell('C1').textContent).toBe('15');
   });
 
   test('read only, nothing can be typed and there is no toolbar', () => {

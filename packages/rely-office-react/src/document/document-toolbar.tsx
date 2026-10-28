@@ -53,10 +53,14 @@ export function DocumentToolbar({
   editor,
   labels,
   onImage,
+  onComment,
+  onFootnote,
 }: Readonly<{
   editor: Editor;
   labels: DocumentEditorLabels;
   onImage: (file: File) => void;
+  onComment: () => void;
+  onFootnote: () => void;
 }>): ReactElement {
   const [panel, setPanel] = useState<Panel>(null);
   const [linkAddress, setLinkAddress] = useState('');
@@ -84,6 +88,7 @@ export function DocumentToolbar({
         | Alignment
         | null,
       colour: (current.getAttributes('textStyle').color as string | null) ?? '#000000',
+      hasSelection: !current.state.selection.empty,
       canUndo: current.can().undo(),
       canRedo: current.can().redo(),
       canSink: current.can().sinkListItem('listItem'),
@@ -254,6 +259,14 @@ export function DocumentToolbar({
             </ToolButton>
           </div>
         ) : null}
+        <div className="rely-tool-group">
+          <ToolButton label={labels.addComment} disabled={!state.hasSelection} onClick={onComment}>
+            {'\u270e'}
+          </ToolButton>
+          <ToolButton label={labels.insertFootnote} onClick={onFootnote}>
+            {'x\u00b9'}
+          </ToolButton>
+        </div>
         <div className="rely-tool-group">
           <ToolButton label={labels.acceptChanges} onClick={() => chain().acceptAllChanges().run()}>
             {'✓'}

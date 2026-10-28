@@ -57,10 +57,17 @@ const editor = useRef<DocumentEditorHandle>(null);
 const docx = editor.current!.saveDocx(); // Uint8Array
 ```
 
-What the editor does not show as text rides along and is written back untouched: the notes the
-references point at, the comments, the page, the headers and footers, the sections and the
-embedded objects. `report` counts what the mapping had to leave out: marks a code run cannot carry
-and images whose bytes are missing.
+Beside the text, a panel edits what a document holds around it: the comments with their replies
+and their resolved state, the notes in the order the text refers to them, the headers and footers,
+a section's own included. Each is a small editor with the same schema as the page, so a header
+keeps its table and its logo. The toolbar adds a comment on the selection (by `author`, or
+`labels.you`) and a footnote at the caret; deleting a comment or a note takes its marks or its
+reference out of the text, and saving keeps only what the text still refers to, the notes
+numbered in order. `sidePanel={false}` leaves the panel to the host.
+
+What the editor does not show rides along and is written back untouched: the page, the sections
+and the embedded objects. `report` counts what the mapping had to leave out: marks a code run
+cannot carry and images whose bytes are missing.
 
 A host that draws its own editor uses the mapping and the extensions without the component:
 
@@ -87,7 +94,8 @@ const xlsx = sheet.save(); // or sheet.saveOds()
 
 The grid changes the workbook in place and draws only the cells in view, so a large sheet scrolls
 as a small one. A cell is typed into directly or through the formula bar; Enter, Tab and the
-arrows move, Shift extends, Delete clears, Ctrl+B, I and U style. A copy inside the workbook
+arrows move, Shift extends, Delete clears, Ctrl+B, I and U style, Ctrl+Z and Ctrl+Y undo and redo.
+The formula bar shows a formula in the workbook's locale, `=SOMMA(A1;0,5)` in Italian. A copy inside the workbook
 pastes its formulas with their references moved; text from another program is pasted as typed
 cells. A value a stop validation refuses is not written, and the message of the rule is shown.
 
@@ -106,7 +114,8 @@ const pptx = slides.current!.savePptx();
 
 A shape is moved by dragging it or with the arrows (Shift for larger steps), resized from its
 corners and written into with a double click or Enter; the formatting of each run is kept while
-its text changes. What a slide draws from its layout and master shows locked.
+its text changes. What a slide draws from its layout and master shows locked. Ctrl+Z and Ctrl+Y
+undo and redo every change, a drag as one, up to 100 of them.
 
 ## The look
 
