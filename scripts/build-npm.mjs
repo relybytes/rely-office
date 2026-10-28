@@ -5,9 +5,11 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
-// Build the npm package @relybytes/rely-office: compile rely-office-wasm (reading) and
-// rely-office-render-wasm (rendering) for wasm32-unknown-unknown, generate the Node bindings with
-// wasm-bindgen, copy the licence files and the fonts, and pack the package into dist/.
+// Build the two npm packages. @relybytes/rely-office, for the backend: rely-office-wasm (reading
+// and writing), rely-office-render-wasm (rendering) and rely-office-sheet-wasm (the spreadsheet)
+// bound for Node, with the licence files and the fonts. @relybytes/rely-office-react, for the
+// frontend: the reading and the spreadsheet modules bound for the web, and the editor components
+// compiled from TypeScript. Both are packed into dist/.
 //
 // Usage: node scripts/build-npm.mjs [--no-pack | --print-bindgen-version]
 // Needs cargo with the wasm32-unknown-unknown target, and wasm-bindgen-cli at exactly the
@@ -20,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packageDirectory = join(root, 'packages', 'rely-office-node');
+const reactDirectory = join(root, 'packages', 'rely-office-react');
 const bindingsDirectory = join(packageDirectory, 'wasm');
 const distDirectory = join(root, 'dist');
 const cargo = process.env.CARGO ?? 'cargo';
@@ -65,10 +68,12 @@ if (process.argv.includes('--print-bindgen-version')) {
   process.exit(0);
 }
 
-const packageJson = JSON.parse(readFileSync(join(packageDirectory, 'package.json'), 'utf8'));
 const version = workspaceVersion();
-if (packageJson.version !== version) {
-  fail(`package.json says ${packageJson.version}, the workspace says ${version}: align them`);
+for (const directory of [packageDirectory, reactDirectory]) {
+  const packageJson = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
+  if (packageJson.version !== version) {
+    fail(`${packageJson.name} says ${packageJson.version}, the workspace says ${version}: align them`);
+  }
 }
 
 let installedBindgen;
@@ -88,9 +93,9 @@ if (installedBindgen !== `wasm-bindgen ${expectedBindgen}`) {
 
 // Separate modules, so a process that only reads documents never loads the typesetter.
 const modules = ['rely_office_wasm', 'rely_office_render_wasm', 'rely_office_sheet_wasm'];
-// The spreadsheet also runs in the browser, for the sheet editor.
-const webModules = ['rely_office_sheet_wasm'];
-const webDirectory = join(packageDirectory, 'web');
+// The browser gets reading, writing and the spreadsheet; the typesetter stays on the backend.
+const webModules = ['rely_office_wasm', 'rely_office_sheet_wasm'];
+const webDirectory = join(reactDirectory, 'wasm');
 
 run(cargo, [
   'build',
@@ -120,10 +125,8 @@ for (const module of modules) {
   ]);
 }
 
+rmSync(webDirectory, { recursive: true, force: true });
 for (const module of webModules) {
-  for (const generated of readdirSync(webDirectory).filter((file) => file.startsWith(module))) {
-    rmSync(join(webDirectory, generated));
-  }
   run(wasmBindgen, [
     '--target',
     'web',
@@ -135,8 +138,10 @@ for (const module of webModules) {
   ]);
 }
 
-for (const file of ['LICENSE', 'NOTICE']) {
-  copyFileSync(join(root, file), join(packageDirectory, file));
+for (const directory of [packageDirectory, reactDirectory]) {
+  for (const file of ['LICENSE', 'NOTICE']) {
+    copyFileSync(join(root, file), join(directory, file));
+  }
 }
 
 const fontsDirectory = join(packageDirectory, 'fonts');
@@ -151,17 +156,27 @@ for (const module of modules) {
   console.log(`wasm module ${module}: ${(size / 1024).toFixed(0)} KiB`);
 }
 
+// npm is a .cmd script on Windows, which only a shell can start.
+function npm(command, directory) {
+  console.log(`> npm ${command} (${directory})`);
+  try {
+    execSync(`npm ${command}`, { cwd: directory, stdio: 'inherit' });
+  } catch (error) {
+    fail(`npm ${command} failed${error.status === undefined ? `: ${error.message}` : ''}`);
+  }
+}
+
+npm('ci --no-audit --no-fund', reactDirectory);
+npm('run build', reactDirectory);
+
 if (pack) {
   mkdirSync(distDirectory, { recursive: true });
   for (const old of readdirSync(distDirectory).filter((name) => name.endsWith('.tgz'))) {
     rmSync(join(distDirectory, old));
   }
-  console.log('> npm pack');
-  // npm is a .cmd script on Windows, which only a shell can start.
-  execSync(`npm pack --pack-destination "${distDirectory}"`, {
-    cwd: packageDirectory,
-    stdio: 'inherit',
-  });
+  for (const directory of [packageDirectory, reactDirectory]) {
+    npm(`pack --pack-destination "${distDirectory}"`, directory);
+  }
   for (const tarball of readdirSync(distDirectory).filter((name) => name.endsWith('.tgz'))) {
     const size = statSync(join(distDirectory, tarball)).size;
     console.log(`package: dist/${tarball} (${(size / 1024).toFixed(0)} KiB)`);

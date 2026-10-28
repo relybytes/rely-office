@@ -5,5 +5,10 @@
 /packages/rely-office-node/LICENSE
 /packages/rely-office-node/NOTICE
 /packages/rely-office-node/fonts/
-/packages/rely-office-node/web/rely_office_sheet_wasm*
+/packages/rely-office-react/wasm/
+/packages/rely-office-react/LICENSE
+/packages/rely-office-react/NOTICE
+/packages/rely-office-react/dist/
+/packages/rely-office-react/src/model.ts
 node_modules/
+/packages/rely-office-react/demo/dist/

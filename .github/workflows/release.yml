@@ -1,8 +1,9 @@
 name: Release
 
-# A tag v<version> publishes @relybytes/rely-office at that version to GitHub Packages. The tag must
-# match the version of packages/rely-office-node/package.json and of the Cargo workspace. A manual
-# run publishes the version on the branch it runs from.
+# A tag v<version> publishes both packages at that version to GitHub Packages: @relybytes/rely-office
+# for the backend and @relybytes/rely-office-react for the frontend. The tag must match the version
+# of both package.json files and of the Cargo workspace. A manual run publishes the version on the
+# branch it runs from.
 
 on:
   push:
@@ -14,7 +15,7 @@ permissions:
 
 jobs:
   publish:
-    name: Publish @relybytes/rely-office to GitHub Packages
+    name: Publish the npm packages to GitHub Packages
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,13 +40,17 @@ jobs:
           fi
       - name: Install wasm-bindgen-cli at the version in Cargo.lock
         run: cargo install wasm-bindgen-cli --version "$(node scripts/build-npm.mjs --print-bindgen-version)" --locked
-      - name: Build the npm package
+      - name: Build the npm packages
         run: node scripts/build-npm.mjs
-      - name: Smoke test the package
+      - name: Test the editor components and smoke test both packages
         run: |
+          (cd packages/rely-office-react && npm test)
           node packages/rely-office-node/test/smoke.cjs
-          node packages/rely-office-node/test/smoke-web.mjs
+          node packages/rely-office-react/test/smoke-dist.mjs
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm publish ./dist/*.tgz
+        run: |
+          for tarball in ./dist/*.tgz; do
+            npm publish "$tarball"
+          done

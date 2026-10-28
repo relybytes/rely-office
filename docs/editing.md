@@ -235,7 +235,8 @@ Not kept: comments, defined names, and formulas with functions outside the list,
 ## From JavaScript
 
 `createSheet({ locale })` and `openSheet(bytes, name, { locale })` return a `SheetDocument`; the
-browser entry `@relybytes/rely-office/web` has the same class behind `await initSheets()`. An
+frontend package `@relybytes/rely-office-react` has the same class behind `await initSheets()`,
+and its `SheetGrid` is an editor built on it. An
 editor asks for the cells of the window it shows (`cells(sheet, { top, left, bottom, right })`,
 each with its `input`, `display`, `kind` and `format`) and sends each action as a call: `setInput`,
 `setInputs`, `setFormat`, `setColumnWidth`, `setRowHeight`, `setStyle`, `setBorders`,

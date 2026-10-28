@@ -8,5 +8,8 @@
 | [editing.md](editing.md) | writing a docx from the tree and a pptx from the slides, and the editable spreadsheet: typing, formulas, functions, edits, conditional formats and validation, xlsx and ods out, the JavaScript API |
 | [roadmap.md](roadmap.md) | the steps and their status, known risks |
 
-The npm package has its own [README](../packages/rely-office-node/README.md) with the Node and
-browser API and the limits; [CHANGELOG.md](../CHANGELOG.md) lists the changes of each release.
+Each npm package has its own README: the backend package
+[`@relybytes/rely-office`](../packages/rely-office-node/README.md) with the Node API and the
+limits, the frontend package [`@relybytes/rely-office-react`](../packages/rely-office-react/README.md)
+with the browser runtime and the editor components; [CHANGELOG.md](../CHANGELOG.md) lists the
+changes of each release.

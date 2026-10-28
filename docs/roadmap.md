@@ -38,8 +38,8 @@ row. [rendering.md](rendering.md) has the method and the figures.
 | 2.4 | xlsx, xls, ods, csv and tsv in, xlsx out with cached values | done (0.3.0) |
 | 2.5 | The spreadsheet for JavaScript, in Node and in the browser | done (0.3.0) |
 
-Until phase 7 the editors themselves are the platform's: the Documento's rich-text editor maps the
-document tree, and the Foglio's grid drives a `SheetDocument`.
+Until phase 7 the editors were each application's own; since 0.7 they are the library's too, in
+the frontend package (phase 7).
 
 ## Phase 3: fidelity (0.4.0)
 
@@ -96,18 +96,20 @@ a converted file is saved as docx or pptx.
 An xls is saved as xlsx after an edit, by the user's decision of 2026-10-27: nothing writes the
 binary formats.
 
-## Phase 7: editor components (planned)
+## Phase 7: editor components (0.7.0)
 
-The mapping between the document tree and a rich-text editor is written today by each application
-that edits a document, the Rely Platform's Documento among them, and it has nothing specific to
-any of them. Phase 7 moves it into the library, as React components in a package of their own.
+The mapping between the document tree and a rich-text editor was written by each application that
+edits a document, the Rely Platform's Documento among them, and had nothing specific to any of
+them. Phase 7 moved it into the library, with React components, in a frontend package of its own:
+`@relybytes/rely-office` stays the backend package, `@relybytes/rely-office-react` is the
+frontend one, and both declare the same model from `packages/rely-office-node/model.d.ts`.
 
 | Step | Content | Status |
 | --- | --- | --- |
-| 7.1 | The document tree to and from a ProseMirror document, in the browser: every block, mark, list, table and image the tree holds, and what the editor cannot show kept aside and written back | planned |
-| 7.2 | A document editor component: toolbar, tables, images, comments and tracked changes, opening and saving docx, doc and odt through the WebAssembly build | planned |
-| 7.3 | A spreadsheet grid component over `SheetDocument`: formulas, formats, conditional formats and validation, saving xlsx and ods | planned |
-| 7.4 | A slide editor component over the slide model, saving pptx | planned |
+| 7.1 | The document tree to and from a ProseMirror document: every block, mark, list, table and inline of the tree has a node or a mark, and what the editor does not show (notes, comments, page, headers, sections, objects) rides along and is written back | done (0.7.0) |
+| 7.2 | `DocumentEditor` on TipTap: toolbar, tables, inline images, comments, tracked changes accepted or rejected, equations, links; opening and saving docx, doc and odt through the browser build | done (0.7.0) |
+| 7.3 | `SheetGrid` over `SheetDocument`: drawn by window, formulas, styles, formats, merges, conditional formats and validation, rows, columns and sheets, the clipboard with references moved | done (0.7.0) |
+| 7.4 | `SlideEditor` over the slide model: shapes moved, resized and written into with their run formatting kept, pictures, tables, slides and speaker notes, saving pptx | done (0.7.0) |
 
 The host application keeps what is its own: where a file is stored, who may open it, locking and
 autosave, and where an inserted image goes, all through the components' props.
@@ -120,6 +122,11 @@ autosave, and where an inserted image goes, all through the components' props.
 - A larger corpus with documents made by Word and pptx and odp pages, and the corpus figure as a
   CI gate once it is stable.
 - Publishing to the public npm registry (issue #1).
+- Formulas shown in the locale's own function names and separators: the engine reads `SOMMA` and
+  keeps `SUM`, so the grid's formula bar shows the English name.
+- Editing the notes and the comments of a document, and the headers and footers, in the document
+  editor: today they are kept and written back, not edited.
+- Undo in the spreadsheet grid and the slide editor; the document editor has it from TipTap.
 
 ## Known risks
 

@@ -26,7 +26,7 @@ jobs:
         run: cargo test --all-targets
 
   wasm:
-    name: WebAssembly package and Node smoke test
+    name: WebAssembly packages, editor components and smoke tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,18 +46,24 @@ jobs:
           if [ "$(wasm-bindgen --version 2>/dev/null)" != "wasm-bindgen $version" ]; then
             cargo install wasm-bindgen-cli --version "$version" --locked --force
           fi
-      - name: Build the npm package
+      - name: Build the npm packages
         run: node scripts/build-npm.mjs
-      - name: Smoke test the package folder
+      - name: Type-check and test the editor components
+        working-directory: packages/rely-office-react
+        run: |
+          npm run typecheck
+          npm test
+      - name: Smoke test the package folders
         run: |
           node packages/rely-office-node/test/smoke.cjs
-          node packages/rely-office-node/test/smoke-web.mjs
-      - name: Smoke test the packed tarball
+          node packages/rely-office-react/test/smoke-dist.mjs
+      - name: Smoke test the packed tarballs
         run: |
-          mkdir -p "$RUNNER_TEMP/packed"
-          tar -xzf dist/*.tgz -C "$RUNNER_TEMP/packed"
-          node packages/rely-office-node/test/smoke.cjs "$RUNNER_TEMP/packed/package"
-          node packages/rely-office-node/test/smoke-web.mjs "$RUNNER_TEMP/packed/package"
+          mkdir -p "$RUNNER_TEMP/backend" "$RUNNER_TEMP/frontend"
+          tar -xzf dist/relybytes-rely-office-[0-9]*.tgz -C "$RUNNER_TEMP/backend"
+          tar -xzf dist/relybytes-rely-office-react-*.tgz -C "$RUNNER_TEMP/frontend"
+          node packages/rely-office-node/test/smoke.cjs "$RUNNER_TEMP/backend/package"
+          node packages/rely-office-react/test/smoke-dist.mjs "$RUNNER_TEMP/frontend/package"
       - uses: actions/upload-artifact@v4
         with:
           name: rely-office-npm

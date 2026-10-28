@@ -5,7 +5,7 @@ as tables, a `.docx`, `.doc` or `.odt` as a document tree for a rich-text editor
 PDF and PNG through Typst, writing `.docx` back from that tree and `.pptx` from slides, so a Word
 or PowerPoint 97-2003 file converts to the new format, slides edited as JSON, and an editable
 spreadsheet with formulas, conditional formats and validation that saves xlsx and ods. It runs natively and, compiled to WebAssembly, in process from Node and in the
-browser.
+browser, where React components edit documents, spreadsheets and slides.
 
 rely-office is built and maintained by [RelyBytes Consulting](https://relybytes.com) for the Drive
 of the [Rely Platform](https://relyplatform.app), where it previews, indexes, edits and exports the
@@ -86,11 +86,18 @@ workbook.set_input(0, CellRef::new(0, 0), "=SOMMA(B1:B9)", Locale::Italian)?;
 let xlsx = write_xlsx(&workbook)?;
 ```
 
-## Use it from Node and the browser
+## Two npm packages: one for the backend, one for the frontend
 
-The npm package [`@relybytes/rely-office`](packages/rely-office-node) wraps the WebAssembly
-builds: synchronous calls in Node 18 or later, no native addon; the spreadsheet also has a browser
-entry, `@relybytes/rely-office/web`, for an editor.
+| Package | Where | What |
+| --- | --- | --- |
+| [`@relybytes/rely-office`](packages/rely-office-node) | Node 18 or later | every call below, rendering to PDF and PNG included; synchronous, no native addon |
+| [`@relybytes/rely-office-react`](packages/rely-office-react) | the browser | reading and writing documents, presentations and spreadsheets, and the React editors over them |
+
+They declare the same model from one file, so a tree read on the server opens in the editor and a
+document saved in the browser is read back by the server. Rendering stays on the backend: the
+typesetter is 29 MB of WebAssembly.
+
+### On the backend
 
 ```js
 const office = require('@relybytes/rely-office');
@@ -106,6 +113,25 @@ const sheet = office.openSheet(xlsx, 'conti.xlsx');     // edit, recalculate, sa
 ```
 
 The package [README](packages/rely-office-node/README.md) has the whole API.
+
+### In the browser
+
+```tsx
+import { DocumentEditor, initDocuments, openDocument } from '@relybytes/rely-office-react';
+import '@relybytes/rely-office-react/styles.css';
+
+await initDocuments();
+const { document } = openDocument(bytes);              // docx, doc or odt
+<DocumentEditor ref={editor} document={document} />;   // then editor.current.saveDocx()
+```
+
+`SheetGrid` edits a workbook from `openSheet` and `SlideEditor` a presentation from
+`readPresentation` the same way; the package [README](packages/rely-office-react/README.md) has
+all three.
+
+| Documents | Spreadsheets | Slides |
+| --- | --- | --- |
+| <img src="docs/assets/editor-document.png" alt="The document editor with a meeting record: headings, a numbered list, a table, an equation and a quote, under a formatting toolbar"> | <img src="docs/assets/editor-sheet.png" alt="The spreadsheet grid with a monthly table, its totals computed by formulas, a formula bar and sheet tabs"> | <img src="docs/assets/editor-slides.png" alt="The slide editor with the slide thumbnails, a slide with a title, a text and a circle, and the speaker notes"> |
 
 ## From a terminal
 
@@ -130,12 +156,12 @@ Renders use the fonts of the folder `RELY_OFFICE_FONTS` names, by default `./fon
   <img src="docs/assets/rely-office-roadmap.svg" width="100%" alt="Releases 0.1 to 0.6 are done; next, planned: React editor components for documents, sheets and slides.">
 </p>
 
-Six releases took the library from text extraction to drawing and saving every format above.
-**Next are the editor components**: React components that edit the document tree, the workbook
+Six releases took the library from text extraction to drawing and saving every format above;
+**0.7 adds the editor components**: React components that edit the document tree, the workbook
 and the slides directly, so an application gets a Word-like editor, a spreadsheet grid and a slide
-editor that open and save Office files without writing the mapping itself. They will ship as their
-own package beside `@relybytes/rely-office`, leaving storage, sharing and locking to the host
-application. The details are in the [roadmap](docs/roadmap.md).
+editor that open and save Office files without writing the mapping itself. They ship in the
+frontend package, leaving storage, sharing and locking to the host application. What comes next
+is in the [roadmap](docs/roadmap.md).
 
 ## Build and test
 
@@ -143,9 +169,10 @@ application. The details are in the [roadmap](docs/roadmap.md).
 cargo test --workspace
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version "$(node scripts/build-npm.mjs --print-bindgen-version)" --locked
-node scripts/build-npm.mjs                        # writes dist/relybytes-rely-office-<version>.tgz
-node packages/rely-office-node/test/smoke.cjs     # every Node export
-node packages/rely-office-node/test/smoke-web.mjs # the browser entry
+node scripts/build-npm.mjs                          # writes both packages to dist/
+node packages/rely-office-node/test/smoke.cjs       # every Node export
+(cd packages/rely-office-react && npm test)         # the editors over the real WebAssembly
+node packages/rely-office-react/test/smoke-dist.mjs # the built browser runtime
 SOFFICE=soffice node scripts/corpus.mjs           # pages compared with LibreOffice
 ```
 
@@ -159,7 +186,8 @@ SOFFICE=soffice node scripts/corpus.mjs           # pages compared with LibreOff
 | [`crates/rely-office-cli`](crates/rely-office-cli) | the `rely-office` command |
 | [`crates/rely-office-wasm`](crates/rely-office-wasm), [`-render-wasm`](crates/rely-office-render-wasm), [`-sheet-wasm`](crates/rely-office-sheet-wasm) | the WebAssembly fronts |
 | [`crates/rely-office-corpus`](crates/rely-office-corpus) | the page comparison with LibreOffice |
-| [`packages/rely-office-node`](packages/rely-office-node) | the npm package `@relybytes/rely-office` |
+| [`packages/rely-office-node`](packages/rely-office-node) | the backend package `@relybytes/rely-office`, and `model.d.ts`, the model both packages declare |
+| [`packages/rely-office-react`](packages/rely-office-react) | the frontend package `@relybytes/rely-office-react`: the browser runtime and the editor components |
 | [`corpus/`](corpus) and [`scripts/corpus.mjs`](scripts/corpus.mjs) | the Italian documents of the comparison |
 | [`fonts/`](fonts) | the fonts the package ships: metric-compatible text faces under the SIL Open Font License 1.1, and DejaVu Math TeX Gyre for equations |
 | [`fuzz/`](fuzz) | cargo-fuzz targets |

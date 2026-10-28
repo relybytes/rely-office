@@ -32,7 +32,8 @@ spreadsheet features past values, formulas, number formats and column widths.
 | `rely-office-cli` | the `rely-office` command for trying files by hand | the three crates above |
 | `rely-office-wasm`, `rely-office-render-wasm`, `rely-office-sheet-wasm` | the WebAssembly fronts for JavaScript, not published as crates | `wasm-bindgen`, `serde`, `serde_json` |
 | `rely-office-corpus` | the page comparison with LibreOffice, not published | `rely-office-render`, `tiny-skia` |
-| `@relybytes/rely-office` (npm, `packages/rely-office-node`) | the Node package and its browser entry: hand-written wrappers and types over the generated bindings, and the fonts | the three modules |
+| `@relybytes/rely-office` (npm, `packages/rely-office-node`) | the backend package: hand-written wrappers and types over the bindings generated for Node, the fonts, and `model.d.ts`, the model both packages declare | the three modules |
+| `@relybytes/rely-office-react` (npm, `packages/rely-office-react`) | the frontend package: the reading and spreadsheet modules bound for the web, the same calls in TypeScript, and the React editors for documents (on TipTap), spreadsheets and slides | `rely-office-wasm`, `rely-office-sheet-wasm`; React and TipTap as peers |
 
 ## Inside the core
 

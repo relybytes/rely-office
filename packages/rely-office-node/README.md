@@ -1,6 +1,6 @@
 # @relybytes/rely-office
 
-Office documents in Node and in the browser without an office suite, through
+Office documents on the backend, in Node, without an office suite, through
 [rely-office](https://github.com/relybytes/rely-office) compiled to WebAssembly: the format of a
 file, its text for a search index, the sheets of a spreadsheet as tables, a `.docx`, `.doc` or
 `.odt` as a neutral document tree for a rich-text editor and back, a presentation as slides and
@@ -9,6 +9,10 @@ formats and validation that saves xlsx and ods.
 
 Everything runs in process; there is no native addon to build and no external program to call.
 Every read is bounded by limits, so an uploaded file cannot exhaust memory.
+
+For the browser, the same reading and writing and the editor components (a document editor, a
+spreadsheet grid and a slide editor in React) are the frontend package,
+[`@relybytes/rely-office-react`](../rely-office-react/README.md). Both declare the same model.
 
 ## Install
 
@@ -195,18 +199,6 @@ what a cell accepts and the items of its list, and `invalidCells` the cells thei
 refuses. `save()` writes an xlsx and `saveOds()` an ods, which keeps everything but the pictures,
 charts and pivot tables. The formulas, functions, rules and edits are described in
 [docs/editing.md](https://github.com/relybytes/rely-office/blob/main/docs/editing.md).
-
-### In the browser
-
-```js
-import { initSheets, openSheet } from '@relybytes/rely-office/web';
-
-await initSheets();                 // fetches the .wasm next to the module; or pass a URL or bytes
-const sheet = await openSheet(bytes, 'conti.xlsx', { locale: 'it' });
-```
-
-The browser entry is an ES module with the same `SheetDocument`, built with `wasm-bindgen
---target web`; bundlers such as webpack resolve its `.wasm` as an asset.
 
 ## The document tree
 

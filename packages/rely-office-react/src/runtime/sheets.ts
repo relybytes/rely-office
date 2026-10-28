@@ -1,0 +1,255 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+
+// The spreadsheet in the browser: the same SheetDocument as the backend package, over the
+// WebAssembly module built for the web. `initSheets` loads the module once.
+
+import init, { SheetDocument as WasmSheetDocument } from '../../wasm/rely_office_sheet_wasm.js';
+import type {
+  Border,
+  BorderPlacement,
+  CellFormat,
+  CellRange,
+  CellStyle,
+  CellValidation,
+  CellWindow,
+  ConditionalFormat,
+  ConditionalLook,
+  DataValidation,
+  DocumentBytes,
+  SheetCell,
+  SheetDocument,
+  SheetOptions,
+  SheetSummary,
+  StylePatch,
+} from '../model.js';
+import { call, toBytes, toFileName, type WasmSource } from './shared.js';
+
+let loading: Promise<void> | null = null;
+
+/** Load the module once; `wasm` is a URL, a Response, bytes or a compiled module. */
+export function initSheets(wasm?: WasmSource): Promise<void> {
+  if (loading === null) {
+    loading = init(wasm === undefined ? undefined : { module_or_path: wasm }).then(() => undefined);
+    loading.catch(() => {
+      loading = null;
+    });
+  }
+  return loading;
+}
+
+/** Days since 30 December 1899, as spreadsheets count dates; -1 for none. */
+function toSerial(today: Date | number | null): number {
+  if (today === null || today === undefined) {
+    return -1;
+  }
+  if (today instanceof Date) {
+    const midnight = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    const local = today.getHours() / 24 + today.getMinutes() / 1440 + today.getSeconds() / 86400;
+    return (midnight - Date.UTC(1899, 11, 30)) / 86400000 + local;
+  }
+  return Number(today);
+}
+
+function parse<T>(json: () => string): T {
+  return JSON.parse(call(json)) as T;
+}
+
+/** A workbook being edited in the browser; its methods mirror the editor's actions. */
+class BrowserSheetDocument implements SheetDocument {
+  constructor(private readonly document: WasmSheetDocument) {}
+
+  sheets(): SheetSummary[] {
+    return parse(() => this.document.sheetsJson());
+  }
+
+  cells(sheet: number, { top, left, bottom, right }: CellWindow): SheetCell[] {
+    return parse(() => this.document.cellsJson(sheet, top, left, bottom, right));
+  }
+
+  input(sheet: number, row: number, column: number): string {
+    return this.document.input(sheet, row, column);
+  }
+
+  setInput(sheet: number, row: number, column: number, text: string): void {
+    call(() => this.document.setInput(sheet, row, column, String(text)));
+  }
+
+  setInputs(sheet: number, inputs: [number, number, string][]): void {
+    call(() => this.document.setInputs(sheet, JSON.stringify(inputs)));
+  }
+
+  setFormat(sheet: number, row: number, column: number, format: CellFormat): void {
+    call(() => this.document.setFormat(sheet, row, column, JSON.stringify(format)));
+  }
+
+  setColumnWidth(sheet: number, column: number, width: number | null): void {
+    call(() => this.document.setColumnWidth(sheet, column, width ?? -1));
+  }
+
+  clearRange(sheet: number, { top, left, bottom, right }: CellWindow): void {
+    call(() => this.document.clearRange(sheet, top, left, bottom, right));
+  }
+
+  setStyle(sheet: number, { top, left, bottom, right }: CellWindow, patch: StylePatch): void {
+    call(() => this.document.setStyle(sheet, top, left, bottom, right, JSON.stringify(patch ?? {})));
+  }
+
+  setBorders(
+    sheet: number,
+    { top, left, bottom, right }: CellWindow,
+    placement: BorderPlacement,
+    border: Border | null,
+  ): void {
+    call(() =>
+      this.document.setBorders(
+        sheet,
+        top,
+        left,
+        bottom,
+        right,
+        String(placement),
+        JSON.stringify(border ?? null),
+      ),
+    );
+  }
+
+  clearStyles(sheet: number, { top, left, bottom, right }: CellWindow): void {
+    call(() => this.document.clearStyles(sheet, top, left, bottom, right));
+  }
+
+  styles(): CellStyle[] {
+    return parse(() => this.document.stylesJson());
+  }
+
+  merges(sheet: number): CellRange[] {
+    return parse(() => this.document.mergesJson(sheet));
+  }
+
+  mergeCells(sheet: number, { top, left, bottom, right }: CellWindow): void {
+    call(() => this.document.mergeCells(sheet, top, left, bottom, right));
+  }
+
+  unmergeCells(sheet: number, { top, left, bottom, right }: CellWindow): void {
+    call(() => this.document.unmergeCells(sheet, top, left, bottom, right));
+  }
+
+  setRowHeight(sheet: number, row: number, height: number | null): void {
+    call(() => this.document.setRowHeight(sheet, row, height ?? -1));
+  }
+
+  copyRange(
+    sheet: number,
+    { top, left, bottom, right }: CellWindow,
+    targetSheet: number,
+    row: number,
+    column: number,
+  ): void {
+    call(() => this.document.copyRange(sheet, top, left, bottom, right, targetSheet, row, column));
+  }
+
+  insertRows(sheet: number, at: number, count = 1): void {
+    call(() => this.document.insertRows(sheet, at, count));
+  }
+
+  deleteRows(sheet: number, at: number, count = 1): void {
+    call(() => this.document.deleteRows(sheet, at, count));
+  }
+
+  insertColumns(sheet: number, at: number, count = 1): void {
+    call(() => this.document.insertColumns(sheet, at, count));
+  }
+
+  deleteColumns(sheet: number, at: number, count = 1): void {
+    call(() => this.document.deleteColumns(sheet, at, count));
+  }
+
+  addSheet(name: string): number {
+    return call(() => this.document.addSheet(String(name)));
+  }
+
+  renameSheet(sheet: number, name: string): void {
+    call(() => this.document.renameSheet(sheet, String(name)));
+  }
+
+  removeSheet(sheet: number): void {
+    call(() => this.document.removeSheet(sheet));
+  }
+
+  conditionalFormats(sheet: number): ConditionalFormat[] {
+    return parse(() => this.document.conditionalFormatsJson(sheet));
+  }
+
+  setConditionalFormats(sheet: number, formats: ConditionalFormat[]): void {
+    call(() => this.document.setConditionalFormats(sheet, JSON.stringify(formats ?? [])));
+  }
+
+  validations(sheet: number): DataValidation[] {
+    return parse(() => this.document.validationsJson(sheet));
+  }
+
+  setValidations(sheet: number, validations: DataValidation[]): void {
+    call(() => this.document.setValidations(sheet, JSON.stringify(validations ?? [])));
+  }
+
+  conditionalLooks(sheet: number): ConditionalLook[] {
+    return parse(() => this.document.conditionalLooksJson(sheet));
+  }
+
+  validation(sheet: number, row: number, column: number): CellValidation {
+    return parse(() => this.document.validationJson(sheet, row, column));
+  }
+
+  invalidCells(sheet: number): [number, number][] {
+    return parse(() => this.document.invalidCellsJson(sheet));
+  }
+
+  setToday(today: Date | number | null): void {
+    this.document.setToday(toSerial(today));
+  }
+
+  previewInput(text: string): 'number' | 'text' | 'bool' | 'formula' | 'empty' | 'invalid' {
+    return this.document.previewInput(String(text)) as
+      | 'number'
+      | 'text'
+      | 'bool'
+      | 'formula'
+      | 'empty'
+      | 'invalid';
+  }
+
+  save(): Uint8Array {
+    return call(() => this.document.save());
+  }
+
+  saveOds(): Uint8Array {
+    return call(() => this.document.saveOds());
+  }
+
+  free(): void {
+    this.document.free();
+  }
+}
+
+/** A new workbook with one empty sheet, Foglio1, once the module is loaded. */
+export async function createSheet(options?: SheetOptions): Promise<SheetDocument> {
+  await initSheets();
+  const locale = options?.locale ?? 'it';
+  return new BrowserSheetDocument(call(() => new WasmSheetDocument(locale)));
+}
+
+/** A workbook opened from xlsx, xls, ods, csv or tsv, once the module is loaded. */
+export async function openSheet(
+  bytes: DocumentBytes,
+  fileName?: string,
+  options?: SheetOptions,
+): Promise<SheetDocument> {
+  await initSheets();
+  const locale = options?.locale ?? 'it';
+  return new BrowserSheetDocument(
+    call(() => WasmSheetDocument.open(toBytes(bytes), toFileName(fileName), locale)),
+  );
+}
