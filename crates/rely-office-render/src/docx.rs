@@ -1088,6 +1088,9 @@ impl Writer<'_> {
             f64::from(look.cell_margins_twips[side].unwrap_or(DEFAULT_CELL_MARGINS_TWIPS[side]))
                 / TWIPS_PER_POINT
         });
+        // Each row is taller by the double rule under it, half above and half below its text.
+        let rule = double_rule(rows, &look.edges) / 2.0;
+        let (top, bottom) = (top + rule, bottom + rule);
         let mut table = format!(
             "table(columns: ({}), stroke: {stroke}, inset: (top: {}, left: {}, bottom: {}, right: {}),",
             self.column_widths(&look.column_widths_twips, columns),
@@ -1250,6 +1253,22 @@ fn cell_stroke(cell: &CellLook, table: &Borders, edges: CellEdges, borders: bool
     }
     stroke.push(')');
     stroke
+}
+
+/// How much room a double rule between rows takes, its two lines and the gap between them:
+/// the widest of the table's and its cells' top and bottom double borders.
+fn double_rule(rows: &[TableRow], table: &Borders) -> f64 {
+    let cells = rows
+        .iter()
+        .flat_map(|row| &row.cells)
+        .flat_map(|cell| [&cell.look.borders.top, &cell.look.borders.bottom]);
+    [&table.top, &table.bottom, &table.inside_horizontal]
+        .into_iter()
+        .chain(cells)
+        .flatten()
+        .filter(|border| border.style == BorderStyle::Double)
+        .map(|border| f64::from(border.width_eighths) / 8.0 * 3.0)
+        .fold(0.0, f64::max)
 }
 
 /// A Typst stroke for a border edge.

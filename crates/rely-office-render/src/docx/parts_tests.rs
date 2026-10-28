@@ -546,3 +546,36 @@ fn sets_the_page_of_each_section() {
         "no header carried on"
     );
 }
+
+#[test]
+fn a_double_rule_between_rows_takes_its_room() {
+    let cell = |top: Option<Border>| TableCell {
+        col_span: 1,
+        row_span: 1,
+        blocks: Vec::new(),
+        look: CellLook {
+            borders: Borders {
+                top,
+                ..Borders::default()
+            },
+            ..CellLook::default()
+        },
+    };
+    let rows = vec![TableRow {
+        header: false,
+        cells: vec![
+            cell(Some(border(BorderStyle::Single, None))),
+            cell(Some(Border {
+                width_eighths: 2,
+                ..border(BorderStyle::Double, None)
+            })),
+        ],
+    }];
+    assert!((double_rule(&rows, &Borders::default()) - 0.75).abs() < 1e-9);
+    let table = Borders {
+        inside_horizontal: Some(border(BorderStyle::Double, None)),
+        ..Borders::default()
+    };
+    assert!((double_rule(&rows, &table) - 3.0).abs() < 1e-9);
+    assert!(double_rule(&[], &Borders::default()).abs() < 1e-9);
+}
