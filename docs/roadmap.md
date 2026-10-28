@@ -38,8 +38,8 @@ row. [rendering.md](rendering.md) has the method and the figures.
 | 2.4 | xlsx, xls, ods, csv and tsv in, xlsx out with cached values | done (0.3.0) |
 | 2.5 | The spreadsheet for JavaScript, in Node and in the browser | done (0.3.0) |
 
-The editors themselves are the platform's: the Documento's rich-text editor maps the document
-tree, and the Foglio's grid drives a `SheetDocument`.
+Until phase 7 the editors themselves are the platform's: the Documento's rich-text editor maps the
+document tree, and the Foglio's grid drives a `SheetDocument`.
 
 ## Phase 3: fidelity (0.4.0)
 
@@ -95,6 +95,22 @@ a converted file is saved as docx or pptx.
 
 An xls is saved as xlsx after an edit, by the user's decision of 2026-10-27: nothing writes the
 binary formats.
+
+## Phase 7: editor components (planned)
+
+The mapping between the document tree and a rich-text editor is written today by each application
+that edits a document, the Rely Platform's Documento among them, and it has nothing specific to
+any of them. Phase 7 moves it into the library, as React components in a package of their own.
+
+| Step | Content | Status |
+| --- | --- | --- |
+| 7.1 | The document tree to and from a ProseMirror document, in the browser: every block, mark, list, table and image the tree holds, and what the editor cannot show kept aside and written back | planned |
+| 7.2 | A document editor component: toolbar, tables, images, comments and tracked changes, opening and saving docx, doc and odt through the WebAssembly build | planned |
+| 7.3 | A spreadsheet grid component over `SheetDocument`: formulas, formats, conditional formats and validation, saving xlsx and ods | planned |
+| 7.4 | A slide editor component over the slide model, saving pptx | planned |
+
+The host application keeps what is its own: where a file is stored, who may open it, locking and
+autosave, and where an inserted image goes, all through the components' props.
 
 ## Next
 

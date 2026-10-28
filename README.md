@@ -11,6 +11,34 @@ rely-office is built and maintained by [RelyBytes Consulting](https://relybytes.
 of the [Rely Platform](https://relyplatform.app), where it previews, indexes, edits and exports the
 files a team stores, and is published under the Mozilla Public License 2.0 so that it stays open.
 
+<p align="center">
+  <img src="docs/assets/rely-office-flow.svg" width="100%" alt="Office files go in; rely-office detects the format from the bytes, reads it within limits into one model, and gives back PDF and PNG previews, text for search, a tree for an editor, and files saved back.">
+</p>
+
+## Why it exists
+
+- **No office suite on the server.** Previews, thumbnails and conversions used to mean a
+  LibreOffice or Gotenberg container per service. rely-office is a library: one dependency, in
+  process, the same build on every platform.
+- **Safe on untrusted files.** Safe Rust, a format read from the bytes and every input under a
+  [`Limits`](crates/rely-office-core/src/limits.rs) cap, fuzzed with `cargo-fuzz`: a file from a
+  stranger cannot exhaust the process that opens it.
+- **One model for everything.** A document becomes one tree whatever its format, so a `.doc` from
+  1997, an `.odt` and a `.docx` are drawn, indexed, edited and saved by the same code.
+- **Checked against the real thing.** Pages are compared with LibreOffice on a corpus of Italian
+  documents; [rendering.md](docs/rendering.md) has the method and the figures.
+
+## In production
+
+In the Drive of the Rely Platform, rely-office runs inside the Node service as WebAssembly and:
+
+| Feature | Calls |
+| --- | --- |
+| Shows Word, Excel, PowerPoint and OpenDocument files as pages, with a thumbnail of the first page | `render` |
+| Indexes the text of every Office file for search | `extractText` |
+| Opens a `.docx`, `.doc` or `.odt` as an editable document, images included | `readDocumentTree` |
+| Downloads an edited document as Word | `writeDocx` |
+
 ## What it does
 
 | Format | Detect | Text for search | Sheets as tables | Document tree | Render | Write | Edit |
@@ -95,6 +123,19 @@ cargo run -p rely-office-cli -- ods sales.xlsx          # a spreadsheet saved as
 ```
 
 Renders use the fonts of the folder `RELY_OFFICE_FONTS` names, by default `./fonts`.
+
+## Roadmap
+
+<p align="center">
+  <img src="docs/assets/rely-office-roadmap.svg" width="100%" alt="Releases 0.1 to 0.6 are done; next, planned: React editor components for documents, sheets and slides.">
+</p>
+
+Six releases took the library from text extraction to drawing and saving every format above.
+**Next are the editor components**: React components that edit the document tree, the workbook
+and the slides directly, so an application gets a Word-like editor, a spreadsheet grid and a slide
+editor that open and save Office files without writing the mapping itself. They will ship as their
+own package beside `@relybytes/rely-office`, leaving storage, sharing and locking to the host
+application. The details are in the [roadmap](docs/roadmap.md).
 
 ## Build and test
 

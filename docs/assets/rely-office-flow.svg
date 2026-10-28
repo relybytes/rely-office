@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" width="960" height="400" role="img" aria-labelledby="title desc">
+  <title id="title">How rely-office works</title>
+  <desc id="desc">Office files go in; rely-office detects the format from the bytes, reads it within limits into one model, and gives back PDF and PNG previews, text for search, a tree for an editor, and files saved back.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#57606a"/>
+    </marker>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #1f2328; }
+      .muted { fill: #57606a; }
+      .label { font-size: 12px; letter-spacing: 0.06em; font-weight: 600; }
+      .chip { font-size: 13px; font-weight: 600; }
+      .step { font-size: 14px; font-weight: 600; }
+      .small { font-size: 12px; }
+      .flow { stroke: #57606a; stroke-width: 1.5; fill: none; }
+    </style>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="959" height="399" rx="16" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="32" y="44" font-size="18" font-weight="700">From any Office file to what a product needs</text>
+
+  <text x="32" y="84" class="label muted">FILES IN</text>
+  <g class="chip" text-anchor="middle">
+    <rect x="32" y="98" width="88" height="30" rx="15" fill="#dbeafe"/><text x="76" y="118" style="fill:#1d4ed8">docx</text>
+    <rect x="32" y="138" width="88" height="30" rx="15" fill="#dbeafe"/><text x="76" y="158" style="fill:#1d4ed8">doc</text>
+    <rect x="32" y="178" width="88" height="30" rx="15" fill="#dbeafe"/><text x="76" y="198" style="fill:#1d4ed8">odt</text>
+    <rect x="32" y="218" width="88" height="30" rx="15" fill="#ffedd5"/><text x="76" y="238" style="fill:#c2410c">pptx</text>
+    <rect x="32" y="258" width="88" height="30" rx="15" fill="#ffedd5"/><text x="76" y="278" style="fill:#c2410c">ppt</text>
+    <rect x="132" y="98" width="88" height="30" rx="15" fill="#dcfce7"/><text x="176" y="118" style="fill:#15803d">xlsx</text>
+    <rect x="132" y="138" width="88" height="30" rx="15" fill="#dcfce7"/><text x="176" y="158" style="fill:#15803d">xls</text>
+    <rect x="132" y="178" width="88" height="30" rx="15" fill="#dcfce7"/><text x="176" y="198" style="fill:#15803d">ods</text>
+    <rect x="132" y="218" width="88" height="30" rx="15" fill="#dcfce7"/><text x="176" y="238" style="fill:#15803d">csv</text>
+    <rect x="132" y="258" width="88" height="30" rx="15" fill="#ffedd5"/><text x="176" y="278" style="fill:#c2410c">odp</text>
+  </g>
+
+  <line x1="232" y1="193" x2="294" y2="193" class="flow" marker-end="url(#arrow)"/>
+
+  <rect x="300" y="72" width="340" height="256" rx="14" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="322" y="104" font-size="20" font-weight="700" style="fill:#1d4ed8">rely-office</text>
+  <text x="322" y="124" class="small muted">safe Rust, no office suite installed</text>
+
+  <rect x="320" y="140" width="300" height="52" rx="10" fill="#ffffff" stroke="#bfdbfe"/>
+  <text x="338" y="162" class="step">1  Detect</text>
+  <text x="338" y="180" class="small muted">the format comes from the bytes, not the name</text>
+  <rect x="320" y="200" width="300" height="52" rx="10" fill="#ffffff" stroke="#bfdbfe"/>
+  <text x="338" y="222" class="step">2  Read within limits</text>
+  <text x="338" y="240" class="small muted">zip bombs and huge sheets stop at a cap</text>
+  <rect x="320" y="260" width="300" height="52" rx="10" fill="#ffffff" stroke="#bfdbfe"/>
+  <text x="338" y="282" class="step">3  One model</text>
+  <text x="338" y="300" class="small muted">a document tree, a workbook, slides</text>
+
+  <path d="M640 200 C 668 200, 668 112, 694 112" class="flow" marker-end="url(#arrow)"/>
+  <path d="M640 200 C 668 200, 668 172, 694 172" class="flow" marker-end="url(#arrow)"/>
+  <path d="M640 200 C 668 200, 668 232, 694 232" class="flow" marker-end="url(#arrow)"/>
+  <path d="M640 200 C 668 200, 668 292, 694 292" class="flow" marker-end="url(#arrow)"/>
+
+  <text x="700" y="84" class="label muted">WHAT COMES OUT</text>
+  <rect x="700" y="89" width="228" height="46" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="714" y="108" class="step">PDF and PNG previews</text>
+  <text x="714" y="125" class="small muted">laid out by Typst, in process</text>
+  <rect x="700" y="149" width="228" height="46" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="714" y="168" class="step">Text for search</text>
+  <text x="714" y="185" class="small muted">body, notes, every sheet and slide</text>
+  <rect x="700" y="209" width="228" height="46" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="714" y="228" class="step">A tree for an editor</text>
+  <text x="714" y="245" class="small muted">comments, changes, equations kept</text>
+  <rect x="700" y="269" width="228" height="46" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="714" y="288" class="step">Saved back</text>
+  <text x="714" y="305" class="small muted">docx, pptx, xlsx and ods</text>
+
+  <rect x="32" y="346" width="896" height="34" rx="8" fill="#f6f8fa"/>
+  <text x="480" y="368" text-anchor="middle" font-size="13">Runs as a Rust crate  ·  WebAssembly in Node 18+  ·  WebAssembly in the browser  ·  a command line tool</text>
+</svg>
