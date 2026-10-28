@@ -114,6 +114,9 @@ pub(super) struct Settings {
     /// Odd and even pages have headers and footers of their own.
     pub even_and_odd_headers: bool,
     pub default_tab_twips: u32,
+    /// Spaces between paragraphs add up: a document in Word 2003's compatibility, or one that
+    /// asks for it with `doNotUseHTMLParagraphAutoSpacing`.
+    pub spacing_adds_up: bool,
 }
 
 impl Default for Settings {
@@ -121,6 +124,7 @@ impl Default for Settings {
         Self {
             even_and_odd_headers: false,
             default_tab_twips: DEFAULT_TAB_TWIPS,
+            spacing_adds_up: false,
         }
     }
 }
@@ -140,6 +144,18 @@ impl Settings {
                 .and_then(|value| value.parse::<u32>().ok())
                 .filter(|value| (MIN_TAB_TWIPS..=MAX_TAB_TWIPS).contains(value))
                 .unwrap_or(DEFAULT_TAB_TWIPS),
+            spacing_adds_up: root.child(W, "compat").is_some_and(|compat| {
+                compat
+                    .child(W, "doNotUseHTMLParagraphAutoSpacing")
+                    .is_some_and(super::styles::on_off)
+                    || compat
+                        .elements()
+                        .filter(|setting| setting.is(W, "compatSetting"))
+                        .find(|setting| setting.attribute(W, "name") == Some("compatibilityMode"))
+                        .and_then(|setting| setting.attribute(W, "val"))
+                        .and_then(|mode| mode.parse::<u32>().ok())
+                        .is_some_and(|mode| mode < 12)
+            }),
         }
     }
 }
@@ -211,9 +227,27 @@ mod tests {
             settings,
             Settings {
                 even_and_odd_headers: true,
-                default_tab_twips: 720
+                default_tab_twips: 720,
+                spacing_adds_up: false,
             }
         );
+        let compat = |inner: &str| {
+            Settings::parse(Some(&format!(
+                r#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:compat>{inner}</w:compat></w:settings>"#
+            )))
+            .spacing_adds_up
+        };
+        assert!(compat("<w:doNotUseHTMLParagraphAutoSpacing/>"));
+        assert!(!compat(
+            r#"<w:doNotUseHTMLParagraphAutoSpacing w:val="0"/>"#
+        ));
+        assert!(compat(
+            r#"<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="11"/>"#
+        ));
+        assert!(!compat(
+            r#"<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/>"#
+        ));
+        assert!(!compat(""));
         let odd = Settings::parse(Some(concat!(
             r#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
             r#"<w:defaultTabStop w:val="1"/><w:evenAndOddHeaders w:val="0"/></w:settings>"#

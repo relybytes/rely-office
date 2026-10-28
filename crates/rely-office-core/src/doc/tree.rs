@@ -393,6 +393,8 @@ impl Converter<'_> {
             let parts = self.section_headers(headers, index, &mut inherited);
             let mut layout = section.layout.clone();
             layout.default_tab_twips = default_tab;
+            // Word lays out a binary document as Word 2003 did.
+            layout.spacing_adds_up = true;
             layout.font_family.clone_from(&font_family);
             layout.font_size_half_points = font_size;
             tree_sections.push(Section {

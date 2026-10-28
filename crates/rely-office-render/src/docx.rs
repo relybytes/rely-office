@@ -125,6 +125,7 @@ pub(crate) fn document_source(
         page: PagePlace::default(),
         open_frame: None,
         default_tab: (f64::from(layout.default_tab_twips) / TWIPS_PER_POINT).max(1.0),
+        spacing_adds_up: layout.spacing_adds_up,
         files: HashMap::new(),
         list_counters: HashMap::new(),
         endnotes: Vec::new(),
@@ -292,6 +293,8 @@ struct Placed {
     expression: String,
     before: f64,
     after: f64,
+    /// The leading under its last line, which comes before any space after it.
+    trailing: f64,
     page_break: bool,
 }
 
@@ -301,6 +304,7 @@ impl Placed {
             expression,
             before: 0.0,
             after: 0.0,
+            trailing: 0.0,
             page_break: false,
         }
     }
@@ -338,6 +342,9 @@ struct Writer<'a> {
     body_size: f64,
     text_width: f64,
     default_tab: f64,
+    /// The space after a paragraph and the space before the next add up, rather than the
+    /// larger of the two being kept.
+    spacing_adds_up: bool,
     /// The media index of each image written out, with its path.
     files: HashMap<usize, String>,
     /// The counters of each numbered list, one per level.
@@ -486,13 +493,17 @@ impl Writer<'_> {
             index = end;
         }
         let mut markup = String::new();
-        let mut previous_after: Option<f64> = None;
+        let mut previous_after: Option<(f64, f64)> = None;
         for placed in placed_blocks {
             if placed.page_break {
                 markup.push_str("#pagebreak(weak: true)\n");
                 previous_after = None;
             }
-            let gap = previous_after.unwrap_or(0.0) + placed.before;
+            let gap = match previous_after {
+                None => placed.before,
+                Some((after, trailing)) if self.spacing_adds_up => trailing + after + placed.before,
+                Some((after, trailing)) => trailing + after.max(placed.before),
+            };
             if gap > 0.0 {
                 let weak = if previous_after.is_some() || placed.page_break {
                     ", weak: true"
@@ -504,7 +515,7 @@ impl Writer<'_> {
             markup.push('#');
             markup.push_str(&placed.expression);
             markup.push('\n');
-            previous_after = Some(placed.after);
+            previous_after = Some((placed.after, placed.trailing));
         }
         markup
     }
@@ -558,6 +569,7 @@ impl Writer<'_> {
                 expression: "line(length: 100%, stroke: 0.5pt + luma(150))".to_owned(),
                 before: 6.0,
                 after: 6.0,
+                trailing: 0.0,
                 page_break: false,
             },
         }
@@ -612,7 +624,8 @@ impl Writer<'_> {
         Placed {
             expression,
             before: parts.before,
-            after: parts.after + parts.leading,
+            after: parts.after,
+            trailing: parts.leading,
             page_break: parts.page_break,
         }
     }
@@ -643,7 +656,14 @@ impl Writer<'_> {
             .colour
             .clone()
             .or_else(|| heading_fallback.map(|_| HEADING_COLOUR.to_owned()));
-        let mut text_arguments = format!("font: {}, size: {}", font_list(&families), points(size));
+        let metrics = self.lines.line(&families);
+        // The line box is Word's single line, so a paragraph of one line is as tall as Word's.
+        let mut text_arguments = format!(
+            "font: {}, size: {}, {}",
+            font_list(&families),
+            points(size),
+            metrics.edges()
+        );
         if look.font.bold == Some(true) {
             text_arguments.push_str(", weight: \"bold\"");
         }
@@ -654,7 +674,6 @@ impl Writer<'_> {
             let _ = write!(text_arguments, ", fill: rgb(\"#{colour}\")");
         }
 
-        let metrics = self.lines.line(&families);
         let single = metrics.single_em * size;
         let line_height = match look.line_spacing {
             None => single,
@@ -679,7 +698,7 @@ impl Writer<'_> {
         };
         ParagraphParts {
             text_arguments,
-            leading: (line_height - metrics.box_em * size).max(0.0),
+            leading: (line_height - single).max(0.0),
             line_height: line_height.max(1.0),
             inlines,
             before: twips(look.space_before_twips),
@@ -771,7 +790,8 @@ impl Writer<'_> {
         Placed {
             expression,
             before: parts.before,
-            after: parts.after + parts.leading,
+            after: parts.after,
+            trailing: parts.leading,
             page_break: parts.page_break,
         }
     }

@@ -22,6 +22,7 @@ fn writer(media: &[Media]) -> Writer<'_> {
         body_size: 11.0,
         text_width: 400.0,
         default_tab: 35.4,
+        spacing_adds_up: false,
         notes: &[],
         files: HashMap::new(),
         list_counters: HashMap::new(),
@@ -70,6 +71,7 @@ fn paragraph() -> Placed {
         expression: "P".to_owned(),
         before: 1.0,
         after: 2.0,
+        trailing: 0.0,
         page_break: true,
     }
 }

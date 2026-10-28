@@ -206,6 +206,9 @@ pub struct PageLayout {
     pub font_family: Option<String>,
     /// The size of body text in half points.
     pub font_size_half_points: Option<u32>,
+    /// The space after a paragraph and the space before the next add up, as Word 2003 and
+    /// `LibreOffice` lay them out; otherwise the larger of the two is kept, as Word since 2007.
+    pub spacing_adds_up: bool,
 }
 
 impl Default for PageLayout {
@@ -222,6 +225,7 @@ impl Default for PageLayout {
             default_tab_twips: DEFAULT_GAP_TWIPS,
             font_family: None,
             font_size_half_points: None,
+            spacing_adds_up: false,
         }
     }
 }
@@ -654,6 +658,7 @@ pub fn read_document_tree_with(
         layout.font_family.clone_from(&font.family);
         layout.font_size_half_points = font.size_half_points;
         layout.default_tab_twips = settings.default_tab_twips;
+        layout.spacing_adds_up = settings.spacing_adds_up;
         sections.push(Section {
             end_block: blocks.len(),
             layout,

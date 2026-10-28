@@ -766,3 +766,14 @@ fn writes_equations_as_office_math_that_reads_back() {
     );
     assert_eq!(read.report.equations, 2);
 }
+
+#[test]
+fn keeps_whether_the_spaces_of_two_paragraphs_add_up() {
+    let mut original = DocumentTree {
+        blocks: vec![paragraph(vec![text("uno", Vec::new())], None)],
+        ..DocumentTree::default()
+    };
+    assert!(!round_trip(&original).layout.spacing_adds_up);
+    original.layout.spacing_adds_up = true;
+    assert!(round_trip(&original).layout.spacing_adds_up);
+}

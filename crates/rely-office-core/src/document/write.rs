@@ -1534,9 +1534,17 @@ fn settings(tree: &DocumentTree, sections: &[Section]) -> String {
             r#"<w:defaultTabStop w:val="{}"/>{}"#,
             r#"<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>"#,
             r#"<w:endnotePr><w:endnote w:id="-1"/><w:endnote w:id="0"/></w:endnotePr>"#,
-            "</w:settings>"
+            "{}</w:settings>"
         ),
-        NAMESPACES, tree.layout.default_tab_twips, even
+        NAMESPACES,
+        tree.layout.default_tab_twips,
+        even,
+        // Word since 2007 keeps the larger of two spaces; this asks for their sum.
+        if tree.layout.spacing_adds_up {
+            "<w:compat><w:doNotUseHTMLParagraphAutoSpacing/></w:compat>"
+        } else {
+            ""
+        }
     )
 }
 

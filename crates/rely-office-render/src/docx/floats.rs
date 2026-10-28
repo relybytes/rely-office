@@ -223,7 +223,8 @@ impl Writer<'_> {
         Some(Placed {
             expression,
             before: parts.before,
-            after: parts.after + parts.leading,
+            after: parts.after,
+            trailing: parts.leading,
             page_break: parts.page_break,
         })
     }

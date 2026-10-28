@@ -15,18 +15,39 @@ use typst::layout::Abs;
 use typst::text::{Font, FontStyle, FontVariations, FontWeight};
 
 /// How tall a line of one font is, in ems.
+#[expect(clippy::struct_field_names, reason = "every height is in ems")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct LineMetrics {
     /// From Typst's top edge to its bottom edge: ascender less descender.
     pub box_em: f64,
     /// A single-spaced line of an office suite.
     pub single_em: f64,
+    /// How much of that line lies under the baseline: the font's Windows descent.
+    pub descent_em: f64,
+}
+
+impl LineMetrics {
+    /// The `top-edge` and `bottom-edge` of a text whose line box is the office suite's single
+    /// line, the baseline as far above its bottom as the font's descent.
+    pub(crate) fn edges(self) -> String {
+        format!(
+            "top-edge: {}em, bottom-edge: {}em",
+            em(self.single_em - self.descent_em),
+            em(-self.descent_em)
+        )
+    }
+}
+
+fn em(value: f64) -> String {
+    let rounded = (value * 10_000.0).round() / 10_000.0;
+    format!("{rounded}")
 }
 
 /// What a font Typst does not hold is given: a box of one em and single lines of 1.15 em.
 const FALLBACK: LineMetrics = LineMetrics {
     box_em: 1.0,
     single_em: 1.15,
+    descent_em: 0.25,
 };
 
 /// The line metrics of each family the renderer holds, by lower-case name.
@@ -79,6 +100,12 @@ fn metrics_of(font: &Font) -> LineMetrics {
             / units_per_em
     });
     let single_em = typographic.max(windows);
+    let descent_em = face
+        .tables()
+        .os2
+        .map(|os2| f64::from(os2.windows_descender()).abs() / units_per_em)
+        .filter(|descent| *descent > 0.0)
+        .unwrap_or_else(|| -metrics.descender.get());
     LineMetrics {
         box_em: if box_em > 0.0 {
             box_em
@@ -89,6 +116,11 @@ fn metrics_of(font: &Font) -> LineMetrics {
             single_em
         } else {
             FALLBACK.single_em
+        },
+        descent_em: if descent_em > 0.0 && descent_em < single_em {
+            descent_em
+        } else {
+            FALLBACK.descent_em
         },
     }
 }
@@ -122,5 +154,8 @@ mod tests {
         assert!((serif.single_em - 1.15).abs() < 0.01, "{serif:?}");
         assert_eq!(lines.line(&["Aptos".to_owned()]), FALLBACK);
         assert_eq!(FontLines::default().line(&[]), FALLBACK);
+        assert!((serif.descent_em - 0.2163).abs() < 0.001, "{serif:?}");
+        assert_eq!(serif.edges(), "top-edge: 0.9336em, bottom-edge: -0.2163em");
+        assert_eq!(FALLBACK.edges(), "top-edge: 0.9em, bottom-edge: -0.25em");
     }
 }

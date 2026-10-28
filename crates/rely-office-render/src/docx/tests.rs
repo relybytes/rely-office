@@ -54,6 +54,7 @@ fn writer(media: &[Media]) -> Writer<'_> {
         body_size: 11.0,
         text_width: 400.0,
         default_tab: 35.4,
+        spacing_adds_up: false,
         notes: &[],
         files: HashMap::new(),
         list_counters: HashMap::new(),
@@ -104,7 +105,7 @@ fn writes_text_only_as_string_literals() {
     };
     let placed = writer.place(&paragraph);
     assert!(placed.expression.ends_with(
-        r##"par(leading: 1.65pt, justify: true)[#link("https://a.it/\"x", text(weight: "bold", "#set page(width: 1pt) ] ["))#linebreak()#"fine"])"##
+        r##"top-edge: 0.9em, bottom-edge: -0.25em, par(leading: 0pt, justify: true)[#link("https://a.it/\"x", text(weight: "bold", "#set page(width: 1pt) ] ["))#linebreak()#"fine"])"##
     ), "{}", placed.expression);
     let empty = writer.place(&Block::Paragraph {
         content: Vec::new(),
@@ -137,14 +138,11 @@ fn applies_the_look_of_a_paragraph() {
     };
     let placed = writer.paragraph(&[text("a")], Some(Alignment::Right), &look, None);
     assert_eq!((placed.before, placed.page_break), (12.0, true));
-    assert!(
-        (placed.after - (6.0 + 18.2)).abs() < 1e-9,
-        "{}",
-        placed.after
-    );
+    assert!((placed.after - 6.0).abs() < 1e-9, "{}", placed.after);
+    assert!((placed.trailing - 16.1).abs() < 1e-9, "{}", placed.trailing);
     assert_eq!(
         placed.expression,
-        r##"pad(left: 18pt, right: 18pt, align(right, text(font: ("Arial", "Liberation Sans", "Carlito", ), size: 14pt, weight: "bold", style: "italic", fill: rgb("#FF0000"), par(leading: 18.2pt, hanging-indent: 18pt)[#"a"])))"##
+        r##"pad(left: 18pt, right: 18pt, align(right, text(font: ("Arial", "Liberation Sans", "Carlito", ), size: 14pt, top-edge: 0.9em, bottom-edge: -0.25em, weight: "bold", style: "italic", fill: rgb("#FF0000"), par(leading: 16.1pt, hanging-indent: 18pt)[#"a"])))"##
     );
 
     let exact = ParagraphLook {
@@ -159,12 +157,12 @@ fn applies_the_look_of_a_paragraph() {
     assert!(
         placed
             .expression
-            .contains("leading: 2pt, first-line-indent: (amount: 12pt, all: true)")
+            .contains("leading: 0.05pt, first-line-indent: (amount: 12pt, all: true)")
     );
 }
 
 #[test]
-fn adds_the_spacing_of_two_blocks_and_breaks_pages() {
+fn keeps_the_larger_spacing_of_two_blocks_and_breaks_pages() {
     let mut writer = writer(&[]);
     let spaced = |before: u32, after: u32, page_break: bool| Block::Paragraph {
         content: vec![text("x")],
@@ -189,11 +187,14 @@ fn adds_the_spacing_of_two_blocks_and_breaks_pages() {
         lines,
         vec![
             "#v(3pt)",
-            "#v(19.65pt, weak: true)",
+            "#v(12pt, weak: true)",
             "#pagebreak(weak: true)",
             "#v(5pt, weak: true)"
         ]
     );
+    writer.spacing_adds_up = true;
+    let added = writer.blocks(&[spaced(60, 120, false), spaced(240, 0, false)]);
+    assert!(added.contains("#v(18pt, weak: true)"), "{added}");
 }
 
 #[test]

@@ -624,3 +624,30 @@ fn starts_a_section_where_a_paragraph_names_another_master_page() {
 }
 
 mod frames;
+
+#[test]
+fn adds_the_spaces_of_two_paragraphs_unless_the_settings_turn_it_off() {
+    assert!(tree("<text:p>a</text:p>").layout.spacing_adds_up);
+    let settings = concat!(
+        r#"<office:document-settings xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" "#,
+        r#"xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0"><office:settings>"#,
+        r#"<config:config-item-set config:name="ooo:configuration-settings">"#,
+        r#"<config:config-item config:name="AddParaTableSpacing" config:type="boolean">false</config:config-item>"#,
+        "</config:config-item-set></office:settings></office:document-settings>"
+    );
+    let collapsed = read_document_tree(
+        &odt(
+            "<text:p>a</text:p>",
+            &[("settings.xml", settings.as_bytes())],
+        ),
+        &Limits::default(),
+    )
+    .unwrap();
+    assert!(!collapsed.layout.spacing_adds_up);
+    assert!(
+        collapsed
+            .sections
+            .iter()
+            .all(|section| !section.layout.spacing_adds_up)
+    );
+}

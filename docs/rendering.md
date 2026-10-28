@@ -173,11 +173,19 @@ a missing paragraph, table or image. A page passes at 0.03 or less; pages of dif
 pages one side has and the other has not, fail. The report lands in `target/corpus/report.json`,
 our pages in `target/corpus/ours/`.
 
-Measured on 2026-10-27 with LibreOffice on Windows and Ghostscript as rasterizer: **6 of 11 pages pass (54.5%)**. Every sheet
-page passes, and every docx has the page count LibreOffice prints. The docx pages that fail drift
-vertically by a few pixels per heading: LibreOffice collapses part of the spacing around headings
-where Word adds it up, and this renderer follows Word. LibreOffice is the reference because it is
-the suite CI can run, not because it is the target.
+Measured on 2026-10-28 with LibreOffice on Windows and Ghostscript as rasterizer: **10 of 11 pages pass (90.9%)**. Every sheet
+page passes, and every docx has the page count LibreOffice prints. The page that fails, the
+meeting minutes, has a table with double borders, which LibreOffice draws as two lines that make
+each row about a point taller.
+
+Two rules make the docx pages line up. Between two paragraphs the larger of the space after the
+first and the space before the second is kept, as Word does since 2007 and LibreOffice does; the
+two add up only in a document in Word 2003's compatibility, one that sets
+`doNotUseHTMLParagraphAutoSpacing`, a `.doc`, and an odt whose `AddParaTableSpacing` is on, as it
+is by default. And a line's box is the office suite's single line, the font's Windows ascent and
+descent (or its typographic line with the gap, when taller), set through Typst's `top-edge` and
+`bottom-edge`, so a paragraph of one line, a table cell among them, is as tall as Word makes it and
+the leading carries only what a larger spacing adds.
 
 CI runs the comparison on every push with a regression floor of 40%, below the local figure since
 the Linux LibreOffice and Poppler differ; the job uploads the report and both sets of pages.

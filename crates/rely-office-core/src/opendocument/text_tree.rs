@@ -54,6 +54,11 @@ pub(crate) fn read_odt_tree(
         .map(|xml| parse_tree(&xml, keeps_whitespace))
         .transpose()?;
     let styles = Styles::read(Some(&content), styles_root.as_ref());
+    // `LibreOffice` adds the spaces of two paragraphs unless the document turns it off.
+    let spacing_adds_up = read_text_member(&mut package, "settings.xml", limits)?
+        .and_then(|xml| parse_tree(&xml, |_, _| false).ok())
+        .and_then(|settings| config_item(&settings, "AddParaTableSpacing"))
+        .is_none_or(|value| value == "true");
     let body = content
         .child(OFFICE, "body")
         .and_then(|body| body.child(OFFICE, "text"))
@@ -149,7 +154,8 @@ pub(crate) fn read_odt_tree(
             by_master.insert(name, read.clone());
             read
         };
-        let layout = page_layout(&styles, master, &headers_footers);
+        let mut layout = page_layout(&styles, master, &headers_footers);
+        layout.spacing_adds_up = spacing_adds_up;
         sections.push(Section {
             end_block: blocks.len(),
             layout,
@@ -1744,3 +1750,16 @@ pub(super) fn all_text(element: &Element) -> String {
 
 #[cfg(test)]
 mod tests;
+
+/// The value of a `config:config-item` of a settings part, anywhere under `element`.
+fn config_item(element: &Element, name: &str) -> Option<String> {
+    for child in element.elements() {
+        if child.name == "config-item" && child.attribute(Namespace::Other, "name") == Some(name) {
+            return Some(child.text().trim().to_owned());
+        }
+        if let Some(found) = config_item(child, name) {
+            return Some(found);
+        }
+    }
+    None
+}
