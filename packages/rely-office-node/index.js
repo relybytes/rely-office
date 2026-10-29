@@ -134,19 +134,25 @@ function readPresentation(bytes, limits) {
 }
 
 /** Slides as a pptx, with the images they name by index. */
-function writePptx(presentation) {
+function writeSlides(presentation, write) {
   const { widthEmu, heightEmu, slides, media } = presentation ?? {};
   const writer = new wasm.PptxWriter();
   try {
     for (const item of media ?? []) {
       writer.addMedia(toBytes(item instanceof Uint8Array ? item : item.bytes));
     }
-    return call(() =>
-      writer.write(JSON.stringify({ widthEmu, heightEmu, slides: slides ?? [] })),
-    );
+    return call(() => write(writer, JSON.stringify({ widthEmu, heightEmu, slides: slides ?? [] })));
   } finally {
     writer.free();
   }
+}
+
+function writePptx(presentation) {
+  return writeSlides(presentation, (writer, json) => writer.write(json));
+}
+
+function writeOdp(presentation) {
+  return writeSlides(presentation, (writer, json) => writer.writeOdp(json));
 }
 
 let bundledRenderer = null;
@@ -519,6 +525,7 @@ module.exports = {
   writeMarkdown,
   writeHtml,
   writeOdt,
+  writeOdp,
   convertToDocx,
   convertToPptx,
   readPresentation,

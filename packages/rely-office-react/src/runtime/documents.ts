@@ -214,7 +214,7 @@ export function readPresentation(bytes: DocumentBytes, limits?: Limits): Present
 }
 
 /** Slides as a pptx PowerPoint opens and `readPresentation` reads back to the same slides. */
-export function writePptx(presentation: PptxInput): Uint8Array {
+function writeSlides(presentation: PptxInput, write: (writer: PptxWriter, json: string) => Uint8Array): Uint8Array {
   ready();
   const { widthEmu, heightEmu, slides, media } = presentation;
   const writer = new PptxWriter();
@@ -222,10 +222,20 @@ export function writePptx(presentation: PptxInput): Uint8Array {
     for (const item of media ?? []) {
       writer.addMedia(toBytes(item instanceof Uint8Array ? item : 'bytes' in item ? item.bytes : item));
     }
-    return call(() => writer.write(JSON.stringify({ widthEmu, heightEmu, slides: slides ?? [] })));
+    const json = JSON.stringify({ widthEmu, heightEmu, slides: slides ?? [] });
+    return call(() => write(writer, json));
   } finally {
     writer.free();
   }
+}
+
+export function writePptx(presentation: PptxInput): Uint8Array {
+  return writeSlides(presentation, (writer, json) => writer.write(json));
+}
+
+/** The slides as an odp, `OpenDocument` presentation. */
+export function writeOdp(presentation: PptxInput): Uint8Array {
+  return writeSlides(presentation, (writer, json) => writer.writeOdp(json));
 }
 
 /** The version of the library inside the module. */

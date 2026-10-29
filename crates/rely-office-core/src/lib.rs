@@ -69,7 +69,7 @@ pub use number_format::{
     FormattedNumber, NumberLocale, builtin_format_code, format_number, format_text, general_number,
     is_date_code,
 };
-pub use opendocument::{excel_formula_from_odf, write_odt};
+pub use opendocument::{excel_formula_from_odf, write_odp, write_odt};
 pub use sheet::{
     Sheet, Workbook, delimited_separator, read_ods_sheet_layouts, read_workbook, read_workbook_in,
 };

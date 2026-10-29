@@ -9,7 +9,7 @@
 //! changing the JSON.
 
 use rely_office_core::{
-    Media, Presentation, Slide, read_presentation, sniff_image_type, write_pptx,
+    Media, Presentation, Slide, read_presentation, sniff_image_type, write_odp, write_pptx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -107,6 +107,21 @@ struct PresentationInput {
 /// `INVALID_PRESENTATION` for JSON that is not a presentation or holds too many slides, or the
 /// error of the writer.
 pub fn pptx_from_json(presentation_json: &str, media: Vec<Media>) -> Result<Vec<u8>, Failure> {
+    Ok(write_pptx(&presentation_from_json(
+        presentation_json,
+        media,
+    )?)?)
+}
+
+/// The presentation of its JSON, with the images its shapes and fills name by index.
+///
+/// # Errors
+///
+/// `INVALID_PRESENTATION` for JSON that is not a presentation or holds too many slides.
+pub fn presentation_from_json(
+    presentation_json: &str,
+    media: Vec<Media>,
+) -> Result<Presentation, Failure> {
     let input: PresentationInput =
         serde_json::from_str(presentation_json).map_err(|error| Failure {
             code: "INVALID_PRESENTATION",
@@ -118,13 +133,13 @@ pub fn pptx_from_json(presentation_json: &str, media: Vec<Media>) -> Result<Vec<
             message: format!("a presentation holds at most {MAX_SLIDES} slides"),
         });
     }
-    Ok(write_pptx(&Presentation {
+    Ok(Presentation {
         width_emu: input.width_emu,
         height_emu: input.height_emu,
         slides: input.slides,
         media,
         truncated: false,
-    })?)
+    })
 }
 
 /// # Errors
@@ -177,6 +192,19 @@ impl PptxWriter {
     pub fn write(&mut self, presentation_json: &str) -> Result<Vec<u8>, JsError> {
         pptx_from_json(presentation_json, std::mem::take(&mut self.media))
             .map_err(|failure| throw(&failure))
+    }
+
+    /// Write the slides as an odp, `OpenDocument` presentation.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = writeOdp)]
+    pub fn write_odp_js(&mut self, presentation_json: &str) -> Result<Vec<u8>, JsError> {
+        let presentation =
+            presentation_from_json(presentation_json, std::mem::take(&mut self.media))
+                .map_err(|failure| throw(&failure))?;
+        write_odp(&presentation).map_err(|error| throw(&error.into()))
     }
 }
 

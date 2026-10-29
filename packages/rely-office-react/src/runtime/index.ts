@@ -18,6 +18,7 @@ export {
   writeDocx,
   writeHtml,
   writeMarkdown,
+  writeOdp,
   writeOdt,
   writePptx,
 } from './documents.js';

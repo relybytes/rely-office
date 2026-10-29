@@ -154,6 +154,13 @@ export function readPresentation(bytes: DocumentBytes, limits?: Limits): Present
 /** A pptx PowerPoint opens and `readPresentation` reads back to the same slides. */
 export function writePptx(presentation: PptxInput): Uint8Array;
 
+/**
+ * The slides as an odp that LibreOffice Impress opens and `readPresentation` reads back: shapes,
+ * text, tables, pictures, fills, notes, hidden slides, transitions and animations. What a slide
+ * draws from its layout is written on the slide itself.
+ */
+export function writeOdp(presentation: PptxInput): Uint8Array;
+
 /** A new workbook with one empty sheet, Foglio1. */
 export function createSheet(options?: SheetOptions): SheetDocument;
 

@@ -21,7 +21,7 @@ import {
 } from 'react';
 import { mediaDataUrl, sniffImageType } from '../document/media.js';
 import type { Frame, Presentation, Slide, SlideRun, SlideShape, SlideTable, TextBody } from '../model.js';
-import { writePptx } from '../runtime/documents.js';
+import { writeOdp, writePptx } from '../runtime/documents.js';
 import { bodyFromEditedElement } from './edited-text.js';
 import { ENGLISH_SLIDE_EDITOR_LABELS, type SlideEditorLabels } from './labels.js';
 import { SlideEffectsPanel } from './slide-effects-panel.js';
@@ -98,6 +98,8 @@ export interface SlideEditorHandle {
   getPresentation: () => Presentation;
   /** The presentation as a pptx; needs `initDocuments` to have loaded the module. */
   savePptx: () => Uint8Array;
+  /** The presentation as an odp; needs `initDocuments` to have loaded the module. */
+  saveOdp: () => Uint8Array;
   activeSlide: number;
   /** Play the show from a slide, the current one when none is named. */
   play: (slide?: number) => void;
@@ -364,6 +366,7 @@ export const SlideEditor = forwardRef(function SlideEditor(
     () => ({
       getPresentation: () => latest.current,
       savePptx: () => writePptx(latest.current),
+      saveOdp: () => writeOdp(latest.current),
       activeSlide: slideIndex,
       play: (slideNumber?: number) => setShowing(slideNumber ?? slideIndex),
     }),
