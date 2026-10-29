@@ -25,6 +25,7 @@ use zip::write::SimpleFileOptions;
 
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS, column_name};
 use crate::arrange::AutoFilter;
+use crate::charts::drawing_of_pictures;
 use crate::dates::serial_from_date;
 use crate::formula::{
     Expr, PREFIXED_FUNCTIONS, WORKSHEET_PREFIXED_FUNCTIONS, number_text, parse_formula,
@@ -66,10 +67,13 @@ pub fn read_spreadsheet(
             let mut sheets = read_binary(bytes, format == DocumentFormat::Ods)?;
             if format == DocumentFormat::Ods {
                 let mut layouts = read_ods_sheet_layouts(bytes, limits);
+                let mut counter = 0;
                 for sheet in &mut sheets {
                     if let Some(layout) = layouts.remove(&sheet.name) {
                         apply_layout(sheet, &layout, &mut styles);
                         apply_view(sheet, &layout);
+                        sheet.drawing = drawing_of_pictures(&layout.drawings, &mut counter);
+                        sheet.pictures = layout.drawings;
                     }
                 }
             }

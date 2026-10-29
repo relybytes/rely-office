@@ -17,6 +17,9 @@ import type {
   CellStyle,
   CellValidation,
   CellWindow,
+  ChartDefinition,
+  ChartPlacement,
+  ChartType,
   ConditionalFormat,
   ConditionalLook,
   DataValidation,
@@ -24,6 +27,7 @@ import type {
   DocumentBytes,
   FilterChoice,
   SheetCell,
+  SheetChart,
   SheetDocument,
   SheetOptions,
   SheetPicture,
@@ -146,6 +150,33 @@ class BrowserSheetDocument implements SheetDocument {
 
   removeDefinedName(name: string, sheet?: number): boolean {
     return this.document.removeDefinedName(name, sheet ?? undefined);
+  }
+
+  charts(sheet: number): SheetChart[] {
+    return parse(() => this.document.chartsJson(sheet));
+  }
+
+  addChart(sheet: number, chart: ChartDefinition, placement: ChartPlacement): number {
+    return call(() => this.document.addChart(sheet, JSON.stringify(chart), JSON.stringify(placement)));
+  }
+
+  setChart(sheet: number, index: number, { chart, placement }: { chart?: ChartDefinition; placement?: ChartPlacement } = {}): void {
+    call(() =>
+      this.document.setChart(
+        sheet,
+        index,
+        chart === undefined ? undefined : JSON.stringify(chart),
+        placement === undefined ? undefined : JSON.stringify(placement),
+      ),
+    );
+  }
+
+  removeChart(sheet: number, index: number): void {
+    call(() => this.document.removeChart(sheet, index));
+  }
+
+  chartForRange(sheet: number, { top, left, bottom, right }: CellWindow, type: ChartType): ChartDefinition | null {
+    return parse(() => this.document.chartForRangeJson(sheet, top, left, bottom, right, type));
   }
 
   comments(sheet: number): CellComment[] {

@@ -10,11 +10,14 @@ import type {
   BorderPlacement,
   CellComment,
   CellWindow,
+  ChartDefinition,
+  ChartType,
   ComparisonOperator,
   ConditionalFormat,
   DataValidation,
   DefinedName,
   FilterChoice,
+  SheetChart,
 } from '../model.js';
 import { cellName } from './geometry.js';
 import type { SheetGridLabels } from './labels.js';
@@ -412,6 +415,162 @@ export function CommentPanel({
           {words.saveComment}
         </button>
       </form>
+    </aside>
+  );
+}
+
+export const CHART_TYPES: [ChartType, keyof SheetGridLabels][] = [
+  ['column', 'chartColumn'],
+  ['bar', 'chartBar'],
+  ['line', 'chartLine'],
+  ['area', 'chartArea'],
+  ['pie', 'chartPie'],
+  ['doughnut', 'chartDoughnut'],
+  ['scatter', 'chartScatter'],
+];
+
+/** The charts of a sheet: one to insert from the selection, and the chosen one to change. */
+export function ChartPanel({
+  words,
+  charts,
+  chosen,
+  error,
+  onChoose,
+  onInsert,
+  onChange,
+  onUseSelection,
+  onRemove,
+  onClose,
+}: {
+  words: SheetGridLabels;
+  charts: SheetChart[];
+  chosen: number | null;
+  /** Why the last change was refused, if it was. */
+  error: string | null;
+  onChoose: (index: number | null) => void;
+  onInsert: (type: ChartType) => void;
+  onChange: (index: number, chart: ChartDefinition) => void;
+  onUseSelection: (index: number) => void;
+  onRemove: (index: number) => void;
+  onClose: () => void;
+}): ReactElement {
+  const [type, setType] = useState<ChartType>('column');
+  const current = chosen === null ? undefined : charts[chosen];
+  const spec = current?.spec ?? null;
+  const name = (chart: SheetChart) =>
+    chart.spec?.title || `${words.chartLabel} ${chart.index + 1}`;
+  const stackable = spec !== null && ['column', 'bar', 'line', 'area'].includes(spec.chartType);
+  return (
+    <aside className="rely-sheet-panel" aria-label={words.charts}>
+      <header>
+        <h2>{words.charts}</h2>
+        <button type="button" className="rely-tool" aria-label={words.close} title={words.close} onClick={onClose}>
+          {'×'}
+        </button>
+      </header>
+      {charts.length === 0 ? <p className="rely-sheet-panel-empty">{words.noCharts}</p> : null}
+      <ol className="rely-sheet-rules">
+        {charts.map((chart) => (
+          <li key={chart.index} className={chart.index === chosen ? 'rely-sheet-rule-here' : undefined}>
+            <button type="button" className="rely-sheet-rule-range" onClick={() => onChoose(chart.index)}>
+              {name(chart)}
+            </button>
+            <span className="rely-sheet-rule-text">
+              {chart.spec ? (words[CHART_TYPES.find(([kind]) => kind === chart.spec?.chartType)?.[1] ?? 'chartColumn'] as string) : ''}
+            </span>
+            <button type="button" onClick={() => onRemove(chart.index)}>
+              {words.remove}
+            </button>
+          </li>
+        ))}
+      </ol>
+      <form
+        className="rely-sheet-panel-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onInsert(type);
+        }}
+      >
+        <label>
+          <span>{words.chartType}</span>
+          <select value={type} onChange={(event) => setType(event.target.value as ChartType)}>
+            {CHART_TYPES.map(([kind, key]) => (
+              <option key={kind} value={kind}>
+                {words[key] as string}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" className="rely-sheet-panel-submit">
+          {words.insertChart}
+        </button>
+      </form>
+      {current ? (
+        <form className="rely-sheet-panel-form" onSubmit={(event) => event.preventDefault()}>
+          <p className="rely-sheet-panel-target">
+            <strong>{name(current)}</strong>
+          </p>
+          {spec ? (
+            <>
+              <label>
+                <span>{words.chartType}</span>
+                <select
+                  value={spec.chartType}
+                  onChange={(event) => onChange(current.index, { ...spec, chartType: event.target.value as ChartType })}
+                >
+                  {CHART_TYPES.map(([kind, key]) => (
+                    <option key={kind} value={kind}>
+                      {words[key] as string}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>{words.chartTitle}</span>
+                <input
+                  key={`${current.index}:${spec.title ?? ''}`}
+                  defaultValue={spec.title ?? ''}
+                  onBlur={(event) => {
+                    const title = event.target.value.trim();
+                    if (title !== (spec.title ?? '')) onChange(current.index, { ...spec, title: title || null });
+                  }}
+                />
+              </label>
+              <label className="rely-sheet-panel-check">
+                <input
+                  type="checkbox"
+                  checked={spec.legend}
+                  onChange={(event) => onChange(current.index, { ...spec, legend: event.target.checked })}
+                />
+                <span>{words.chartLegend}</span>
+              </label>
+              {stackable ? (
+                <label className="rely-sheet-panel-check">
+                  <input
+                    type="checkbox"
+                    checked={spec.stacked}
+                    onChange={(event) => onChange(current.index, { ...spec, stacked: event.target.checked })}
+                  />
+                  <span>{words.chartStacked}</span>
+                </label>
+              ) : null}
+              <button type="button" onClick={() => onUseSelection(current.index)}>
+                {words.chartUseSelection}
+              </button>
+            </>
+          ) : (
+            <p className="rely-sheet-panel-empty">{words.chartFromFile}</p>
+          )}
+          <button type="button" onClick={() => onRemove(current.index)}>
+            {words.removeChart}
+          </button>
+        </form>
+      ) : null}
+      {error ? (
+        <p className="rely-sheet-panel-error" role="alert">
+          {error}
+        </p>
+      ) : null}
     </aside>
   );
 }

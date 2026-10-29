@@ -470,3 +470,87 @@ fn lists_names_and_comments_as_json() {
         .into();
     assert_eq!(failure.code, "INVALID_NAME");
 }
+
+#[test]
+fn makes_lists_changes_and_removes_charts_as_json() {
+    let mut document = SheetDocument::create("en").unwrap();
+    document
+        .set_inputs_json(
+            0,
+            r#"[[0,0,"Month"],[0,1,"Sales"],[1,0,"Jan"],[1,1,"10"],[2,0,"Feb"],[2,1,"20"]]"#,
+        )
+        .unwrap();
+    let made = document
+        .chart_for_range_summary(0, (0, 0, 2, 1), "column")
+        .unwrap();
+    assert_eq!(
+        parse(&made),
+        json!({
+            "chartType": "column",
+            "stacked": false,
+            "title": null,
+            "legend": true,
+            "categories": "Foglio1!$A$2:$A$3",
+            "series": [{ "name": "Foglio1!$B$1", "values": "Foglio1!$B$2:$B$3" }]
+        })
+    );
+    let placement = r#"{"row":0,"column":3,"width":3600000,"height":2000000}"#;
+    assert_eq!(document.add_chart_json(0, &made, placement), Ok(0));
+    let listed = parse(&document.charts_summary(0).unwrap());
+    assert_eq!(listed[0]["index"], 0);
+    assert_eq!(listed[0]["spec"]["chartType"], "column");
+    assert_eq!(listed[0]["placement"]["column"], 3);
+    assert_eq!(listed[0]["placement"]["offsetX"], 0);
+    let line = made.replace("column", "line");
+    document.set_chart_json(0, 0, Some(&line), None).unwrap();
+    assert_eq!(
+        parse(&document.charts_summary(0).unwrap())[0]["spec"]["chartType"],
+        "line"
+    );
+    document
+        .set_chart_json(
+            0,
+            0,
+            None,
+            Some(r#"{"row":5,"column":0,"width":100,"height":100}"#),
+        )
+        .unwrap();
+    assert_eq!(
+        parse(&document.charts_summary(0).unwrap())[0]["placement"]["row"],
+        5
+    );
+    assert_eq!(
+        document
+            .add_chart_json(0, "{}", placement)
+            .unwrap_err()
+            .code,
+        "INVALID_INPUT"
+    );
+    assert_eq!(
+        document
+            .chart_for_range_summary(0, (0, 0, 2, 1), "radar")
+            .unwrap_err()
+            .code,
+        "INVALID_INPUT"
+    );
+    assert_eq!(
+        document
+            .chart_for_range_summary(0, (1, 0, 2, 0), "pie")
+            .unwrap(),
+        "null"
+    );
+    let bad = made.replace("Foglio1!$B$2:$B$3", "Missing!$B$2:$B$3");
+    assert_eq!(
+        document
+            .add_chart_json(0, &bad, placement)
+            .unwrap_err()
+            .code,
+        "INVALID_CHART"
+    );
+    assert_eq!(
+        document.charts_summary(9).unwrap_err().code,
+        "NO_SUCH_SHEET"
+    );
+    document.workbook.remove_chart(0, 0).unwrap();
+    assert_eq!(document.charts_summary(0).unwrap(), "[]");
+}

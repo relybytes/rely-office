@@ -17,7 +17,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::io::{Cursor, Write};
 
-use rely_office_core::OfficeError;
+use rely_office_core::{OfficeError, odf_chart_object_xml};
 use zip::CompressionMethod;
 use zip::write::SimpleFileOptions;
 
@@ -52,6 +52,8 @@ const NAMESPACES: &str = concat!(
     r#"xmlns:calcext="urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0" "#,
     r#"xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0" "#,
     r#"xmlns:dc="http://purl.org/dc/elements/1.1/" "#,
+    r#"xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" "#,
+    r#"xmlns:xlink="http://www.w3.org/1999/xlink" "#,
     r#"office:version="1.3""#
 );
 
@@ -75,24 +77,128 @@ pub fn write_ods(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
         .write_all(MIMETYPE.as_bytes())
         .map_err(|error| damaged(&error))?;
     let conditional = ConditionalStyles::new(workbook);
+    let objects = Objects::new(workbook);
+    let manifest = MANIFEST.replace(
+        "</manifest:manifest>",
+        &format!("{}</manifest:manifest>", objects.manifest),
+    );
     for (name, content) in [
-        ("META-INF/manifest.xml", MANIFEST.to_owned()),
-        ("meta.xml", META.to_owned()),
-        ("settings.xml", settings_part(workbook)),
-        ("styles.xml", styles_part(&conditional)),
-        ("content.xml", content_part(workbook, &conditional)),
-    ] {
+        ("META-INF/manifest.xml", manifest.into_bytes()),
+        ("meta.xml", META.as_bytes().to_vec()),
+        ("settings.xml", settings_part(workbook).into_bytes()),
+        ("styles.xml", styles_part(&conditional).into_bytes()),
+        (
+            "content.xml",
+            content_part(workbook, &conditional, &objects).into_bytes(),
+        ),
+    ]
+    .into_iter()
+    .chain(
+        objects
+            .files
+            .iter()
+            .map(|(name, bytes)| (name.as_str(), bytes.clone())),
+    ) {
         package
             .start_file(name, SimpleFileOptions::default())
             .map_err(|error| damaged(&error))?;
         package
-            .write_all(content.as_bytes())
+            .write_all(&content)
             .map_err(|error| damaged(&error))?;
     }
     package
         .finish()
         .map(Cursor::into_inner)
         .map_err(|error| damaged(&error))
+}
+
+/// The pictures and charts of every sheet as `OpenDocument` writes them: a frame in the cell
+/// each is anchored to, a chart object or a picture for each, and the manifest entries.
+struct Objects {
+    frames: Vec<HashMap<CellRef, String>>,
+    files: Vec<(String, Vec<u8>)>,
+    manifest: String,
+}
+
+const EMU_PER_INCH: f64 = 914_400.0;
+
+impl Objects {
+    fn new(workbook: &Workbook) -> Self {
+        let mut objects = Self {
+            frames: Vec::with_capacity(workbook.sheets.len()),
+            files: Vec::new(),
+            manifest: String::new(),
+        };
+        let mut number = 0;
+        for index in 0..workbook.sheets.len() {
+            let mut frames: HashMap<CellRef, String> = HashMap::new();
+            for drawing in workbook.pictures(index) {
+                number += 1;
+                #[expect(clippy::cast_precision_loss, reason = "lengths of a few pages")]
+                let inches = |emu: i64| emu as f64 / EMU_PER_INCH;
+                // A frame in a cell is placed from the cell's corner.
+                let geometry = format!(
+                    r#"svg:x="{:.4}in" svg:y="{:.4}in" svg:width="{:.4}in" svg:height="{:.4}in""#,
+                    inches(drawing.offset_emu.0),
+                    inches(drawing.offset_emu.1),
+                    inches(drawing.width_emu),
+                    inches(drawing.height_emu)
+                );
+                let content = if let Some(spec) = &drawing.chart {
+                    let folder = format!("Object {number}");
+                    objects.files.push((
+                        format!("{folder}/content.xml"),
+                        odf_chart_object_xml(spec).into_bytes(),
+                    ));
+                    let _ = write!(
+                        objects.manifest,
+                        concat!(
+                            r#"<manifest:file-entry manifest:full-path="{0}/" manifest:media-type="application/vnd.oasis.opendocument.chart"/>"#,
+                            r#"<manifest:file-entry manifest:full-path="{0}/content.xml" manifest:media-type="text/xml"/>"#
+                        ),
+                        escape(&folder)
+                    );
+                    format!(
+                        r#"<draw:object xlink:href="./{}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>"#,
+                        escape(&folder)
+                    )
+                } else {
+                    let extension = match drawing.content_type {
+                        "image/jpeg" => "jpeg",
+                        "image/gif" => "gif",
+                        "image/svg+xml" => "svg",
+                        _ => "png",
+                    };
+                    let name = format!("Pictures/image{number}.{extension}");
+                    let _ = write!(
+                        objects.manifest,
+                        r#"<manifest:file-entry manifest:full-path="{}" manifest:media-type="{}"/>"#,
+                        escape(&name),
+                        drawing.content_type
+                    );
+                    objects.files.push((name.clone(), drawing.bytes.clone()));
+                    format!(
+                        r#"<draw:image xlink:href="{}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>"#,
+                        escape(&name)
+                    )
+                };
+                let title = drawing
+                    .description
+                    .as_deref()
+                    .map_or_else(String::new, |text| {
+                        format!("<svg:title>{}</svg:title>", escape(text))
+                    });
+                let _ = write!(
+                    frames
+                        .entry(CellRef::new(drawing.row, drawing.column))
+                        .or_default(),
+                    r#"<draw:frame draw:z-index="{number}" draw:name="Object {number}" {geometry}>{content}{title}</draw:frame>"#
+                );
+            }
+            objects.frames.push(frames);
+        }
+        objects
+    }
 }
 
 /// A sheet name as an `OpenDocument` address names it, quoted.
@@ -285,7 +391,7 @@ fn column_inches(characters: f64) -> f64 {
     ((characters * 256.0 + 18.0) / 256.0 * 7.0).trunc() / 96.0
 }
 
-fn content_part(workbook: &Workbook, conditional: &ConditionalStyles) -> String {
+fn content_part(workbook: &Workbook, conditional: &ConditionalStyles, objects: &Objects) -> String {
     let styles = OdsStyles::new(workbook);
     let mut column_styles: Vec<String> = Vec::new();
     let mut row_styles: Vec<String> = Vec::new();
@@ -295,8 +401,8 @@ fn content_part(workbook: &Workbook, conditional: &ConditionalStyles) -> String 
             workbook,
             index,
             sheet,
-            &styles,
-            conditional,
+            (&styles, conditional),
+            &objects.frames[index],
             &mut column_styles,
             &mut row_styles,
         ));
@@ -370,8 +476,8 @@ fn table_xml(
     workbook: &Workbook,
     index: usize,
     sheet: &Sheet,
-    styles: &OdsStyles,
-    conditional: &ConditionalStyles,
+    (styles, conditional): (&OdsStyles, &ConditionalStyles),
+    frames: &HashMap<CellRef, String>,
     column_styles: &mut Vec<String>,
     row_styles: &mut Vec<String>,
 ) -> String {
@@ -380,7 +486,7 @@ fn table_xml(
         rows = rows.max(cell.row + 1);
         columns = columns.max(cell.column + 1);
     }
-    for cell in sheet.comments.keys() {
+    for cell in sheet.comments.keys().chain(frames.keys()) {
         rows = rows.max(cell.row + 1);
         columns = columns.max(cell.column + 1);
     }
@@ -466,9 +572,11 @@ fn table_xml(
         let mut cells = Vec::with_capacity(usize::try_from(columns).unwrap_or(0));
         for column in 0..columns {
             let cell = CellRef::new(row, column);
-            cells.push(cell_xml(
-                workbook, index, sheet, styles, cell, &covered, &spans,
-            ));
+            let written = cell_xml(workbook, index, sheet, styles, cell, &covered, &spans);
+            cells.push(match frames.get(&cell) {
+                Some(frame) => with_frames(&written, frame),
+                None => written,
+            });
         }
         let mut line = format!(r#"<table:table-row table:style-name="ro{style}""#);
         let filtered = sheet
@@ -632,6 +740,22 @@ fn cell_xml(
     }
     let _ = write!(xml, "</{element}>");
     xml
+}
+
+/// A cell with the frames anchored to it as its last content.
+fn with_frames(cell: &str, frames: &str) -> String {
+    if let Some(open) = cell.strip_suffix("/>") {
+        let name = open
+            .trim_start_matches('<')
+            .split([' ', '>'])
+            .next()
+            .unwrap_or("table:table-cell");
+        return format!("{open}>{frames}</{name}>");
+    }
+    match cell.rfind("</") {
+        Some(end) => format!("{}{frames}{}", &cell[..end], &cell[end..]),
+        None => cell.to_owned(),
+    }
 }
 
 /// An element with an attribute added at the end of its start tag, which ends at the first `>`

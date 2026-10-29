@@ -18,6 +18,7 @@
 
 mod address;
 mod arrange;
+mod charts;
 mod csv;
 mod dates;
 mod display;
@@ -36,6 +37,7 @@ mod xlsx;
 
 pub use address::{CellRef, MAX_COLUMNS, MAX_ROWS, column_index, column_name};
 pub use arrange::{AutoFilter, MAX_FILTER_CHOICES, MAX_SORT_KEYS, SortKey};
+pub use charts::{ChartPlacement, MAX_CHARTS, SheetChart};
 pub use csv::{default_separator, write_csv};
 pub use dates::{date_from_serial, serial_from_date};
 pub use fill::MAX_FILL_CELLS;
@@ -52,9 +54,10 @@ pub use model::{
 };
 pub use ods::write_ods;
 pub use rely_office_core::{
-    Border, BorderStyle, CellBorders, CellFont, CellRange, CellStyle, ComparisonOperator,
-    Condition, ConditionalFormat, ConditionalRule, DataValidation, DifferentialLook, ErrorStyle,
-    HorizontalAlignment, ScalePoint, ScaleValue, TextOperator, ValidationKind, VerticalAlignment,
+    Border, BorderStyle, CellBorders, CellFont, CellRange, CellStyle, ChartSeriesSpec, ChartSpec,
+    ChartType, ComparisonOperator, Condition, ConditionalFormat, ConditionalRule, DataValidation,
+    DifferentialLook, ErrorStyle, HorizontalAlignment, ScalePoint, ScaleValue, TextOperator,
+    ValidationKind, VerticalAlignment,
 };
 pub use rules::MAX_RULES;
 pub use styling::{

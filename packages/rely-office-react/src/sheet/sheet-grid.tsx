@@ -18,6 +18,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type Ref,
 } from 'react';
@@ -26,9 +27,11 @@ import type {
   CellRange,
   CellStyle,
   CellWindow,
+  ChartType,
   ConditionalLook,
   FilterChoice,
   SheetCell,
+  SheetChart,
   SheetDocument,
   SortKey,
   StylePatch,
@@ -51,7 +54,15 @@ import {
   type CellPosition,
 } from './geometry.js';
 import { ENGLISH_SHEET_GRID_LABELS, type SheetGridLabels } from './labels.js';
-import { BorderMenu, CommentPanel, ConditionalFormatPanel, FilterMenu, NamesPanel, ValidationPanel } from './sheet-panels.js';
+import {
+  BorderMenu,
+  ChartPanel,
+  CommentPanel,
+  ConditionalFormatPanel,
+  FilterMenu,
+  NamesPanel,
+  ValidationPanel,
+} from './sheet-panels.js';
 import { RelyOfficeError } from '../runtime/shared.js';
 
 const DEFAULT_ROW_HEIGHT = rowHeightPixels(15);
@@ -102,7 +113,20 @@ interface FunctionHints {
   active: number;
 }
 
-type Panel = 'conditional' | 'validation' | 'comments' | 'names' | null;
+type Panel = 'conditional' | 'validation' | 'comments' | 'names' | 'charts' | null;
+
+/** A chart being dragged by its frame or its corner, and how far the pointer went. */
+interface ChartDrag {
+  index: number;
+  mode: 'move' | 'resize';
+  startX: number;
+  startY: number;
+  dx: number;
+  dy: number;
+}
+
+/** A new chart's size: 4.8 by 2.9 inches, as Excel makes one. */
+const NEW_CHART_EMU = { width: 4_389_120, height: 2_651_760 };
 
 interface OpenFilter {
   column: number;
@@ -219,6 +243,9 @@ export const SheetGrid = forwardRef(function SheetGrid(
   const [bordersOpen, setBordersOpen] = useState(false);
   const [openFilter, setOpenFilter] = useState<OpenFilter | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
+  const [chosenChart, setChosenChart] = useState<number | null>(null);
+  const [chartError, setChartError] = useState<string | null>(null);
+  const [chartDrag, setChartDrag] = useState<ChartDrag | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const cellEditor = useRef<HTMLInputElement>(null);
   const barEditor = useRef<HTMLInputElement>(null);
@@ -242,6 +269,7 @@ export const SheetGrid = forwardRef(function SheetGrid(
       looks,
       invalid: new Set(sheet.invalidCells(index).map(([row, column]) => `${row}:${column}`)),
       comments: sheet.comments(index),
+      charts: sheet.charts(index),
       commented: new Map(sheet.comments(index).map((comment) => [`${comment.row}:${comment.column}`, comment])),
     };
     // `revision` stands for every edit of the workbook, which changes in place.
@@ -568,6 +596,12 @@ export const SheetGrid = forwardRef(function SheetGrid(
       moveTo({ row: anchor.row + step.row, column: anchor.column + step.column });
     } else if (event.key === 'F2') {
       startEditing();
+    } else if ((event.key === 'Delete' || event.key === 'Backspace') && editable && chosenChart !== null) {
+      const index = chosenChart;
+      setChosenChart(null);
+      mutate(() => sheet.removeChart(workbook.index, index));
+    } else if (event.key === 'Escape' && chosenChart !== null) {
+      setChosenChart(null);
     } else if ((event.key === 'Delete' || event.key === 'Backspace') && editable) {
       mutate(() => sheet.clearRange(workbook.index, selected));
     } else if (command && ['b', 'i', 'u'].includes(key) && editable) {
@@ -578,6 +612,80 @@ export const SheetGrid = forwardRef(function SheetGrid(
       return;
     }
     event.preventDefault();
+  };
+
+  /** Run a change to the charts, keeping why it was refused for the chart panel. */
+  const changeChart = (change: () => void): boolean => {
+    try {
+      change();
+    } catch (error) {
+      setChartError(error instanceof Error ? error.message : String(error));
+      return false;
+    }
+    setChartError(null);
+    refresh();
+    onChange?.();
+    return true;
+  };
+
+  const insertChart = (type: ChartType) => {
+    const made = sheet.chartForRange(workbook.index, selected, type);
+    if (!made) {
+      setChartError(words.chartNothingToPlot);
+      return;
+    }
+    const placement = { row: selected.top, column: selected.right + 2, offsetX: 0, offsetY: 0, ...NEW_CHART_EMU };
+    let index = -1;
+    if (changeChart(() => (index = sheet.addChart(workbook.index, made, placement)))) setChosenChart(index);
+  };
+
+  const startChartDrag = (event: ReactPointerEvent<HTMLElement>, index: number, mode: ChartDrag['mode']) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    event.preventDefault();
+    if (editing) commit();
+    setChosenChart(index);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setChartDrag({ index, mode, startX: event.clientX, startY: event.clientY, dx: 0, dy: 0 });
+  };
+
+  const moveChartDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    setChartDrag((current) =>
+      current ? { ...current, dx: event.clientX - current.startX, dy: event.clientY - current.startY } : current,
+    );
+  };
+
+  const endChartDrag = (event: ReactPointerEvent<HTMLElement>, chart: SheetChart) => {
+    const drag = chartDrag;
+    setChartDrag(null);
+    if (!drag || drag.index !== chart.index || (Math.abs(drag.dx) < 3 && Math.abs(drag.dy) < 3)) return;
+    event.stopPropagation();
+    const { placement } = chart;
+    if (drag.mode === 'resize') {
+      const width = Math.max(16, placement.width / EMU_PER_PIXEL + drag.dx);
+      const height = Math.max(16, placement.height / EMU_PER_PIXEL + drag.dy);
+      changeChart(() =>
+        sheet.setChart(workbook.index, chart.index, {
+          placement: { ...placement, width: Math.round(width * EMU_PER_PIXEL), height: Math.round(height * EMU_PER_PIXEL) },
+        }),
+      );
+      return;
+    }
+    const left = Math.max(0, columns.offset(placement.column) + placement.offsetX / EMU_PER_PIXEL + drag.dx);
+    const top = Math.max(0, rows.offset(placement.row) + placement.offsetY / EMU_PER_PIXEL + drag.dy);
+    const column = columns.indexAt(left);
+    const row = rows.indexAt(top);
+    changeChart(() =>
+      sheet.setChart(workbook.index, chart.index, {
+        placement: {
+          ...placement,
+          row,
+          column,
+          offsetX: Math.round((left - columns.offset(column)) * EMU_PER_PIXEL),
+          offsetY: Math.round((top - rows.offset(row)) * EMU_PER_PIXEL),
+        },
+      }),
+    );
   };
 
   const copySelection = (event: ClipboardEvent<HTMLDivElement>) => {
@@ -1117,6 +1225,19 @@ export const SheetGrid = forwardRef(function SheetGrid(
             <button
               type="button"
               className="rely-tool"
+              aria-label={words.charts}
+              title={words.charts}
+              aria-pressed={panel === 'charts'}
+              onClick={() => {
+                setChartError(null);
+                setPanel((current) => (current === 'charts' ? null : 'charts'));
+              }}
+            >
+              {'▥'}
+            </button>
+            <button
+              type="button"
+              className="rely-tool"
               aria-label={words.definedNames}
               title={words.definedNames}
               aria-pressed={panel === 'names'}
@@ -1254,6 +1375,50 @@ export const SheetGrid = forwardRef(function SheetGrid(
                   }}
                 />
               ))}
+              {editable
+                ? workbook.charts.map((chart) => {
+                    const moving = chartDrag?.index === chart.index ? chartDrag : null;
+                    const width = chart.placement.width / EMU_PER_PIXEL;
+                    const height = chart.placement.height / EMU_PER_PIXEL;
+                    return (
+                      <div
+                        key={chart.index}
+                        role="button"
+                        tabIndex={-1}
+                        aria-label={`${words.chartLabel} ${chart.spec?.title || chart.index + 1}`}
+                        aria-pressed={chosenChart === chart.index}
+                        className={['rely-sheet-chart-frame', chosenChart === chart.index ? 'rely-sheet-chart-chosen' : '']
+                          .filter(Boolean)
+                          .join(' ')}
+                        style={{
+                          top: rows.offset(chart.placement.row) + chart.placement.offsetY / EMU_PER_PIXEL + (moving?.mode === 'move' ? moving.dy : 0),
+                          left:
+                            columns.offset(chart.placement.column) +
+                            chart.placement.offsetX / EMU_PER_PIXEL +
+                            (moving?.mode === 'move' ? moving.dx : 0),
+                          width: Math.max(16, width + (moving?.mode === 'resize' ? moving.dx : 0)),
+                          height: Math.max(16, height + (moving?.mode === 'resize' ? moving.dy : 0)),
+                        }}
+                        onPointerDown={(event) => startChartDrag(event, chart.index, 'move')}
+                        onPointerMove={moveChartDrag}
+                        onPointerUp={(event) => endChartDrag(event, chart)}
+                        onDoubleClick={() => {
+                          setChosenChart(chart.index);
+                          setPanel('charts');
+                        }}
+                      >
+                        {chosenChart === chart.index ? (
+                          <span
+                            className="rely-sheet-chart-resize"
+                            aria-label={words.resizeChart}
+                            title={words.resizeChart}
+                            onPointerDown={(event) => startChartDrag(event, chart.index, 'resize')}
+                          />
+                        ) : null}
+                      </div>
+                    );
+                  })
+                : null}
               {overlays('main')}
               {validationItems.length > 0 ? (
                 <datalist id={listId}>
@@ -1343,6 +1508,35 @@ export const SheetGrid = forwardRef(function SheetGrid(
             comments={workbook.comments}
             onChange={(row, column, text) => mutate(() => sheet.setComment(workbook.index, row, column, text, author ?? ''))}
             onSelect={(row, column) => moveTo({ row, column }, false)}
+            onClose={() => setPanel(null)}
+          />
+        ) : null}
+        {panel === 'charts' ? (
+          <ChartPanel
+            words={words}
+            charts={workbook.charts}
+            chosen={chosenChart !== null && chosenChart < workbook.charts.length ? chosenChart : null}
+            error={chartError}
+            onChoose={setChosenChart}
+            onInsert={insertChart}
+            onChange={(index, chart) => changeChart(() => sheet.setChart(workbook.index, index, { chart }))}
+            onUseSelection={(index) => {
+              const current = workbook.charts[index]?.spec;
+              const made = sheet.chartForRange(workbook.index, selected, current?.chartType ?? 'column');
+              if (!made) {
+                setChartError(words.chartNothingToPlot);
+                return;
+              }
+              changeChart(() =>
+                sheet.setChart(workbook.index, index, {
+                  chart: { ...made, title: current?.title ?? null, legend: current?.legend ?? made.legend, stacked: current?.stacked ?? false },
+                }),
+              );
+            }}
+            onRemove={(index) => {
+              setChosenChart(null);
+              changeChart(() => sheet.removeChart(workbook.index, index));
+            }}
             onClose={() => setPanel(null)}
           />
         ) : null}

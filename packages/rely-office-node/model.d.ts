@@ -71,6 +71,7 @@ export type ErrorCode =
   | 'OUT_OF_BOUNDS'
   | 'INVALID_STYLE'
   | 'INVALID_NAME'
+  | 'INVALID_CHART'
   | 'INTERNAL';
 
 export interface ExtractedText {
@@ -653,6 +654,44 @@ export interface DefinedName {
   hidden: boolean;
 }
 
+/** The kinds of chart a sheet makes. */
+export type ChartType = 'column' | 'bar' | 'line' | 'area' | 'pie' | 'doughnut' | 'scatter';
+
+/** One series of a chart: the formula of the cell naming it and of the range of its values. */
+export interface ChartSeries {
+  name?: string | null;
+  values: string;
+}
+
+/** A chart its editor can change, its ranges as formulas, `'Vendite'!$B$2:$B$7`. */
+export interface ChartDefinition {
+  chartType: ChartType;
+  /** Bars, lines or areas stacked on one another. */
+  stacked: boolean;
+  title?: string | null;
+  legend: boolean;
+  /** The labels of the categories, or the x values of a scatter chart. */
+  categories?: string | null;
+  series: ChartSeries[];
+}
+
+/** Where a chart sits, in EMU (914,400 an inch): the cell of its corner, how far into it, its size. */
+export interface ChartPlacement {
+  row: number;
+  column: number;
+  offsetX?: number;
+  offsetY?: number;
+  width: number;
+  height: number;
+}
+
+/** A chart of a sheet; `spec` is null for one drawn from a file that the editor cannot change. */
+export interface SheetChart {
+  index: number;
+  spec: ChartDefinition | null;
+  placement: Required<ChartPlacement>;
+}
+
 /** The comment on a cell. */
 export interface CellComment {
   row: number;
@@ -883,6 +922,19 @@ export interface SheetDocument {
   setDefinedName(name: string, formula: string, sheet?: number): void;
   /** Remove a name; false when there is none. Formulas that read it show `#NAME?`. */
   removeDefinedName(name: string, sheet?: number): boolean;
+  /** The charts of a sheet, in the order its drawing lists them. */
+  charts(sheet: number): SheetChart[];
+  /** Add a chart; the index it gets. Throws `INVALID_CHART` for ranges the workbook does not have. */
+  addChart(sheet: number, chart: ChartDefinition, placement: ChartPlacement): number;
+  /** Change what a chart shows, where it sits, or both. */
+  setChart(sheet: number, index: number, change: { chart?: ChartDefinition; placement?: ChartPlacement }): void;
+  removeChart(sheet: number, index: number): void;
+  /**
+   * The chart a window makes: a series for each column, or each row of a window wider than
+   * tall, a first row of text naming them and a first column of text giving the categories;
+   * null when it holds no numbers.
+   */
+  chartForRange(sheet: number, window: CellWindow, type: ChartType): ChartDefinition | null;
   /** The comments of a sheet's cells, row by row. */
   comments(sheet: number): CellComment[];
   /** Write the comment on a cell; an empty text removes it. */

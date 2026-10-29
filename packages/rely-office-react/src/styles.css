@@ -813,6 +813,34 @@
   pointer-events: none;
 }
 
+.rely-sheet-chart-frame {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  cursor: move;
+  touch-action: none;
+}
+
+.rely-sheet-chart-frame:hover {
+  border-color: var(--rely-border);
+}
+
+.rely-sheet-chart-chosen,
+.rely-sheet-chart-chosen:hover {
+  border: 2px solid var(--rely-accent);
+}
+
+.rely-sheet-chart-resize {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--rely-surface);
+  background: var(--rely-accent);
+  cursor: nwse-resize;
+}
+
 .rely-sheet-filter-button {
   position: absolute;
   top: 1px;

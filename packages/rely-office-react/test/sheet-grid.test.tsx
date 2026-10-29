@@ -435,6 +435,68 @@ describe('SheetGrid', () => {
     expect(cell('A1').textContent).toBe('10');
   });
 
+  test('the charts panel inserts a chart from the selection, changes it, moves it and removes it', () => {
+    sheet.setInputs(0, [
+      [0, 0, 'Mese'],
+      [0, 1, 'Vendite'],
+      [1, 0, 'Gen'],
+      [1, 1, '10'],
+      [2, 0, 'Feb'],
+      [2, 1, '20'],
+    ]);
+    const { cell, grid } = mount();
+    fireEvent.mouseDown(cell('A1'));
+    fireEvent.mouseDown(cell('B3'), { shiftKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Charts' }));
+    const panel = screen.getByRole('complementary', { name: 'Charts' });
+    expect(within(panel).getByText('No charts on this sheet')).toBeTruthy();
+
+    fireEvent.change(within(panel).getAllByRole('combobox', { name: 'Type' })[0], { target: { value: 'line' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Insert chart' }));
+    const charts = sheet.charts(0);
+    expect(charts).toHaveLength(1);
+    expect(charts[0].spec).toMatchObject({
+      chartType: 'line',
+      categories: 'Foglio1!$A$2:$A$3',
+      series: [{ name: 'Foglio1!$B$1', values: 'Foglio1!$B$2:$B$3' }],
+    });
+    expect(charts[0].placement).toMatchObject({ row: 0, column: 3 });
+    const frame = within(grid).getByRole('button', { name: 'Chart 1' });
+    expect(frame.getAttribute('aria-pressed')).toBe('true');
+
+    const kinds = within(panel).getAllByRole('combobox', { name: 'Type' });
+    fireEvent.change(kinds[kinds.length - 1], { target: { value: 'bar' } });
+    expect(sheet.charts(0)[0].spec?.chartType).toBe('bar');
+    const title = within(panel).getByRole('textbox', { name: 'Title' });
+    fireEvent.change(title, { target: { value: 'Trimestre' } });
+    fireEvent.blur(title);
+    expect(sheet.charts(0)[0].spec?.title).toBe('Trimestre');
+    fireEvent.click(within(panel).getByRole('checkbox', { name: 'Stacked' }));
+    expect(sheet.charts(0)[0].spec?.stacked).toBe(true);
+
+    const moved = within(grid).getByRole('button', { name: 'Chart Trimestre' });
+    fireEvent.pointerDown(moved, { button: 0, clientX: 100, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(moved, { clientX: 300, clientY: 160, pointerId: 1 });
+    fireEvent.pointerUp(moved, { clientX: 300, clientY: 160, pointerId: 1 });
+    const placement = sheet.charts(0)[0].placement;
+    expect(placement.column).toBeGreaterThan(3);
+    expect(placement.row).toBeGreaterThan(0);
+
+    fireEvent.keyDown(grid, { key: 'Delete' });
+    expect(sheet.charts(0)).toEqual([]);
+    expect(sheet.cells(0, { top: 0, left: 0, bottom: 0, right: 0 })[0].display).toBe('Mese');
+  });
+
+  test('a selection with nothing to plot makes no chart', () => {
+    const { cell } = mount();
+    fireEvent.mouseDown(cell('B1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Charts' }));
+    const panel = screen.getByRole('complementary', { name: 'Charts' });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Insert chart' }));
+    expect(within(panel).getByRole('alert').textContent).toBe('The selection holds no numbers to plot');
+    expect(sheet.charts(0)).toEqual([]);
+  });
+
   test('the borders menu puts a border on the selection', () => {
     const { cell } = mount();
     fireEvent.mouseDown(cell('B1'));

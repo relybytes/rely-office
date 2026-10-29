@@ -19,6 +19,7 @@
 mod archive;
 mod base64;
 mod chart;
+mod chart_spec;
 mod compound;
 mod doc;
 mod document;
@@ -50,6 +51,10 @@ mod xml_tree;
 #[cfg(test)]
 mod test_support;
 
+pub use chart_spec::{
+    ChartSeriesSpec, ChartSpec, ChartType, chart_part_xml, chart_range_formula,
+    odf_chart_object_xml, read_chart_spec, read_odf_chart_spec,
+};
 pub use document::{
     Alignment, Anchor, AnchorAlign, AnchorBase, AnchorPosition, Block, Border, BorderStyle,
     Borders, CellLook, Comment, DocumentTree, EmbeddedObject, HeadersFooters, ImportReport, Inline,
@@ -75,8 +80,8 @@ pub use sheet::{
     Sheet, Workbook, delimited_separator, read_ods_sheet_layouts, read_workbook, read_workbook_in,
 };
 pub use sheet_drawings::{
-    CarriedDrawing, CarriedPart, CarriedPivot, ChartValue, SheetDrawing, chart_formula_range,
-    redraw_carried_drawing,
+    CarriedDrawing, CarriedPart, CarriedPivot, ChartValue, DrawingAnchor, SheetDrawing,
+    chart_formula_range, drawing_anchors, redraw_carried_drawing,
 };
 pub use sheet_layout::{
     AutoFilterLayout, CellRange, MergePlace, SheetLayout, read_xlsx_drawing_parts,

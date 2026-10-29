@@ -1019,6 +1019,7 @@ mod tests {
             content_type,
             bytes: vec![u8::try_from(row).unwrap()],
             description: None,
+            chart: None,
         };
         let mut drawn = sheet("Vendite", &[&["a"]]);
         drawn.layout.row_heights.insert(9, 0);

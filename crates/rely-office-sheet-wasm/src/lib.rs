@@ -13,10 +13,10 @@
 
 use rely_office_core::{Limits, OfficeError, SheetDrawing};
 use rely_office_sheet::{
-    Border, BorderPlacement, CellLook, CellRef, ConditionalFormat, DataValidation, EditError,
-    EditHistory, Input, Locale, MAX_COLUMNS, MAX_ROWS, NumberFormat, SortKey, StylePatch, Value,
-    Workbook, default_separator, function_names, print_formula_in, read_spreadsheet, write_csv,
-    write_ods, write_xlsx,
+    Border, BorderPlacement, CellLook, CellRange, CellRef, ChartPlacement, ChartSpec, ChartType,
+    ConditionalFormat, DataValidation, EditError, EditHistory, Input, Locale, MAX_COLUMNS,
+    MAX_ROWS, NumberFormat, SortKey, StylePatch, Value, Workbook, default_separator,
+    function_names, print_formula_in, read_spreadsheet, write_csv, write_ods, write_xlsx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -57,6 +57,7 @@ impl From<EditError> for Failure {
             EditError::OutOfBounds => "OUT_OF_BOUNDS",
             EditError::InvalidStyle => "INVALID_STYLE",
             EditError::InvalidName => "INVALID_NAME",
+            EditError::InvalidChart => "INVALID_CHART",
         };
         Self::new(code, error.to_string())
     }
@@ -112,6 +113,46 @@ struct DefinedNameSummary<'a> {
     sheet: Option<usize>,
     formula: String,
     hidden: bool,
+}
+
+/// Where a chart sits, in EMU: the cell of its corner, how far into it, and its size.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlacementJson {
+    row: u32,
+    column: u32,
+    #[serde(default)]
+    offset_x: i64,
+    #[serde(default)]
+    offset_y: i64,
+    width: i64,
+    height: i64,
+}
+
+impl From<PlacementJson> for ChartPlacement {
+    fn from(placement: PlacementJson) -> Self {
+        Self {
+            row: placement.row,
+            column: placement.column,
+            offset_emu: (placement.offset_x, placement.offset_y),
+            width_emu: placement.width,
+            height_emu: placement.height,
+        }
+    }
+}
+
+/// A chart of a sheet: what it shows, absent for one the editor cannot change, and where.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChartSummary {
+    index: usize,
+    spec: Option<ChartSpec>,
+    placement: PlacementJson,
+}
+
+fn parse_json<T: for<'de> Deserialize<'de>>(json: &str, what: &str) -> Result<T, Failure> {
+    serde_json::from_str(json)
+        .map_err(|error| Failure::new("INVALID_INPUT", format!("invalid {what}: {error}")))
 }
 
 /// The comment on a cell.
@@ -651,6 +692,96 @@ impl SheetDocument {
             })
             .collect();
         to_json(&comments)
+    }
+
+    /// The charts of a sheet: `[{ index, spec?, placement }]`.
+    ///
+    /// # Errors
+    ///
+    /// `NO_SUCH_SHEET`, `INTERNAL` when the JSON cannot be written.
+    pub fn charts_summary(&self, sheet: usize) -> Result<String, Failure> {
+        if sheet >= self.workbook.sheets().len() {
+            return Err(EditError::NoSuchSheet(sheet).into());
+        }
+        let charts: Vec<ChartSummary> = self
+            .workbook
+            .charts(sheet)
+            .into_iter()
+            .enumerate()
+            .map(|(index, chart)| ChartSummary {
+                index,
+                spec: chart.spec,
+                placement: PlacementJson {
+                    row: chart.placement.row,
+                    column: chart.placement.column,
+                    offset_x: chart.placement.offset_emu.0,
+                    offset_y: chart.placement.offset_emu.1,
+                    width: chart.placement.width_emu,
+                    height: chart.placement.height_emu,
+                },
+            })
+            .collect();
+        to_json(&charts)
+    }
+
+    /// Add a chart from its JSON and its placement's; the index it gets.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_INPUT` for JSON that is no chart or placement, or the error of the edit.
+    pub fn add_chart_json(
+        &mut self,
+        sheet: usize,
+        spec_json: &str,
+        placement_json: &str,
+    ) -> Result<usize, Failure> {
+        let spec: ChartSpec = parse_json(spec_json, "chart")?;
+        let placement: PlacementJson = parse_json(placement_json, "placement")?;
+        Ok(self.workbook.add_chart(sheet, &spec, placement.into())?)
+    }
+
+    /// Change a chart, what it shows or where it sits, each given as JSON or left as it is.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_INPUT` for JSON that is no chart or placement, or the error of the edit.
+    pub fn set_chart_json(
+        &mut self,
+        sheet: usize,
+        index: usize,
+        spec_json: Option<&str>,
+        placement_json: Option<&str>,
+    ) -> Result<(), Failure> {
+        let spec: Option<ChartSpec> = spec_json
+            .map(|json| parse_json(json, "chart"))
+            .transpose()?;
+        let placement: Option<PlacementJson> = placement_json
+            .map(|json| parse_json(json, "placement"))
+            .transpose()?;
+        Ok(self
+            .workbook
+            .set_chart(sheet, index, spec.as_ref(), placement.map(Into::into))?)
+    }
+
+    /// The chart a selection makes, as JSON, `null` when it holds nothing to plot.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_INPUT` for an unknown chart type, `INTERNAL` when the JSON cannot be written.
+    pub fn chart_for_range_summary(
+        &self,
+        sheet: usize,
+        (top, left, bottom, right): (u32, u32, u32, u32),
+        chart_type: &str,
+    ) -> Result<String, Failure> {
+        let chart_type: ChartType = parse_json(&format!("\"{chart_type}\""), "chart type")?;
+        let range = CellRange {
+            first_row: top.min(bottom),
+            first_column: left.min(right),
+            last_row: top.max(bottom),
+            last_column: left.max(right),
+        };
+        to_json(&self.workbook.chart_for_range(sheet, range, chart_type))
     }
 
     /// Type several cells at once: `[[row, column, text], ...]`.
@@ -1242,6 +1373,99 @@ impl SheetDocument {
             self.history.discard_last();
         }
         removed
+    }
+
+    /// The charts of a sheet, as JSON.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = chartsJson)]
+    pub fn charts_json(&self, sheet: usize) -> Result<String, JsError> {
+        self.charts_summary(sheet)
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// Add a chart; the index it gets among the sheet's charts.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = addChart)]
+    pub fn add_chart(
+        &mut self,
+        sheet: usize,
+        spec_json: &str,
+        placement_json: &str,
+    ) -> Result<usize, JsError> {
+        self.recorded(|document| {
+            document
+                .add_chart_json(sheet, spec_json, placement_json)
+                .map_err(|failure| throw(&failure))
+        })
+    }
+
+    /// Change a chart: what it shows, where it sits, or both.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = setChart)]
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "wasm-bindgen hands an optional string over owned; it has no Option<&str>"
+    )]
+    pub fn set_chart(
+        &mut self,
+        sheet: usize,
+        index: usize,
+        spec_json: Option<String>,
+        placement_json: Option<String>,
+    ) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .set_chart_json(
+                    sheet,
+                    index,
+                    spec_json.as_deref(),
+                    placement_json.as_deref(),
+                )
+                .map_err(|failure| throw(&failure))
+        })
+    }
+
+    /// Remove a chart.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = removeChart)]
+    pub fn remove_chart(&mut self, sheet: usize, index: usize) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .workbook
+                .remove_chart(sheet, index)
+                .map_err(|error| throw(&error.into()))
+        })
+    }
+
+    /// The chart a selection makes, as JSON, `null` when it holds nothing to plot.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = chartForRangeJson)]
+    pub fn chart_for_range_json(
+        &self,
+        sheet: usize,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+        chart_type: &str,
+    ) -> Result<String, JsError> {
+        self.chart_for_range_summary(sheet, (top, left, bottom, right), chart_type)
+            .map_err(|failure| throw(&failure))
     }
 
     /// The comments of a sheet, as JSON.

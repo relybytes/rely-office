@@ -19,6 +19,7 @@ use self::rules::{add_validation_cells, conditional_formats, content_validation}
 use super::styles::{FO, STYLE, Scope, Styles, TEXT, border, colour, points, vertical_alignment};
 use crate::archive::{ZipPackage, open_package, read_member_bytes, read_text_member};
 use crate::chart::{odf_chart_picture, odf_object_part};
+use crate::chart_spec::read_odf_chart_spec;
 use crate::document::{Border, sniff_image_type};
 use crate::sheet_layout::{AutoFilterLayout, CellRange, SheetLayout};
 use crate::sheet_rules::{DataValidation, DifferentialLook};
@@ -727,16 +728,18 @@ impl LayoutReader<'_, '_, '_> {
                         .ok()
                         .flatten()
                 })
-                .and_then(|xml| odf_chart_picture(&xml, width_emu, height_emu))
-                .map(|(bytes, title)| ("image/svg+xml", bytes, title))
+                .and_then(|xml| {
+                    let (bytes, title) = odf_chart_picture(&xml, width_emu, height_emu)?;
+                    Some(("image/svg+xml", bytes, title, read_odf_chart_spec(&xml)))
+                })
         } else {
             frame
                 .child(DRAW, "image")
                 .and_then(|image| image.attribute(XLINK, "href"))
                 .and_then(|href| self.image(href))
-                .map(|bytes| (sniff_image_type(&bytes), bytes, None))
+                .map(|bytes| (sniff_image_type(&bytes), bytes, None, None))
         };
-        let Some((content_type, bytes, title)) = drawn else {
+        let Some((content_type, bytes, title, chart)) = drawn else {
             return;
         };
         let description = title.or_else(|| {
@@ -755,6 +758,7 @@ impl LayoutReader<'_, '_, '_> {
             content_type,
             bytes,
             description,
+            chart,
         });
     }
 

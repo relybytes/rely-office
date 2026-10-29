@@ -133,6 +133,26 @@ export interface SheetGridLabels {
   wholeWorkbook: string;
   addName: string;
   invalidName: string;
+  charts: string;
+  chartLabel: string;
+  insertChart: string;
+  chartType: string;
+  chartTitle: string;
+  chartLegend: string;
+  chartStacked: string;
+  chartUseSelection: string;
+  removeChart: string;
+  noCharts: string;
+  chartNothingToPlot: string;
+  chartFromFile: string;
+  resizeChart: string;
+  chartColumn: string;
+  chartBar: string;
+  chartLine: string;
+  chartArea: string;
+  chartPie: string;
+  chartDoughnut: string;
+  chartScatter: string;
   functions: string;
   resizeColumn: string;
   resizeRow: string;
@@ -266,6 +286,26 @@ export const ENGLISH_SHEET_GRID_LABELS: SheetGridLabels = {
   wholeWorkbook: 'Workbook',
   addName: 'Define name',
   invalidName: 'A name starts with a letter and holds letters, digits, dots and underscores; it cannot look like a cell',
+  charts: 'Charts',
+  chartLabel: 'Chart',
+  insertChart: 'Insert chart',
+  chartType: 'Type',
+  chartTitle: 'Title',
+  chartLegend: 'Legend',
+  chartStacked: 'Stacked',
+  chartUseSelection: 'Use the selection as data',
+  removeChart: 'Remove chart',
+  noCharts: 'No charts on this sheet',
+  chartNothingToPlot: 'The selection holds no numbers to plot',
+  chartFromFile: 'This chart came from the file: it can be moved, resized or removed',
+  resizeChart: 'Resize chart',
+  chartColumn: 'Column',
+  chartBar: 'Bar',
+  chartLine: 'Line',
+  chartArea: 'Area',
+  chartPie: 'Pie',
+  chartDoughnut: 'Doughnut',
+  chartScatter: 'Scatter',
   functions: 'Functions',
   resizeColumn: 'Resize column; double click fits it',
   resizeRow: 'Resize row; double click fits it',
@@ -399,6 +439,26 @@ export const ITALIAN_SHEET_GRID_LABELS: SheetGridLabels = {
   wholeWorkbook: 'Cartella di lavoro',
   addName: 'Definisci nome',
   invalidName: 'Un nome inizia con una lettera e contiene lettere, cifre, punti e trattini bassi; non può sembrare una cella',
+  charts: 'Grafici',
+  chartLabel: 'Grafico',
+  insertChart: 'Inserisci grafico',
+  chartType: 'Tipo',
+  chartTitle: 'Titolo',
+  chartLegend: 'Legenda',
+  chartStacked: 'In pila',
+  chartUseSelection: 'Usa la selezione come dati',
+  removeChart: 'Rimuovi grafico',
+  noCharts: 'Nessun grafico in questo foglio',
+  chartNothingToPlot: 'La selezione non contiene numeri da rappresentare',
+  chartFromFile: 'Questo grafico viene dal file: si può spostare, ridimensionare o rimuovere',
+  resizeChart: 'Ridimensiona grafico',
+  chartColumn: 'Istogramma',
+  chartBar: 'Barre',
+  chartLine: 'Linee',
+  chartArea: 'Area',
+  chartPie: 'Torta',
+  chartDoughnut: 'Anello',
+  chartScatter: 'Dispersione',
   functions: 'Funzioni',
   resizeColumn: 'Ridimensiona colonna; doppio clic per adattarla',
   resizeRow: 'Ridimensiona riga; doppio clic per adattarla',

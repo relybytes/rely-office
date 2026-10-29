@@ -49,6 +49,9 @@ pub struct SheetDrawing {
     pub bytes: Vec<u8>,
     /// The description a picture carries, or a chart's title.
     pub description: Option<String>,
+    /// What the chart is, for one an editor can change; `None` for a picture or a chart it
+    /// cannot.
+    pub chart: Option<crate::chart_spec::ChartSpec>,
 }
 
 /// A part of a package kept as the file had it, to be written back unchanged.
@@ -521,6 +524,91 @@ pub fn chart_formula_range(formula: &str) -> Option<(String, CellRange)> {
     Some((sheet, CellRange::parse(&range)?))
 }
 
+/// An anchor of a drawing part as an editor changes it: where its text lies in the part, where
+/// it places its drawing, and the relationship of the chart it holds, if it holds one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrawingAnchor {
+    /// The bytes of the part the anchor element spans, its end excluded.
+    pub span: (usize, usize),
+    pub row: u32,
+    pub column: u32,
+    pub offset_emu: (i64, i64),
+    pub width_emu: i64,
+    pub height_emu: i64,
+    pub chart_relationship: Option<String>,
+    pub picture: bool,
+}
+
+/// The anchors of a drawing part, in the order the part lists them; one that places nothing is
+/// left out. `layout` gives the sizes of the rows and columns they anchor to.
+#[must_use]
+pub fn drawing_anchors(xml: &str, layout: &SheetLayout) -> Vec<DrawingAnchor> {
+    let Ok(root) = parse_tree(xml, |_, _| false) else {
+        return Vec::new();
+    };
+    let spans = element_spans(xml);
+    let elements: Vec<&Element> = root.elements().collect();
+    if spans.len() != elements.len() {
+        return Vec::new();
+    }
+    elements
+        .into_iter()
+        .zip(spans)
+        .filter(|(anchor, _)| anchor.namespace == XDR)
+        .filter_map(|(anchor, span)| {
+            let frame = anchor_frame(anchor, layout)?;
+            let chart_relationship = anchor
+                .child(XDR, "graphicFrame")
+                .and_then(chart_reference)
+                .and_then(|chart| chart.attribute(Namespace::Relationships, "id"))
+                .map(str::to_owned);
+            Some(DrawingAnchor {
+                span,
+                row: frame.row,
+                column: frame.column,
+                offset_emu: frame.offset_emu,
+                width_emu: frame.width_emu,
+                height_emu: frame.height_emu,
+                chart_relationship,
+                picture: anchor.child(XDR, "pic").is_some(),
+            })
+        })
+        .collect()
+}
+
+/// The byte spans of the root's child elements.
+fn element_spans(xml: &str) -> Vec<(usize, usize)> {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut depth = 0_usize;
+    let mut spans = Vec::new();
+    let mut start = 0;
+    loop {
+        let before = usize::try_from(reader.buffer_position()).unwrap_or(0);
+        let Ok(event) = reader.read_event() else {
+            return Vec::new();
+        };
+        let after = usize::try_from(reader.buffer_position()).unwrap_or(0);
+        match event {
+            Event::Start(_) => {
+                if depth == 1 {
+                    start = before;
+                }
+                depth += 1;
+            }
+            Event::End(_) => {
+                depth = depth.saturating_sub(1);
+                if depth == 1 {
+                    spans.push((start, after));
+                }
+            }
+            Event::Empty(_) if depth == 1 => spans.push((before, after)),
+            Event::Eof => return spans,
+            _ => {}
+        }
+    }
+}
+
 /// The drawings of a worksheet part; a drawing that cannot be read is left out.
 pub(crate) fn sheet_drawings(
     package: &mut ZipPackage<'_>,
@@ -565,6 +653,7 @@ pub(crate) fn sheet_drawings(
         }
         let drawn = if let Some(picture) = anchor.child(XDR, "pic") {
             picture_of(package, picture, &relationships, limits, budget)
+                .map(|(content_type, bytes, description)| (content_type, bytes, description, None))
         } else if let Some(chart) = anchor
             .child(XDR, "graphicFrame")
             .or_else(|| {
@@ -591,7 +680,7 @@ pub(crate) fn sheet_drawings(
         } else {
             None
         };
-        if let Some((content_type, bytes, description)) = drawn {
+        if let Some((content_type, bytes, description, chart)) = drawn {
             drawings.push(SheetDrawing {
                 row,
                 column,
@@ -601,6 +690,7 @@ pub(crate) fn sheet_drawings(
                 content_type,
                 bytes,
                 description,
+                chart,
             });
         }
     }
@@ -772,6 +862,14 @@ fn picture_of(
     Some((sniff_image_type(&bytes), bytes, description))
 }
 
+/// A drawing as read: its type, its bytes, its description and what the chart is.
+type Drawn = (
+    &'static str,
+    Vec<u8>,
+    Option<String>,
+    Option<crate::chart_spec::ChartSpec>,
+);
+
 #[expect(
     clippy::too_many_arguments,
     reason = "a chart needs its part, the workbook's theme and limits and its own frame"
@@ -785,7 +883,7 @@ fn chart_of(
     budget: &mut ImageBudget,
     (width_emu, height_emu): (i64, i64),
     cells: CellSource<'_>,
-) -> Option<(&'static str, Vec<u8>, Option<String>)> {
+) -> Option<Drawn> {
     let id = chart.attribute(Namespace::Relationships, "id")?;
     let target = &relationships
         .iter()
@@ -796,7 +894,12 @@ fn chart_of(
     if !budget.take(bytes.len() as u64) {
         return None;
     }
-    Some(("image/svg+xml", bytes, title))
+    Some((
+        "image/svg+xml",
+        bytes,
+        title,
+        crate::chart_spec::read_chart_spec(&xml),
+    ))
 }
 
 #[cfg(test)]

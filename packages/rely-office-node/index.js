@@ -328,6 +328,33 @@ class SheetDocument {
     return this.document.removeDefinedName(name, sheet ?? undefined);
   }
 
+  charts(sheet) {
+    return JSON.parse(call(() => this.document.chartsJson(sheet)));
+  }
+
+  addChart(sheet, chart, placement) {
+    return call(() => this.document.addChart(sheet, JSON.stringify(chart), JSON.stringify(placement)));
+  }
+
+  setChart(sheet, index, { chart, placement } = {}) {
+    call(() =>
+      this.document.setChart(
+        sheet,
+        index,
+        chart === undefined ? undefined : JSON.stringify(chart),
+        placement === undefined ? undefined : JSON.stringify(placement),
+      ),
+    );
+  }
+
+  removeChart(sheet, index) {
+    call(() => this.document.removeChart(sheet, index));
+  }
+
+  chartForRange(sheet, { top, left, bottom, right }, type) {
+    return JSON.parse(call(() => this.document.chartForRangeJson(sheet, top, left, bottom, right, type)));
+  }
+
   comments(sheet) {
     return JSON.parse(call(() => this.document.commentsJson(sheet)));
   }

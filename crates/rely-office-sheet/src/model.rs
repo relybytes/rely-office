@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use rely_office_core::{
     CarriedDrawing, CarriedPart, CarriedPivot, CellRange, CellStyle, ChartValue, ConditionalFormat,
-    DataValidation, Limits, SheetDrawing, SheetLayout, chart_formula_range, redraw_carried_drawing,
+    DataValidation, Limits, SheetDrawing, chart_formula_range, redraw_carried_drawing,
 };
 
 use crate::arrange::AutoFilter;
@@ -177,6 +177,10 @@ pub enum EditError {
     InvalidStyle,
     #[error("a name starts with a letter, _ or \\, holds letters, digits, . and _, and is no cell")]
     InvalidName,
+    #[error(
+        "a chart reads from one to 64 ranges of the workbook and has a title of 255 characters at most"
+    )]
+    InvalidChart,
 }
 
 /// A name the workbook defines, `Aliquota` or `Vendite`: what it refers to, a range, a value
@@ -710,10 +714,15 @@ impl Workbook {
 
     /// Recompute every formula.
     pub(crate) fn recalculate(&mut self) {
-        static NEXT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let computed = evaluate::evaluate_workbook(self);
         self.values = computed.values;
         self.spills = computed.spills;
+        self.touch();
+    }
+
+    /// Mark the workbook changed for whoever keeps what it drew from it, values unchanged.
+    pub(crate) fn touch(&mut self) {
+        static NEXT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         self.revision = NEXT_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
@@ -875,40 +884,7 @@ impl Workbook {
         let Some(drawing) = &content.drawing else {
             return content.pictures.clone();
         };
-        let last_column = content
-            .column_widths
-            .keys()
-            .next_back()
-            .map_or(0, |last| last + 1);
-        let layout = SheetLayout {
-            column_widths: (0..last_column)
-                .map(|column| {
-                    content.column_widths.get(&column).map(|width| {
-                        #[expect(
-                            clippy::cast_possible_truncation,
-                            clippy::cast_sign_loss,
-                            reason = "widths are clamped to 255"
-                        )]
-                        let units = (width * 256.0).round() as u32;
-                        units
-                    })
-                })
-                .collect(),
-            row_heights: content
-                .row_heights
-                .iter()
-                .map(|(row, height)| {
-                    #[expect(
-                        clippy::cast_possible_truncation,
-                        clippy::cast_sign_loss,
-                        reason = "heights are clamped to 409 points"
-                    )]
-                    let twips = (height * 20.0).round() as u32;
-                    (*row, twips)
-                })
-                .collect(),
-            ..SheetLayout::default()
-        };
+        let layout = self.drawing_layout(sheet);
         let values = |formula: &str| {
             let (name, range) = chart_formula_range(formula)?;
             let index = self.sheet_index(&name)?;
