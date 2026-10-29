@@ -130,14 +130,49 @@ export type Inline =
    */
   | { type: 'text'; text: string; marks?: Mark[]; field?: 'page' | 'pages' }
   | { type: 'hardBreak' }
-  /** `media` indexes `DocumentTree.media`; sizes are CSS pixels. */
-  | { type: 'image'; media: number; alt?: string; width?: number; height?: number }
+  /**
+   * `media` indexes `DocumentTree.media`; sizes are CSS pixels. A floating image has an
+   * `anchor`; one without stands in the line.
+   */
+  | { type: 'image'; media: number; alt?: string; width?: number; height?: number; anchor?: ImageAnchor }
   /** A footnote or endnote: `note` indexes `DocumentTree.notes`. */
   | { type: 'noteReference'; note: number }
   /** A comment on a point rather than on text: `comment` indexes `DocumentTree.comments`. */
   | { type: 'commentAnchor'; comment: number }
   /** An equation in LaTeX, `\frac{a}{b}`; `display` sets it on a line of its own. */
   | { type: 'math'; latex: string; display: boolean };
+
+/** What a floating image's position is measured from. */
+export type AnchorBase = 'page' | 'margin' | 'column' | 'paragraph' | 'line';
+
+/** One axis of a floating image's position: an offset from its base, or an alignment in it. */
+export interface AnchorPosition {
+  base: AnchorBase;
+  /** In EMU, 914,400 to the inch. */
+  offsetEmu: number;
+  /** Left or top, the middle, right or bottom; it wins over the offset. */
+  align?: 'start' | 'center' | 'end';
+}
+
+/** How the text goes around a floating image. */
+export type ImageWrap =
+  | { type: 'around' }
+  /** Beside its outline, in bands from the top, each side in 255ths of the width. */
+  | { type: 'contour'; outline: { left: number[]; right: number[] } }
+  | { type: 'topAndBottom' }
+  | { type: 'inFront' }
+  | { type: 'behind' };
+
+/** Where a floating image stands, its size in EMU and how the text goes around it. */
+export interface ImageAnchor {
+  horizontal: AnchorPosition;
+  vertical: AnchorPosition;
+  widthEmu: number;
+  heightEmu: number;
+  wrap: ImageWrap;
+  /** The space kept from the text, in EMU: top, bottom, left, right. */
+  distanceEmu: [number, number, number, number];
+}
 
 /** A comment, or a reply to one. */
 export interface Comment {

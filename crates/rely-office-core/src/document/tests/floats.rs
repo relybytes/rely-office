@@ -217,3 +217,70 @@ fn keeps_the_anchor_of_a_floating_vml_picture() {
     assert_eq!(anchor.vertical.base, AnchorBase::Page);
     assert_eq!(anchor.wrap, Wrap::Behind);
 }
+
+#[cfg(feature = "serde")]
+#[test]
+fn a_floating_image_crosses_the_json_boundary_with_its_anchor() {
+    let image = Inline::Image {
+        media: 0,
+        alt: None,
+        width: Some(100),
+        height: Some(50),
+        anchor: Some(Box::new(Anchor {
+            horizontal: AnchorPosition {
+                base: AnchorBase::Column,
+                offset_emu: 0,
+                align: Some(AnchorAlign::End),
+            },
+            vertical: AnchorPosition {
+                base: AnchorBase::Paragraph,
+                offset_emu: 12_700,
+                align: None,
+            },
+            width_emu: 952_500,
+            height_emu: 476_250,
+            wrap: Wrap::Contour(WrapOutline {
+                left: [0; OUTLINE_BANDS],
+                right: [255; OUTLINE_BANDS],
+            }),
+            distance_emu: [0, 0, 114_300, 114_300],
+        })),
+    };
+    let json = serde_json::to_value(&image).unwrap();
+    assert_eq!(
+        json["anchor"]["horizontal"],
+        serde_json::json!({ "base": "column", "offsetEmu": 0, "align": "end" })
+    );
+    assert_eq!(
+        json["anchor"]["vertical"],
+        serde_json::json!({ "base": "paragraph", "offsetEmu": 12_700 })
+    );
+    assert_eq!(json["anchor"]["wrap"]["type"], "contour");
+    assert_eq!(json["anchor"]["widthEmu"], 952_500);
+    assert_eq!(serde_json::from_value::<Inline>(json).unwrap(), image);
+    let around: Inline = serde_json::from_value(serde_json::json!({
+        "type": "image",
+        "media": 0,
+        "anchor": {
+            "horizontal": { "base": "page", "offsetEmu": 0 },
+            "vertical": { "base": "page", "offsetEmu": 0 },
+            "widthEmu": 10, "heightEmu": 10,
+            "wrap": { "type": "around" },
+            "distanceEmu": [0, 0, 0, 0]
+        }
+    }))
+    .unwrap();
+    assert!(
+        matches!(around, Inline::Image { anchor: Some(anchor), .. } if anchor.wrap == Wrap::Around)
+    );
+    // An image the editor set in the line has no anchor at all.
+    let inline = serde_json::to_value(Inline::Image {
+        media: 0,
+        alt: None,
+        width: None,
+        height: None,
+        anchor: None,
+    })
+    .unwrap();
+    assert!(inline.get("anchor").is_none());
+}

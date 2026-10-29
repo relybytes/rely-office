@@ -16,6 +16,11 @@ const MAX_EMU: i64 = 51_206_400 * 4;
 
 /// What a position is measured from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub enum AnchorBase {
     Page,
     /// The page's margins, the text area.
@@ -30,6 +35,11 @@ pub enum AnchorBase {
 
 /// A side or the middle of what a position is measured from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub enum AnchorAlign {
     /// Left, or top.
     Start,
@@ -40,11 +50,20 @@ pub enum AnchorAlign {
 
 /// One axis of a position: an offset from a base, or an alignment within it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct AnchorPosition {
     pub base: AnchorBase,
     /// In English Metric Units, 914,400 to the inch.
     pub offset_emu: i64,
     /// An alignment, which wins over the offset.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub align: Option<AnchorAlign>,
 }
 
@@ -55,6 +74,7 @@ pub const OUTLINE_BANDS: usize = 16;
 /// [`OUTLINE_BANDS`] bands from its top, the leftmost and the rightmost point of the outline,
 /// in 255ths of the object's width. A band the outline leaves empty has its left past its right.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct WrapOutline {
     pub left: [u8; OUTLINE_BANDS],
     pub right: [u8; OUTLINE_BANDS],
@@ -142,6 +162,11 @@ impl WrapOutline {
 
 /// How the text goes around a floating object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(tag = "type", content = "outline", rename_all = "camelCase")
+)]
 pub enum Wrap {
     /// Beside it, on the side with room, as Word's square wrapping.
     Around,
@@ -157,6 +182,11 @@ pub enum Wrap {
 
 /// The place, size and wrapping of a floating object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct Anchor {
     pub horizontal: AnchorPosition,
     pub vertical: AnchorPosition,

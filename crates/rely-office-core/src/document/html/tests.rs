@@ -236,3 +236,49 @@ fn reads_colours_and_lengths_as_the_tree_writes_them() {
         "Times New Roman"
     );
 }
+
+#[test]
+fn a_floating_image_floats_in_the_page() {
+    use crate::document::{Anchor, AnchorAlign, AnchorBase, AnchorPosition, Media, Wrap};
+    let floating = |wrap: Wrap, align: Option<AnchorAlign>| DocumentTree {
+        blocks: vec![Block::Paragraph {
+            content: vec![Inline::Image {
+                media: 0,
+                alt: None,
+                width: Some(10),
+                height: Some(10),
+                anchor: Some(Box::new(Anchor {
+                    horizontal: AnchorPosition {
+                        base: AnchorBase::Column,
+                        offset_emu: 0,
+                        align,
+                    },
+                    vertical: AnchorPosition {
+                        base: AnchorBase::Paragraph,
+                        offset_emu: 0,
+                        align: None,
+                    },
+                    width_emu: 95_250,
+                    height_emu: 95_250,
+                    wrap,
+                    distance_emu: [0; 4],
+                })),
+            }],
+            align: None,
+            look: ParagraphLook::default(),
+        }],
+        media: vec![Media {
+            content_type: "image/png",
+            bytes: vec![0x89, b'P', b'N', b'G'],
+        }],
+        ..DocumentTree::default()
+    };
+    let page = |tree: &DocumentTree| write_html(tree, "Pagina");
+    assert!(page(&floating(Wrap::Around, Some(AnchorAlign::End))).contains("float:right"));
+    assert!(page(&floating(Wrap::Behind, Some(AnchorAlign::Start))).contains("float:left"));
+    assert!(
+        page(&floating(Wrap::TopAndBottom, Some(AnchorAlign::Center)))
+            .contains("margin:0.5em auto")
+    );
+    assert!(page(&floating(Wrap::TopAndBottom, None)).contains("display:block;margin:0.5em 0\""));
+}

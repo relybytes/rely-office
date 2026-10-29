@@ -969,6 +969,28 @@ fn css_colour(value: &str) -> Option<String> {
 
 /// A document tree as a page of HTML that stands alone: its images in `data:` addresses, its
 /// notes as a numbered list at the end. Tracked deletions are left out and insertions kept, as
+/// The CSS a floating image keeps in a page: beside the text on its side, or on a line of its
+/// own.
+fn float_style(anchor: &super::Anchor) -> &'static str {
+    use super::{AnchorAlign, Wrap};
+    if matches!(anchor.wrap, Wrap::TopAndBottom)
+        || anchor.horizontal.align == Some(AnchorAlign::Center)
+    {
+        return match anchor.horizontal.align {
+            Some(AnchorAlign::Center) => "display:block;margin:0.5em auto",
+            Some(AnchorAlign::End) => "display:block;margin:0.5em 0 0.5em auto",
+            _ => "display:block;margin:0.5em 0",
+        };
+    }
+    let right = anchor.horizontal.align == Some(AnchorAlign::End)
+        || (anchor.horizontal.align.is_none() && anchor.horizontal.offset_emu > 2_743_200);
+    if right {
+        "float:right;margin:0.25em 0 0.5em 1em"
+    } else {
+        "float:left;margin:0.25em 1em 0.5em 0"
+    }
+}
+
 /// if the changes were accepted.
 #[must_use]
 pub fn write_html(tree: &DocumentTree, title: &str) -> String {
@@ -1168,7 +1190,7 @@ impl HtmlWriter<'_> {
                     alt,
                     width,
                     height,
-                    ..
+                    anchor,
                 } => {
                     let Some(item) = self.tree.media.get(*media) else {
                         continue;
@@ -1185,6 +1207,9 @@ impl HtmlWriter<'_> {
                     }
                     if let Some(height) = height {
                         let _ = write!(html, " height=\"{height}\"");
+                    }
+                    if let Some(style) = anchor.as_deref().map(float_style) {
+                        let _ = write!(html, " style=\"{style}\"");
                     }
                     html.push('>');
                 }

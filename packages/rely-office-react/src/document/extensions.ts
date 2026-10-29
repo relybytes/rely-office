@@ -121,6 +121,20 @@ export const RelyImage = Image.extend({
       ...this.parent?.(),
       width: { default: null },
       height: { default: null },
+      anchor: {
+        default: null,
+        parseHTML: (element) => {
+          const value = element.getAttribute('data-anchor');
+          if (!value) return null;
+          try {
+            return JSON.parse(value) as unknown;
+          } catch {
+            return null;
+          }
+        },
+        renderHTML: (attributes) =>
+          attributes.anchor ? { 'data-anchor': JSON.stringify(attributes.anchor) } : {},
+      },
       media: {
         default: null,
         parseHTML: (element) => {

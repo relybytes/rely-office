@@ -126,6 +126,61 @@ describe('DocumentEditor', () => {
     expect(first.type === 'paragraph' && first.content[0]).toEqual({ type: 'image', media: 0, alt: 'logo.png' });
   });
 
+  test('a floating image keeps its anchor, and its wrapping and side are chosen from the toolbar', async () => {
+    const anchor = {
+      horizontal: { base: 'column' as const, offsetEmu: 0, align: 'end' as const },
+      vertical: { base: 'paragraph' as const, offsetEmu: 0 },
+      widthEmu: 952_500,
+      heightEmu: 476_250,
+      wrap: { type: 'around' as const },
+      distanceEmu: [0, 0, 114_300, 114_300] as [number, number, number, number],
+    };
+    const floating: DocumentTree = {
+      ...tree(),
+      blocks: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'image', media: 0, width: 100, height: 50, anchor }, { type: 'text', text: 'Testo accanto' }],
+        },
+      ],
+      media: [{ index: 0, contentType: 'image/png', bytes: PNG }],
+      comments: [],
+    };
+    const ref = createRef<DocumentEditorHandle>();
+    render(<DocumentEditor ref={ref} document={documentTreeToEditor(floating).document} />);
+    await waitFor(() => expect(ref.current?.editor).toBeTruthy());
+    const editor = ref.current!.editor!;
+    const image = () => document.querySelector('.rely-image') as HTMLElement;
+    expect(image().dataset.float).toBe('right');
+    expect(image().dataset.wrap).toBe('around');
+    const kept = ref.current!.getTree().blocks[0];
+    expect(kept.type === 'paragraph' && kept.content[0]).toMatchObject({ type: 'image', anchor });
+
+    act(() => {
+      editor.commands.setNodeSelection(1);
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Position' }), { target: { value: 'start' } });
+    expect(image().dataset.float).toBe('left');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Text wrapping' }), { target: { value: 'inline' } });
+    expect(image().dataset.float).toBe('inline');
+    const inline = ref.current!.getTree().blocks[0];
+    expect(inline.type === 'paragraph' && inline.content[0]).not.toHaveProperty('anchor');
+    expect((screen.getByRole('combobox', { name: 'Position' }) as HTMLSelectElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Text wrapping' }), { target: { value: 'topAndBottom' } });
+    const made = ref.current!.getTree().blocks[0];
+    expect(made.type === 'paragraph' && made.content[0]).toMatchObject({
+      type: 'image',
+      anchor: {
+        wrap: { type: 'topAndBottom' },
+        horizontal: { base: 'column', align: 'start' },
+        widthEmu: 952_500,
+        heightEmu: 476_250,
+      },
+    });
+    expect(image().dataset.wrap).toBe('topAndBottom');
+  });
+
   test('an image the host refuses is not inserted', async () => {
     const { ref } = await mount({ onImageFile: async () => null });
 

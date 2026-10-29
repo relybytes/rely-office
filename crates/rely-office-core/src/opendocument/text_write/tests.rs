@@ -504,3 +504,97 @@ fn writes_spaces_and_lengths_as_opendocument_spells_them() {
     assert_eq!(image_size(&media, Some(10), None), (10, 5));
     assert_eq!(image_size(&media, None, None), (2, 1));
 }
+
+#[test]
+fn writes_a_floating_image_where_its_anchor_puts_it() {
+    use crate::document::{AnchorPosition, Media};
+    let anchored = |wrap: Wrap, horizontal: AnchorPosition| Anchor {
+        horizontal,
+        vertical: AnchorPosition {
+            base: AnchorBase::Paragraph,
+            offset_emu: 360_000,
+            align: None,
+        },
+        width_emu: 1_800_000,
+        height_emu: 900_000,
+        wrap,
+        distance_emu: [0, 0, 114_300, 114_300],
+    };
+    let cases = [
+        anchored(
+            Wrap::Around,
+            AnchorPosition {
+                base: AnchorBase::Column,
+                offset_emu: 0,
+                align: Some(AnchorAlign::End),
+            },
+        ),
+        anchored(
+            Wrap::TopAndBottom,
+            AnchorPosition {
+                base: AnchorBase::Margin,
+                offset_emu: 0,
+                align: Some(AnchorAlign::Center),
+            },
+        ),
+        anchored(
+            Wrap::Behind,
+            AnchorPosition {
+                base: AnchorBase::Page,
+                offset_emu: 720_000,
+                align: None,
+            },
+        ),
+        anchored(
+            Wrap::InFront,
+            AnchorPosition {
+                base: AnchorBase::Column,
+                offset_emu: 0,
+                align: Some(AnchorAlign::Start),
+            },
+        ),
+    ];
+    for anchor in cases {
+        let tree = DocumentTree {
+            blocks: vec![paragraph(
+                vec![
+                    text("Prima", Vec::new()),
+                    Inline::Image {
+                        media: 0,
+                        alt: None,
+                        width: Some(189),
+                        height: Some(94),
+                        anchor: Some(Box::new(anchor)),
+                    },
+                    text("dopo", Vec::new()),
+                ],
+                None,
+            )],
+            media: vec![Media {
+                content_type: "image/png",
+                bytes: PNG.to_vec(),
+            }],
+            ..DocumentTree::default()
+        };
+        let written = write_odt(&tree).unwrap();
+        let read = read_document_tree(&written, &Limits::default()).unwrap();
+        let found = read.blocks.iter().find_map(|block| match block {
+            Block::Paragraph { content, .. } => content.iter().find_map(|inline| match inline {
+                Inline::Image { anchor, .. } => anchor.clone(),
+                _ => None,
+            }),
+            _ => None,
+        });
+        let found = found.unwrap_or_else(|| panic!("{:?} came back inline", anchor.wrap));
+        assert_eq!(found.wrap, anchor.wrap);
+        assert_eq!(found.horizontal.align, anchor.horizontal.align);
+        assert_eq!(found.horizontal.base, anchor.horizontal.base);
+        assert_eq!(found.vertical.base, anchor.vertical.base);
+        assert_eq!(found.vertical.offset_emu, anchor.vertical.offset_emu);
+        assert_eq!(found.width_emu, anchor.width_emu);
+        assert_eq!(found.distance_emu, anchor.distance_emu);
+        if anchor.horizontal.align.is_none() {
+            assert_eq!(found.horizontal.offset_emu, anchor.horizontal.offset_emu);
+        }
+    }
+}

@@ -38,6 +38,17 @@ export interface DocumentEditorLabels {
   applyLink: string;
   removeLink: string;
   image: string;
+  imageWrap: string;
+  wrapInline: string;
+  wrapAround: string;
+  wrapContour: string;
+  wrapTopAndBottom: string;
+  wrapBehind: string;
+  wrapInFront: string;
+  imagePosition: string;
+  positionLeft: string;
+  positionCenter: string;
+  positionRight: string;
   equation: string;
   equationLatex: string;
   insertTable: string;
@@ -134,6 +145,17 @@ export const ENGLISH_DOCUMENT_EDITOR_LABELS: DocumentEditorLabels = {
   applyLink: 'Apply',
   removeLink: 'Remove link',
   image: 'Image',
+  imageWrap: 'Text wrapping',
+  wrapInline: 'In line with text',
+  wrapAround: 'Square',
+  wrapContour: 'Tight',
+  wrapTopAndBottom: 'Top and bottom',
+  wrapBehind: 'Behind text',
+  wrapInFront: 'In front of text',
+  imagePosition: 'Position',
+  positionLeft: 'Left',
+  positionCenter: 'Centre',
+  positionRight: 'Right',
   equation: 'Equation',
   equationLatex: 'Equation in LaTeX',
   insertTable: 'Insert table',
@@ -227,6 +249,17 @@ export const ITALIAN_DOCUMENT_EDITOR_LABELS: DocumentEditorLabels = {
   applyLink: 'Applica',
   removeLink: 'Rimuovi collegamento',
   image: 'Immagine',
+  imageWrap: 'Disposizione testo',
+  wrapInline: 'In linea con il testo',
+  wrapAround: 'Incorniciato',
+  wrapContour: 'Ravvicinato',
+  wrapTopAndBottom: 'Sopra e sotto',
+  wrapBehind: 'Dietro al testo',
+  wrapInFront: 'Davanti al testo',
+  imagePosition: 'Posizione',
+  positionLeft: 'A sinistra',
+  positionCenter: 'Al centro',
+  positionRight: 'A destra',
   equation: 'Equazione',
   equationLatex: 'Equazione in LaTeX',
   insertTable: 'Inserisci tabella',

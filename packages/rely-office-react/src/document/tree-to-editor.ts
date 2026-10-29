@@ -247,6 +247,7 @@ function mapInlines(inlines: Inline[], context: MappingContext): JSONContent[] {
             title: null,
             width: inline.width ?? null,
             height: inline.height ?? null,
+            anchor: inline.anchor ?? null,
             media: inline.media,
           },
         });

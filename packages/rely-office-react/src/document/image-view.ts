@@ -6,8 +6,26 @@
 
 import type { NodeViewRenderer } from '@tiptap/core';
 
+import type { ImageAnchor } from '../model.js';
+
 /** The smallest an image is dragged to, in CSS pixels. */
 export const MINIMUM_IMAGE_SIZE = 16;
+
+/** How far from the left a floating image placed by an offset sits before it goes right. */
+const RIGHT_HALF_EMU = 2_743_200;
+
+/**
+ * Where a floating image goes in the editor's flowing text: beside the text on its left or its
+ * right, or on a line of its own; `inline` for an image in the line.
+ */
+export function floatingSide(anchor: ImageAnchor | null | undefined): 'inline' | 'left' | 'right' | 'center' {
+  if (!anchor) return 'inline';
+  const { align, offsetEmu } = anchor.horizontal;
+  if (align === 'end') return 'right';
+  if (align === 'center') return 'center';
+  if (align === 'start') return 'left';
+  return offsetEmu > RIGHT_HALF_EMU ? 'right' : 'left';
+}
 
 /** The size an image takes when dragged by its corner, its proportions kept. */
 export function resizedImage(
@@ -40,6 +58,9 @@ export const imageNodeView: NodeViewRenderer = ({ node: initial, getPos, editor 
     else image.removeAttribute('title');
     image.style.width = width ? `${width}px` : '';
     image.style.height = height ? `${height}px` : '';
+    const anchor = node.attrs.anchor as ImageAnchor | null;
+    wrapper.dataset.float = floatingSide(anchor);
+    wrapper.dataset.wrap = anchor?.wrap.type ?? 'inline';
     if (node.attrs.media !== null && node.attrs.media !== undefined) image.dataset.media = String(node.attrs.media);
   };
   draw();
@@ -66,7 +87,9 @@ export const imageNodeView: NodeViewRenderer = ({ node: initial, getPos, editor 
       window.removeEventListener('mouseup', finish);
       const position = typeof getPos === 'function' ? getPos() : undefined;
       if (position === undefined) return;
-      editor.view.dispatch(editor.view.state.tr.setNodeMarkup(position, undefined, { ...node.attrs, ...size }));
+      const anchor = node.attrs.anchor as ImageAnchor | null;
+      const anchored = anchor ? { anchor: { ...anchor, widthEmu: size.width * 9_525, heightEmu: size.height * 9_525 } } : {};
+      editor.view.dispatch(editor.view.state.tr.setNodeMarkup(position, undefined, { ...node.attrs, ...size, ...anchored }));
     };
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', finish);

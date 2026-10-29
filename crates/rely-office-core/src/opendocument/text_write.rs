@@ -22,8 +22,9 @@ use zip::write::SimpleFileOptions;
 
 use crate::OfficeError;
 use crate::document::{
-    Alignment, Block, Comment, DocumentTree, HeadersFooters, Inline, LineSpacing, Mark, Media,
-    NoteKind, PageField, PageLayout, ParagraphLook, TableCell, TableRow,
+    Alignment, Anchor, AnchorAlign, AnchorBase, Block, Comment, DocumentTree, HeadersFooters,
+    Inline, LineSpacing, Mark, Media, NoteKind, PageField, PageLayout, ParagraphLook, TableCell,
+    TableRow, Wrap,
 };
 
 const NAMESPACES: &str = concat!(
@@ -703,8 +704,14 @@ impl OdtWriter<'_> {
                     alt,
                     width,
                     height,
-                    ..
-                } => xml.push_str(&self.image(*media, alt.as_deref(), *width, *height)),
+                    anchor,
+                } => {
+                    let image = self.image(*media, alt.as_deref(), *width, *height);
+                    match anchor {
+                        Some(anchor) => xml.push_str(&self.floating(&image, anchor, part)),
+                        None => xml.push_str(&image),
+                    }
+                }
                 Inline::NoteReference { note } => xml.push_str(&self.note(*note)),
                 Inline::CommentAnchor { comment } => {
                     if part == Part::Content {
@@ -900,6 +907,79 @@ impl OdtWriter<'_> {
             css_pixels(width),
             css_pixels(height)
         )
+    }
+
+    /// A picture's frame made to float: anchored to the paragraph, placed as its anchor says
+    /// with a graphic style giving how the text goes around it.
+    fn floating(&mut self, frame: &str, anchor: &Anchor, part: Part) -> String {
+        if frame.is_empty() {
+            return String::new();
+        }
+        let horizontal_rel = match anchor.horizontal.base {
+            AnchorBase::Page => "page",
+            AnchorBase::Margin => "page-content",
+            AnchorBase::Line => "char",
+            AnchorBase::Column | AnchorBase::Paragraph => "paragraph",
+        };
+        let vertical_rel = match anchor.vertical.base {
+            AnchorBase::Page => "page",
+            AnchorBase::Margin => "page-content",
+            AnchorBase::Line => "line",
+            AnchorBase::Column | AnchorBase::Paragraph => "paragraph",
+        };
+        let horizontal_pos = match anchor.horizontal.align {
+            Some(AnchorAlign::Start) => "left",
+            Some(AnchorAlign::Center) => "center",
+            Some(AnchorAlign::End) => "right",
+            None => "from-left",
+        };
+        let vertical_pos = match anchor.vertical.align {
+            Some(AnchorAlign::Start) => "top",
+            Some(AnchorAlign::Center) => "middle",
+            Some(AnchorAlign::End) => "bottom",
+            None => "from-top",
+        };
+        let wrap = match anchor.wrap {
+            Wrap::Around | Wrap::Contour(_) => r#"style:wrap="parallel""#,
+            Wrap::TopAndBottom => r#"style:wrap="none""#,
+            Wrap::InFront => r#"style:wrap="run-through" style:run-through="foreground""#,
+            Wrap::Behind => r#"style:wrap="run-through" style:run-through="background""#,
+        };
+        let [top, bottom, left, right] = anchor.distance_emu.map(emu_length);
+        let key = format!(
+            "graphic|{horizontal_rel}|{vertical_rel}|{horizontal_pos}|{vertical_pos}|{wrap}|{top}|{bottom}|{left}|{right}"
+        );
+        let style = self.registry(part).name("fr", key, |name| {
+            format!(
+                concat!(
+                    r#"<style:style style:name="{}" style:family="graphic"><style:graphic-properties {} "#,
+                    r#"style:horizontal-pos="{}" style:horizontal-rel="{}" style:vertical-pos="{}" style:vertical-rel="{}" "#,
+                    r#"fo:margin-top="{}" fo:margin-bottom="{}" fo:margin-left="{}" fo:margin-right="{}"/></style:style>"#
+                ),
+                name, wrap, horizontal_pos, horizontal_rel, vertical_pos, vertical_rel, top, bottom, left, right
+            )
+        });
+        let position = format!(
+            r#"draw:style-name="{style}" text:anchor-type="paragraph" svg:x="{}" svg:y="{}""#,
+            emu_length(anchor.horizontal.offset_emu),
+            emu_length(anchor.vertical.offset_emu)
+        );
+        let size = (anchor.width_emu > 0 && anchor.height_emu > 0).then(|| {
+            format!(
+                r#"svg:width="{}" svg:height="{}""#,
+                emu_length(anchor.width_emu),
+                emu_length(anchor.height_emu)
+            )
+        });
+        let mut floated = frame.replacen(r#"text:anchor-type="as-char""#, &position, 1);
+        if let Some(size) = size
+            && let (Some(start), Some(end)) =
+                (floated.find("svg:width=\""), floated.find(" draw:z-index"))
+            && start < end
+        {
+            floated.replace_range(start..end, &size);
+        }
+        floated
     }
 
     fn picture_path(&mut self, media: usize, item: &Media) -> Option<String> {
@@ -1203,6 +1283,14 @@ fn image_size(item: &Media, width: Option<u32>, height: Option<u32>) -> (u32, u3
         (Some(side), None, _) | (None, Some(side), _) => (side, side),
         _ => (227, 227),
     }
+}
+
+/// English Metric Units, 914,400 to the inch, as inches precise to the EMU.
+fn emu_length(emu: i64) -> String {
+    #[expect(clippy::cast_precision_loss, reason = "lengths of a few pages")]
+    let inches = emu as f64 / 914_400.0;
+    let text = format!("{inches:.7}");
+    format!("{}in", text.trim_end_matches('0').trim_end_matches('.'))
 }
 
 /// CSS pixels, a ninety-sixth of an inch, as centimetres.

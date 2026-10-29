@@ -10,6 +10,7 @@ import type {
   Block,
   DocumentTree,
   HeadersFooters,
+  ImageAnchor,
   Inline,
   Mark,
   MediaItem,
@@ -289,12 +290,14 @@ function mapInlines(nodes: JSONContent[] | undefined): Inline[] {
         };
         const width = size(attrs.width);
         const height = size(attrs.height);
+        const anchor = floatingAnchor(attrs.anchor, width, height);
         inlines.push({
           type: 'image',
           media: attrs.media,
           ...(typeof attrs.alt === 'string' && attrs.alt.length > 0 ? { alt: attrs.alt } : {}),
           ...(width === undefined ? {} : { width }),
           ...(height === undefined ? {} : { height }),
+          ...(anchor === null ? {} : { anchor }),
         });
         break;
       }
@@ -419,4 +422,19 @@ function forEachBlockList(tree: DocumentTree, visit: (blocks: Block[]) => void):
   headers(tree.headersFooters);
   tree.sections?.forEach((section) => headers(section.headersFooters));
   tree.comments?.forEach((comment) => visit(comment.blocks));
+}
+
+/** The EMU of a CSS pixel. */
+const EMU_PER_PIXEL = 9_525;
+
+/** The anchor of a floating image as the editor left it, its size the one the image was given. */
+function floatingAnchor(value: unknown, width: number | undefined, height: number | undefined): ImageAnchor | null {
+  if (value === null || typeof value !== 'object') return null;
+  const anchor = value as ImageAnchor;
+  if (typeof anchor.wrap?.type !== 'string' || typeof anchor.horizontal?.base !== 'string') return null;
+  return {
+    ...anchor,
+    ...(width === undefined ? {} : { widthEmu: width * EMU_PER_PIXEL }),
+    ...(height === undefined ? {} : { heightEmu: height * EMU_PER_PIXEL }),
+  };
 }

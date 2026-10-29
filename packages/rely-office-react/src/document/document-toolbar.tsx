@@ -7,7 +7,7 @@
 import type { Editor } from '@tiptap/core';
 import { useEditorState } from '@tiptap/react';
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
-import type { Alignment, NamedStyle, ParagraphFormat } from '../model.js';
+import type { Alignment, ImageAnchor, ImageWrap, NamedStyle, ParagraphFormat } from '../model.js';
 import { FONT_FAMILIES, FONT_SIZES, LINE_SPACINGS } from './formatting.js';
 import type { DocumentEditorLabels } from './labels.js';
 import { searchKey } from './search.js';
@@ -58,6 +58,85 @@ function ToolButton({
     >
       {children}
     </button>
+  );
+}
+
+/** The EMU of a CSS pixel. */
+const EMU_PER_PIXEL = 9_525;
+
+const WRAPS: [ImageWrap['type'] | 'inline', keyof DocumentEditorLabels][] = [
+  ['inline', 'wrapInline'],
+  ['around', 'wrapAround'],
+  ['contour', 'wrapContour'],
+  ['topAndBottom', 'wrapTopAndBottom'],
+  ['behind', 'wrapBehind'],
+  ['inFront', 'wrapInFront'],
+];
+
+/** The anchor an image in the line gets when it is made to float: at the left of the column,
+ * at the top of its paragraph, with Word's eighth of an inch kept beside it. */
+export function floatingAnchorFor(attributes: Record<string, unknown>, wrap: ImageWrap): ImageAnchor {
+  const pixels = (value: unknown) => (Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 100);
+  return {
+    horizontal: { base: 'column', offsetEmu: 0, align: 'start' },
+    vertical: { base: 'paragraph', offsetEmu: 0 },
+    widthEmu: Math.round(pixels(attributes.width) * EMU_PER_PIXEL),
+    heightEmu: Math.round(pixels(attributes.height) * EMU_PER_PIXEL),
+    wrap,
+    distanceEmu: [0, 0, 114_300, 114_300],
+  };
+}
+
+/** How the text goes around the chosen image and which side it stands on. */
+function ImageLayout({
+  labels,
+  attributes,
+  onAnchor,
+}: Readonly<{
+  labels: DocumentEditorLabels;
+  attributes: Record<string, unknown>;
+  onAnchor: (anchor: ImageAnchor | null) => void;
+}>): ReactElement {
+  const anchor = (attributes.anchor ?? null) as ImageAnchor | null;
+  const wrap = anchor?.wrap.type ?? 'inline';
+  const side = anchor?.horizontal.align ?? (anchor && anchor.horizontal.offsetEmu > 2_743_200 ? 'end' : 'start');
+  return (
+    <div className="rely-tool-group">
+      <select
+        className="rely-tool-select"
+        aria-label={labels.imageWrap}
+        value={wrap}
+        onChange={(event) => {
+          const chosen = event.target.value as ImageWrap['type'] | 'inline';
+          if (chosen === 'inline') onAnchor(null);
+          else if (chosen !== 'contour') {
+            const next: ImageWrap = { type: chosen };
+            onAnchor(anchor ? { ...anchor, wrap: next } : floatingAnchorFor(attributes, next));
+          }
+        }}
+      >
+        {WRAPS.filter(([kind]) => kind !== 'contour' || wrap === 'contour').map(([kind, key]) => (
+          <option key={kind} value={kind}>
+            {labels[key] as string}
+          </option>
+        ))}
+      </select>
+      <select
+        className="rely-tool-select"
+        aria-label={labels.imagePosition}
+        value={side}
+        disabled={anchor === null}
+        onChange={(event) => {
+          if (!anchor) return;
+          const align = event.target.value as 'start' | 'center' | 'end';
+          onAnchor({ ...anchor, horizontal: { base: 'column', offsetEmu: 0, align } });
+        }}
+      >
+        <option value="start">{labels.positionLeft}</option>
+        <option value="center">{labels.positionCenter}</option>
+        <option value="end">{labels.positionRight}</option>
+      </select>
+    </div>
   );
 }
 
@@ -137,6 +216,8 @@ export function DocumentToolbar({
       canRedo: current.can().redo(),
       canSink: current.can().sinkListItem('listItem'),
       canLift: current.can().liftListItem('listItem'),
+      image: current.isActive('image'),
+      imageAttributes: current.isActive('image') ? current.getAttributes('image') : null,
     }),
   });
 
@@ -351,6 +432,17 @@ export function DocumentToolbar({
             {'⊞'}
           </ToolButton>
         </div>
+        {state.image && state.imageAttributes ? (
+          <ImageLayout
+            labels={labels}
+            attributes={state.imageAttributes}
+            onAnchor={(anchor) => {
+              // The image stays chosen, so its layout can be changed again at once.
+              const at = editor.state.selection.from;
+              chain().updateAttributes('image', { anchor }).setNodeSelection(at).run();
+            }}
+          />
+        ) : null}
         {state.table ? (
           <div className="rely-tool-group">
             <ToolButton label={labels.addRow} onClick={() => chain().addRowAfter().run()}>

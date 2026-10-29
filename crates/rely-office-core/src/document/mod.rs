@@ -413,9 +413,11 @@ pub enum Inline {
         width: Option<u32>,
         #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
         height: Option<u32>,
-        /// Where a floating image stands; `None` for one set in the line. An editor gets the
-        /// image in the line.
-        #[cfg_attr(feature = "serde", serde(skip))]
+        /// Where a floating image stands; `None` for one set in the line.
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
         anchor: Option<Box<Anchor>>,
     },
     /// The reference to a footnote or an endnote: `note` is its index in [`DocumentTree::notes`].
