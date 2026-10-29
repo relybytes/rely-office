@@ -230,6 +230,10 @@ function withTreeWriter(tree, write) {
   }
 }
 
+function writeOdt(tree) {
+  return withTreeWriter(tree, (writer, json) => writer.writeOdt(json));
+}
+
 function writeMarkdown(tree) {
   return withTreeWriter(tree, (writer, json) => writer.writeMarkdown(json));
 }
@@ -514,6 +518,7 @@ module.exports = {
   writeDocx,
   writeMarkdown,
   writeHtml,
+  writeOdt,
   convertToDocx,
   convertToPptx,
   readPresentation,

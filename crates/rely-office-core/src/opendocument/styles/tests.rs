@@ -126,7 +126,8 @@ fn reads_text_properties() {
         TextFlags {
             underline: Some(false),
             strike: Some(true),
-            raised: Some(true)
+            raised: Some(true),
+            code: None,
         }
     );
     let (look, flags) = read(
@@ -147,13 +148,15 @@ fn reads_text_properties() {
         TextFlags {
             underline: None,
             strike: Some(false),
-            raised: None
+            raised: None,
+            code: None,
         }
         .or(flags),
         TextFlags {
             underline: None,
             strike: Some(false),
-            raised: Some(false)
+            raised: Some(false),
+            code: None,
         }
     );
 }

@@ -126,6 +126,14 @@ export function writeMarkdown(tree: DocxInput): string;
 export function writeHtml(tree: DocxInput, title?: string): string;
 
 /**
+ * The tree as an odt that LibreOffice opens and `readDocumentTree` reads back: looks as
+ * automatic styles, headings, quotes and code in LibreOffice's named styles, sections as master
+ * pages with their headers and footers, notes, comments with replies and tracked changes. An
+ * equation is written as its LaTeX.
+ */
+export function writeOdt(tree: DocxInput): Uint8Array;
+
+/**
  * A doc, an odt or a docx as a docx: the document read into its tree and written back, so a
  * Word 97-2003 file can be kept in the format an editor saves.
  */

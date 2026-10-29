@@ -1633,6 +1633,7 @@ fn trim_end(content: &mut Vec<Inline>) {
 /// The marks of a run.
 fn marks_of(look: &RunLook, flags: TextFlags, link: Option<&str>) -> Vec<Mark> {
     let mut marks = Vec::new();
+    let code = flags.code == Some(true);
     if look.bold == Some(true) {
         marks.push(Mark::Bold);
     }
@@ -1644,6 +1645,9 @@ fn marks_of(look: &RunLook, flags: TextFlags, link: Option<&str>) -> Vec<Mark> {
     }
     if flags.strike == Some(true) {
         marks.push(Mark::Strike);
+    }
+    if code {
+        marks.push(Mark::Code);
     }
     match flags.raised {
         Some(true) => marks.push(Mark::Superscript),
@@ -1662,9 +1666,11 @@ fn marks_of(look: &RunLook, flags: TextFlags, link: Option<&str>) -> Vec<Mark> {
         .as_ref()
         .filter(|_| link.is_none())
         .map(|colour| format!("#{colour}"));
-    if look.family.is_some() || font_size.is_some() || color.is_some() {
+    // A code run keeps no font of its own: the code style gives it.
+    let font_family = look.family.clone().filter(|_| !code);
+    if font_family.is_some() || font_size.is_some() || color.is_some() {
         marks.push(Mark::TextStyle {
-            font_family: look.family.clone(),
+            font_family,
             font_size,
             color,
         });

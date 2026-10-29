@@ -43,6 +43,8 @@ pub(super) struct TextFlags {
     pub strike: Option<bool>,
     /// `true` raised, `false` lowered.
     pub raised: Option<bool>,
+    /// The run takes the character style of source code, `Source Text`.
+    pub code: Option<bool>,
 }
 
 impl TextFlags {
@@ -52,6 +54,7 @@ impl TextFlags {
             underline: self.underline.or(fallback.underline),
             strike: self.strike.or(fallback.strike),
             raised: self.raised.or(fallback.raised),
+            code: self.code.or(fallback.code),
         }
     }
 }
@@ -233,14 +236,34 @@ impl Styles {
         family: &str,
         name: Option<&str>,
     ) -> (RunLook, TextFlags) {
-        self.chain(scope, family, name)
+        let chain = self.chain(scope, family, name);
+        let code = family == "text"
+            && chain.iter().any(|style| {
+                [
+                    style.attribute(STYLE, "name"),
+                    style.attribute(STYLE, "display-name"),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|name| {
+                    matches!(
+                        name.to_ascii_lowercase().replace("_20_", " ").as_str(),
+                        "source text" | "teletype" | "testo sorgente"
+                    )
+                })
+            });
+        let (look, mut flags) = chain
             .into_iter()
             .filter_map(|style| style.child(STYLE, "text-properties"))
             .map(|properties| self.text_properties(properties))
             .fold(
                 (RunLook::default(), TextFlags::default()),
                 |(look, flags), (other, other_flags)| (look.or(other), flags.or(other_flags)),
-            )
+            );
+        if code {
+            flags.code = Some(true);
+        }
+        (look, flags)
     }
 
     /// The paragraph look of a paragraph style and its parents, its font included, and the
@@ -355,6 +378,7 @@ impl Styles {
             underline: line("text-underline-style"),
             strike: line("text-line-through-style"),
             raised,
+            code: None,
         };
         (look, flags)
     }

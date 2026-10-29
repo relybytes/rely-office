@@ -18,6 +18,7 @@ export {
   writeDocx,
   writeHtml,
   writeMarkdown,
+  writeOdt,
   writePptx,
 } from './documents.js';
 export { RelyOfficeError, type WasmSource } from './shared.js';

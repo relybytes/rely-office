@@ -5,7 +5,7 @@
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
 import type { DocumentBytes, Limits, TreeOptions } from '../model.js';
-import { readDocumentTree, writeDocx, writeHtml, writeMarkdown } from '../runtime/documents.js';
+import { readDocumentTree, writeDocx, writeHtml, writeMarkdown, writeOdt } from '../runtime/documents.js';
 import type { EditorDocument, EditorMappingReport, TreeToEditorOptions } from './editor-document.js';
 import { editorToDocumentTree } from './editor-to-tree.js';
 import { documentTreeToEditor } from './tree-to-editor.js';
@@ -20,12 +20,11 @@ export interface OpenDocumentOptions extends TreeToEditorOptions {
 }
 
 /** The formats the editor's document is saved in. */
-export type SavedDocumentFormat = 'docx' | 'markdown' | 'html';
+export type SavedDocumentFormat = 'docx' | 'odt' | 'markdown' | 'html';
 
 /**
  * A docx, doc, odt, Markdown file or HTML page opened for the editor, once `initDocuments` has
- * loaded the module. A doc and an odt are saved back as docx; Markdown and HTML with
- * `saveDocumentAs`.
+ * loaded the module. `saveDocument` saves a docx, `saveDocumentAs` an odt, Markdown or HTML.
  */
 export function openDocument(
   bytes: DocumentBytes,
@@ -56,9 +55,9 @@ export function saveDocument(document: EditorDocument): Uint8Array {
 }
 
 /**
- * The editor's document in a format of a file: a docx, Markdown (what Markdown cannot say is
- * left out: fonts, colours, alignment, merged cells, headers, footers, comments) or a page of
- * HTML titled `title`. The text formats come as UTF-8 bytes.
+ * The editor's document in a format of a file: a docx, an odt, Markdown (what Markdown cannot
+ * say is left out: fonts, colours, alignment, merged cells, headers, footers, comments) or a
+ * page of HTML titled `title`. The text formats come as UTF-8 bytes.
  */
 export function saveDocumentAs(
   document: EditorDocument,
@@ -73,7 +72,10 @@ export function saveDocumentAs(
     page: tree.page,
     notes: tree.notes,
     headersFooters: tree.headersFooters,
+    ...(tree.sections === undefined ? {} : { sections: tree.sections }),
+    ...(tree.comments === undefined ? {} : { comments: tree.comments }),
   };
+  if (format === 'odt') return writeOdt(input);
   const text = format === 'markdown' ? writeMarkdown(input) : writeHtml(input, title);
   return new TextEncoder().encode(text);
 }

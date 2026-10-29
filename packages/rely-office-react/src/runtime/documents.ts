@@ -165,6 +165,11 @@ function withTreeWriter<T>(tree: DocxInput, write: (writer: DocxWriter, json: st
   }
 }
 
+/** The tree as an odt, `OpenDocument` text; an equation is written as its LaTeX. */
+export function writeOdt(tree: DocxInput): Uint8Array {
+  return withTreeWriter(tree, (writer, json) => writer.writeOdt(json));
+}
+
 /** The tree as Markdown with GitHub's tables, footnotes and math, its images in `data:` addresses. */
 export function writeMarkdown(tree: DocxInput): string {
   return withTreeWriter(tree, (writer, json) => writer.writeMarkdown(json));

@@ -16,7 +16,7 @@ use rely_office_core::{
     Block, Comment, DocumentTree, EmbeddedObject, HeadersFooters, ImportReport, Limits, Media,
     Note, OfficeError, PageLayout, Section, Sheet, TrackedChanges, TreeOptions, detect_format,
     extract_text, read_document_tree, read_document_tree_named, read_presentation, read_workbook,
-    sniff_image_type, write_docx, write_html, write_markdown, write_pptx,
+    sniff_image_type, write_docx, write_html, write_markdown, write_odt, write_pptx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -563,6 +563,18 @@ impl DocxWriter {
             std::mem::take(&mut self.objects),
         )
         .map_err(|failure| throw(&failure))
+    }
+
+    /// Write the tree as an odt, `OpenDocument` text.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = writeOdt)]
+    pub fn write_odt_js(&mut self, tree_json: &str) -> Result<Vec<u8>, JsError> {
+        let tree = tree_from_json(tree_json, std::mem::take(&mut self.media), Vec::new())
+            .map_err(|failure| throw(&failure))?;
+        write_odt(&tree).map_err(|error| throw(&error.into()))
     }
 
     /// Write the tree as Markdown, its images in `data:` addresses.

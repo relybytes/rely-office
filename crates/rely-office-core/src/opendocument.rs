@@ -8,11 +8,13 @@ mod presentation;
 mod spreadsheet;
 mod styles;
 mod text_tree;
+mod text_write;
 
 pub(crate) use presentation::read_odp;
 pub use spreadsheet::excel_formula_from_odf;
 pub(crate) use spreadsheet::read_ods_layouts;
 pub(crate) use text_tree::read_odt_tree;
+pub use text_write::write_odt;
 
 use crate::archive::{open_package, read_text_member};
 use crate::text::TextBuffer;
