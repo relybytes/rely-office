@@ -94,7 +94,7 @@ fn reads_a_document_tree_with_its_media_aside() {
             ("word/media/logo.png", PNG),
         ],
     );
-    let mut handle = document_tree(&bytes, None, None).unwrap();
+    let mut handle = document_tree(&bytes, None, None, None).unwrap();
     let tree = parse(&handle.json());
     assert_eq!(
         tree["blocks"],
@@ -190,7 +190,7 @@ fn reports_library_errors_with_their_code() {
             .error_message()
             .starts_with("UNSUPPORTED_FORMAT: unsupported format")
     );
-    let failure = document_tree(b"a,b", None, None).unwrap_err();
+    let failure = document_tree(b"a,b", None, None, None).unwrap_err();
     assert_eq!(failure.code, "UNSUPPORTED_FORMAT");
     let failure =
         read_sheets_json(b"a,b", Some("a.csv"), Some(r#"{"maxInputBytes":1}"#)).unwrap_err();
@@ -250,7 +250,7 @@ fn writes_a_docx_from_the_json_of_a_tree() {
         std::mem::take(&mut writer.objects),
     )
     .unwrap();
-    let read = parse(&document_tree(&bytes, None, None).unwrap().json());
+    let read = parse(&document_tree(&bytes, None, None, None).unwrap().json());
     assert_eq!(read["blocks"][0]["type"], "heading");
     assert_eq!(read["blocks"][1]["align"], "center");
     assert_eq!(
@@ -342,7 +342,7 @@ fn an_embedded_object_goes_out_with_the_tree_and_back_into_a_docx() {
         std::mem::take(&mut writer.objects),
     )
     .unwrap();
-    let mut handle = document_tree(&bytes, None, None).unwrap();
+    let mut handle = document_tree(&bytes, None, None, None).unwrap();
     let read = parse(&handle.json());
     assert_eq!(
         read["objects"],
@@ -362,9 +362,23 @@ fn an_embedded_object_goes_out_with_the_tree_and_back_into_a_docx() {
     assert_eq!(handle.take_object_bytes(0).as_deref(), Some(&[][..]));
     assert_eq!(handle.take_object_bytes(1), None);
     let plain = parse(
-        &document_tree(&docx("<w:p/>", &[]), None, None)
+        &document_tree(&docx("<w:p/>", &[]), None, None, None)
             .unwrap()
             .json(),
     );
     assert_eq!(plain.get("objects"), None);
+}
+
+#[test]
+fn reads_markdown_and_html_by_their_names_and_writes_them_back() {
+    let handle = document_tree(b"# Titolo\n\nUn **testo**.", None, None, Some("nota.md")).unwrap();
+    let tree = parse(&handle.json());
+    assert_eq!(tree["blocks"][0]["type"], "heading");
+    let page = document_tree(b"<!doctype html><p>Ciao <b>mondo</b></p>", None, None, None).unwrap();
+    assert_eq!(parse(&page.json())["blocks"][0]["type"], "paragraph");
+    assert!(document_tree(b"# Titolo", None, None, None).is_err());
+    let json = r#"{"blocks":[{"type":"paragraph","content":[{"type":"text","text":"x","marks":[{"type":"bold"}]}]}]}"#;
+    let tree = tree_from_json(json, Vec::new(), Vec::new()).unwrap();
+    assert_eq!(rely_office_core::write_markdown(&tree), "**x**\n");
+    assert!(rely_office_core::write_html(&tree, "T").contains("<p><strong>x</strong></p>"));
 }

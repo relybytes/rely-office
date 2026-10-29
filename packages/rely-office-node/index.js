@@ -76,12 +76,13 @@ function readSheets(bytes, fileName, limits) {
   return JSON.parse(json);
 }
 
-function readDocumentTree(bytes, limits, options) {
+function readDocumentTree(bytes, limits, options, fileName) {
   const handle = call(() =>
     wasm.readDocumentTreeHandle(
       toBytes(bytes),
       toLimitsJson(limits),
       options === undefined ? undefined : JSON.stringify(options),
+      fileName === undefined || fileName === null ? undefined : String(fileName),
     ),
   );
   try {
@@ -212,6 +213,29 @@ function writeDocx(tree) {
   } finally {
     writer.free();
   }
+}
+
+/** The tree in a writer with its images added, for `write` to turn into a file. */
+function withTreeWriter(tree, write) {
+  const { blocks, page, media, notes, headersFooters, sections, comments } = tree ?? {};
+  const writer = new wasm.DocxWriter();
+  try {
+    for (const bytes of media ?? []) {
+      writer.addMedia(toBytes(bytes));
+    }
+    const json = JSON.stringify({ blocks: blocks ?? [], page, notes, headersFooters, sections, comments });
+    return call(() => write(writer, json));
+  } finally {
+    writer.free();
+  }
+}
+
+function writeMarkdown(tree) {
+  return withTreeWriter(tree, (writer, json) => writer.writeMarkdown(json));
+}
+
+function writeHtml(tree, title) {
+  return withTreeWriter(tree, (writer, json) => writer.writeHtml(json, title === undefined ? '' : String(title)));
 }
 
 let sheetModule = null;
@@ -426,6 +450,14 @@ class SheetDocument {
     return call(() => this.document.saveOds());
   }
 
+  saveCsv(sheet, separator) {
+    return call(() => this.document.saveCsv(sheet, separator === undefined ? undefined : String(separator)));
+  }
+
+  delimiter() {
+    return this.document.delimiter() ?? null;
+  }
+
   undo() {
     return this.document.undo();
   }
@@ -480,6 +512,8 @@ module.exports = {
   readDocumentTree,
   render,
   writeDocx,
+  writeMarkdown,
+  writeHtml,
   convertToDocx,
   convertToPptx,
   readPresentation,

@@ -30,7 +30,7 @@ mod world;
 
 use rely_office_core::{
     DocumentFormat, Limits, Media, NumberLocale, OfficeError, convert_metafile_to_svg,
-    detect_format, extract_text, read_document_tree, read_presentation, read_workbook_in,
+    detect_format, extract_text, read_document_tree_named, read_presentation, read_workbook_in,
 };
 use typst::LibraryExt;
 use typst::diag::SourceDiagnostic;
@@ -162,8 +162,17 @@ fn source_with(
 ) -> Result<TypstSource, RenderError> {
     let format = detect_format(bytes, file_name);
     match format {
-        DocumentFormat::Docx | DocumentFormat::Odt | DocumentFormat::Doc => {
-            let mut tree = match read_document_tree(bytes, limits) {
+        DocumentFormat::Docx
+        | DocumentFormat::Odt
+        | DocumentFormat::Doc
+        | DocumentFormat::Markdown
+        | DocumentFormat::Html => {
+            let mut tree = match read_document_tree_named(
+                bytes,
+                file_name,
+                limits,
+                &rely_office_core::TreeOptions::default(),
+            ) {
                 Err(OfficeError::UnreadableDocument(_)) if format == DocumentFormat::Doc => {
                     return text_only(bytes, file_name, limits, format);
                 }

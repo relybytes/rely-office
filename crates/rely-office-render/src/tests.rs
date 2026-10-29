@@ -244,6 +244,26 @@ fn renders_the_sheets_of_a_workbook() {
         .render(b"a,b\n1,2\n", Some("dati.csv"), &RenderRequest::default())
         .unwrap();
     assert_eq!((csv.format, csv.page_count), (DocumentFormat::Csv, 1));
+
+    let markdown = RENDERER
+        .render(
+            b"# Titolo\n\n- uno\n- due\n",
+            Some("nota.md"),
+            &RenderRequest::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        (markdown.format, markdown.page_count),
+        (DocumentFormat::Markdown, 1)
+    );
+    let page = RENDERER
+        .render(
+            b"<!doctype html><h1>Titolo</h1><p>Testo</p>",
+            None,
+            &RenderRequest::default(),
+        )
+        .unwrap();
+    assert_eq!((page.format, page.page_count), (DocumentFormat::Html, 1));
 }
 
 #[test]

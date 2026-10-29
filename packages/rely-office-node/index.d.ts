@@ -93,13 +93,17 @@ export function extractText(
 export function readSheets(bytes: DocumentBytes, fileName?: string, limits?: Limits): Workbook;
 
 /**
- * A docx, a doc or an odt as a neutral tree of blocks for a rich-text editor, with its images
- * and a report. Charts come as SVG images; the tree is written back with `writeDocx`.
+ * A docx, a doc, an odt, a Markdown file or an HTML page as a neutral tree of blocks for a
+ * rich-text editor, with its images and a report. Markdown and HTML carry no signature, so
+ * `fileName` names them (an HTML page that starts with its doctype is known without it).
+ * Charts come as SVG images; the tree is written back with `writeDocx`, `writeMarkdown` or
+ * `writeHtml`.
  */
 export function readDocumentTree(
   bytes: DocumentBytes,
   limits?: Limits,
   options?: TreeOptions,
+  fileName?: string,
 ): DocumentTree;
 
 /**
@@ -110,6 +114,16 @@ export function render(bytes: DocumentBytes, fileName?: string, options?: Render
 
 /** A docx Word opens and `readDocumentTree` reads back to the same tree. */
 export function writeDocx(tree: DocxInput): Uint8Array;
+
+/**
+ * The tree as Markdown with GitHub's tables, footnotes and math, its images in `data:`
+ * addresses. Fonts, colours, alignment, merged cells, headers, footers and comments have no
+ * Markdown and are left out.
+ */
+export function writeMarkdown(tree: DocxInput): string;
+
+/** The tree as a page of HTML that stands alone, its images in `data:` addresses. */
+export function writeHtml(tree: DocxInput, title?: string): string;
 
 /**
  * A doc, an odt or a docx as a docx: the document read into its tree and written back, so a

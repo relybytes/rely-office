@@ -5,8 +5,8 @@
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
 import { Editor } from '@tiptap/core';
-import { createRelyDocumentExtensions, openDocument, saveDocument } from '../src/index.js';
-import { readDocumentTree, writeDocx, type Block } from '../src/runtime/index.js';
+import { createRelyDocumentExtensions, openDocument, saveDocument, saveDocumentAs } from '../src/index.js';
+import { readDocumentTree, writeDocx, writeHtml, writeMarkdown, type Block } from '../src/runtime/index.js';
 import { loadWasm } from './wasm.js';
 
 const PNG = Uint8Array.from([
@@ -53,4 +53,21 @@ test('a docx opened in the editor and saved comes back with the same blocks and 
   const reread = readDocumentTree(saveDocument(edited));
   expect(reread.blocks).toEqual(readDocumentTree(original).blocks);
   expect(reread.media[0].bytes).toEqual(PNG);
+});
+
+test('a Markdown file and an HTML page open in the editor and are saved in their own format', () => {
+  const markdown = new TextEncoder().encode('# Titolo\n\nUn **testo** con [link](https://relybytes.com).\n\n- uno\n- due\n');
+  const opened = openDocument(markdown, { fileName: 'nota.md' });
+  const saved = new TextDecoder().decode(saveDocumentAs(opened.document, 'markdown'));
+  expect(saved).toBe('# Titolo\n\nUn **testo** con [link](https://relybytes.com).\n\n- uno\n- due\n');
+
+  const page = new TextDecoder().decode(saveDocumentAs(opened.document, 'html', 'Nota'));
+  expect(page).toContain('<title>Nota</title>');
+  expect(page).toContain('<h1>Titolo</h1>');
+  const again = openDocument(new TextEncoder().encode(page), { fileName: 'nota.html' });
+  expect(readDocumentTree(saveDocumentAs(again.document, 'docx')).blocks).toEqual(
+    readDocumentTree(saveDocumentAs(opened.document, 'docx')).blocks,
+  );
+  expect(writeMarkdown({ blocks: BLOCKS, media: [PNG] })).toContain('| Voce | Importo |');
+  expect(writeHtml({ blocks: BLOCKS, media: [PNG] }, 'Offerta')).toContain('colspan="2"');
 });

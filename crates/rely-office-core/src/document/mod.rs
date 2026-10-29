@@ -11,7 +11,9 @@ mod anchor;
 mod convert;
 mod edges;
 mod format;
+mod html;
 mod look;
+mod markdown;
 mod media;
 mod notes;
 mod numbering;
@@ -32,7 +34,9 @@ pub use edges::{
     Border, BorderStyle, Borders, CellLook, TabKind, TabLeader, TabStop, VerticalAlignment,
 };
 pub use format::{LineSpacingFormat, NamedStyle, ParagraphFormat};
+pub use html::{read_html_tree, write_html};
 pub use look::{LabelSuffix, LineSpacing, ListLabel, PageField, ParagraphLook, RunLook, TableLook};
+pub use markdown::{read_markdown_tree, write_markdown};
 pub(crate) use media::image_pixel_size;
 pub use media::sniff_image_type;
 pub use objects::EmbeddedObject;
@@ -571,6 +575,87 @@ pub struct ImportReport {
 /// a damaged package, [`OfficeError::UnreadableDocument`] when the main part has no body.
 pub fn read_document_tree(bytes: &[u8], limits: &Limits) -> Result<DocumentTree, OfficeError> {
     read_document_tree_with(bytes, limits, &TreeOptions::default())
+}
+
+/// [`read_document_tree_with`] for a file whose name tells its format: Markdown and HTML carry
+/// no signature, so they are read only when `file_name` names them (or, for HTML, when the page
+/// starts with its doctype).
+///
+/// # Errors
+///
+/// As [`read_document_tree`].
+pub fn read_document_tree_named(
+    bytes: &[u8],
+    file_name: Option<&str>,
+    limits: &Limits,
+    options: &TreeOptions,
+) -> Result<DocumentTree, OfficeError> {
+    let format = detect_format(bytes, file_name);
+    if matches!(format, DocumentFormat::Markdown | DocumentFormat::Html) {
+        return read_text_tree(bytes, format, limits);
+    }
+    read_document_tree_with(bytes, limits, options)
+}
+
+/// Markdown or HTML bytes read as a tree: UTF-8, or Windows-1252 when they are not valid UTF-8.
+pub(crate) fn read_text_tree(
+    bytes: &[u8],
+    format: DocumentFormat,
+    limits: &Limits,
+) -> Result<DocumentTree, OfficeError> {
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    let text = match std::str::from_utf8(bytes) {
+        Ok(text) => std::borrow::Cow::Borrowed(text),
+        Err(_) => encoding_rs::WINDOWS_1252.decode(bytes).0,
+    };
+    match format {
+        DocumentFormat::Markdown => read_markdown_tree(&text, limits),
+        DocumentFormat::Html => read_html_tree(&text, limits),
+        other => Err(OfficeError::UnsupportedFormat(other)),
+    }
+}
+
+/// The text of blocks for the search, a line per paragraph, a cell per tab.
+pub(crate) fn append_tree_text(blocks: &[Block], buffer: &mut crate::text::TextBuffer) {
+    for block in blocks {
+        if buffer.is_truncated() {
+            return;
+        }
+        match block {
+            Block::Heading { content, .. }
+            | Block::Paragraph { content, .. }
+            | Block::ListItem { content, .. } => {
+                for inline in content {
+                    match inline {
+                        Inline::Text { text, marks, .. }
+                            if !marks
+                                .iter()
+                                .any(|mark| matches!(mark, Mark::Deletion { .. })) =>
+                        {
+                            buffer.push_str(text);
+                        }
+                        Inline::HardBreak => buffer.push('\n'),
+                        Inline::Math { latex, .. } => buffer.push_str(latex),
+                        _ => {}
+                    }
+                }
+                buffer.push('\n');
+            }
+            Block::Table { rows, .. } => {
+                for row in rows {
+                    for cell in &row.cells {
+                        append_tree_text(&cell.blocks, buffer);
+                    }
+                }
+            }
+            Block::Blockquote { blocks } => append_tree_text(blocks, buffer),
+            Block::CodeBlock { text } => {
+                buffer.push_str(text);
+                buffer.push('\n');
+            }
+            Block::HorizontalRule => {}
+        }
+    }
 }
 
 /// [`read_document_tree`] with options: whether the changes a document tracks are accepted or

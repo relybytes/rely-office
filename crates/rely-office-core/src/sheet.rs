@@ -308,7 +308,7 @@ fn read_delimited(bytes: &[u8], separator: u8, limits: &Limits) -> Sheet {
     let mut total_rows = 0;
     let mut total_columns = 0;
     let mut rows = Vec::new();
-    for line in text.lines() {
+    for line in delimited_records(&text) {
         let cells: Vec<String> = split_delimited_line(line, separator);
         total_rows += 1;
         total_columns = total_columns.max(cells.len());
@@ -344,11 +344,64 @@ fn decode_text(bytes: &[u8]) -> String {
     }
 }
 
+/// The separator of a csv or a tsv, as its reader splits it; `None` for any other format.
+#[must_use]
+pub fn delimited_separator(bytes: &[u8], format: DocumentFormat) -> Option<char> {
+    match format {
+        DocumentFormat::Csv => Some(guess_comma_or_semicolon(&decode_text(bytes))),
+        DocumentFormat::Tsv => Some('\t'),
+        _ => None,
+    }
+}
+
+/// The records of delimited text: its lines, a line break inside double quotes kept in its cell.
+fn delimited_records(text: &str) -> impl Iterator<Item = &str> {
+    let mut rest = text;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let mut in_quotes = false;
+        let mut end = rest.len();
+        let mut next = rest.len();
+        for (index, character) in rest.char_indices() {
+            match character {
+                '"' => in_quotes = !in_quotes,
+                '\n' if !in_quotes => {
+                    end = if rest[..index].ends_with('\r') {
+                        index - 1
+                    } else {
+                        index
+                    };
+                    next = index + 1;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let record = &rest[..end];
+        rest = &rest[next..];
+        Some(record)
+    })
+}
+
 fn guess_comma_or_semicolon(text: &str) -> char {
-    let first_line = text.lines().next().unwrap_or_default();
-    let semicolons = first_line.matches(';').count();
-    let commas = first_line.matches(',').count();
-    if semicolons > commas { ';' } else { ',' }
+    let first_record = delimited_records(text).next().unwrap_or_default();
+    let (mut semicolons, mut commas, mut in_quotes) = (0, 0, false);
+    for character in first_record.chars() {
+        match character {
+            '"' => in_quotes = !in_quotes,
+            ';' if !in_quotes => semicolons += 1,
+            ',' if !in_quotes => commas += 1,
+            _ => {}
+        }
+    }
+    // A tie is an Italian line whose numbers carry a decimal comma: `Rossi;12,5`.
+    if semicolons > 0 && semicolons >= commas {
+        ';'
+    } else {
+        ','
+    }
 }
 
 /// One line split on the separator, honouring double quotes and doubled quotes inside them.

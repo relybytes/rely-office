@@ -15,8 +15,8 @@
 use rely_office_core::{
     Block, Comment, DocumentTree, EmbeddedObject, HeadersFooters, ImportReport, Limits, Media,
     Note, OfficeError, PageLayout, Section, Sheet, TrackedChanges, TreeOptions, detect_format,
-    extract_text, read_document_tree, read_document_tree_with, read_presentation, read_workbook,
-    sniff_image_type, write_docx, write_pptx,
+    extract_text, read_document_tree, read_document_tree_named, read_presentation, read_workbook,
+    sniff_image_type, write_docx, write_html, write_markdown, write_pptx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -336,6 +336,7 @@ pub fn document_tree(
     bytes: &[u8],
     limits_json: Option<&str>,
     options_json: Option<&str>,
+    file_name: Option<&str>,
 ) -> Result<DocumentTreeHandle, Failure> {
     let limits = parse_limits(limits_json)?;
     let options = parse_tree_options(options_json)?;
@@ -349,7 +350,7 @@ pub fn document_tree(
         sections,
         comments,
         objects,
-    } = read_document_tree_with(bytes, &limits, &options)?;
+    } = read_document_tree_named(bytes, file_name, &limits, &options)?;
     let json = to_json(&DocumentTreeOutput {
         blocks: &blocks,
         media: media
@@ -459,6 +460,19 @@ pub fn docx_from_json(
     media: Vec<Media>,
     objects: Vec<EmbeddedObject>,
 ) -> Result<Vec<u8>, Failure> {
+    Ok(write_docx(&tree_from_json(tree_json, media, objects)?)?)
+}
+
+/// The document tree of its JSON, with the images it names by index and their objects.
+///
+/// # Errors
+///
+/// `INVALID_TREE` for JSON that is not a document tree.
+pub fn tree_from_json(
+    tree_json: &str,
+    media: Vec<Media>,
+    objects: Vec<EmbeddedObject>,
+) -> Result<DocumentTree, Failure> {
     let input: DocxInput = serde_json::from_str(tree_json).map_err(|error| Failure {
         code: "INVALID_TREE",
         message: format!("invalid document tree: {error}"),
@@ -478,7 +492,7 @@ pub fn docx_from_json(
             continuous: section.continuous,
         })
         .collect();
-    let tree = DocumentTree {
+    Ok(DocumentTree {
         blocks: input.blocks,
         media,
         report: ImportReport::default(),
@@ -488,8 +502,7 @@ pub fn docx_from_json(
         sections,
         comments: input.comments,
         objects,
-    };
-    Ok(write_docx(&tree)?)
+    })
 }
 
 /// Writes a docx for JavaScript: images are added one by one, then the tree is written.
@@ -550,6 +563,30 @@ impl DocxWriter {
             std::mem::take(&mut self.objects),
         )
         .map_err(|failure| throw(&failure))
+    }
+
+    /// Write the tree as Markdown, its images in `data:` addresses.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = writeMarkdown)]
+    pub fn write_markdown_js(&mut self, tree_json: &str) -> Result<String, JsError> {
+        let tree = tree_from_json(tree_json, std::mem::take(&mut self.media), Vec::new())
+            .map_err(|failure| throw(&failure))?;
+        Ok(write_markdown(&tree))
+    }
+
+    /// Write the tree as a page of HTML that stands alone, titled `title`.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = writeHtml)]
+    pub fn write_html_js(&mut self, tree_json: &str, title: &str) -> Result<String, JsError> {
+        let tree = tree_from_json(tree_json, std::mem::take(&mut self.media), Vec::new())
+            .map_err(|failure| throw(&failure))?;
+        Ok(write_html(&tree, title))
     }
 }
 
@@ -620,9 +657,15 @@ pub fn read_document_tree_js(
     bytes: &[u8],
     limits_json: Option<String>,
     options_json: Option<String>,
+    file_name: Option<String>,
 ) -> Result<DocumentTreeHandle, JsError> {
-    document_tree(bytes, limits_json.as_deref(), options_json.as_deref())
-        .map_err(|failure| throw(&failure))
+    document_tree(
+        bytes,
+        limits_json.as_deref(),
+        options_json.as_deref(),
+        file_name.as_deref(),
+    )
+    .map_err(|failure| throw(&failure))
 }
 
 /// A document as a docx: a doc, an odt or a docx read into its tree and written back, so an

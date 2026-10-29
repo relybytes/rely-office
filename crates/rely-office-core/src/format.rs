@@ -31,6 +31,10 @@ pub enum DocumentFormat {
     Csv,
     /// Tab separated values.
     Tsv,
+    /// Markdown text (`.md`, `.markdown`).
+    Markdown,
+    /// An HTML page (`.html`, `.htm`).
+    Html,
     /// Anything else.
     Unknown,
 }
@@ -52,6 +56,8 @@ impl DocumentFormat {
             Self::Ppt => "ppt",
             Self::Csv => "csv",
             Self::Tsv => "tsv",
+            Self::Markdown => "md",
+            Self::Html => "html",
             Self::Unknown => "unknown",
         }
     }
@@ -60,8 +66,9 @@ impl DocumentFormat {
 const ZIP_SIGNATURE: &[u8] = b"PK\x03\x04";
 const COMPOUND_FILE_SIGNATURE: &[u8] = &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 
-/// Tell what a document is from its bytes; the file name only separates CSV from TSV, which carry
-/// no signature, and never overrides what the bytes say.
+/// Tell what a document is from its bytes; the file name only names the text formats, which
+/// carry no signature (CSV, TSV, Markdown, and HTML without its doctype), and never overrides
+/// what the bytes say.
 #[must_use]
 pub fn detect_format(bytes: &[u8], file_name: Option<&str>) -> DocumentFormat {
     if bytes.starts_with(ZIP_SIGNATURE) {
@@ -77,8 +84,25 @@ pub fn detect_format(bytes: &[u8], file_name: Option<&str>) -> DocumentFormat {
     match extension.as_deref() {
         Some("csv") if looks_like_text(bytes) => DocumentFormat::Csv,
         Some("tsv" | "tab") if looks_like_text(bytes) => DocumentFormat::Tsv,
+        Some("md" | "markdown" | "mdown" | "mkd") if looks_like_text(bytes) => {
+            DocumentFormat::Markdown
+        }
+        Some("html" | "htm" | "xhtml") if looks_like_text(bytes) => DocumentFormat::Html,
+        _ if looks_like_html(bytes) => DocumentFormat::Html,
         _ => DocumentFormat::Unknown,
     }
+}
+
+/// A page that says it is HTML at its start: a doctype or an `html` element.
+fn looks_like_html(bytes: &[u8]) -> bool {
+    let start = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    let start: Vec<u8> = start
+        .iter()
+        .skip_while(|byte| byte.is_ascii_whitespace())
+        .take(15)
+        .map(u8::to_ascii_lowercase)
+        .collect();
+    start.starts_with(b"<!doctype html") || start.starts_with(b"<html")
 }
 
 /// An OOXML package names its main part in `[Content_Types].xml`; an `OpenDocument` one starts
@@ -226,6 +250,30 @@ mod tests {
             detect_format(b"a\0b", Some("data.csv")),
             DocumentFormat::Unknown
         );
+    }
+
+    #[test]
+    fn names_markdown_and_html_by_their_extension_or_doctype() {
+        assert_eq!(
+            detect_format(b"# Titolo", Some("nota.MD")),
+            DocumentFormat::Markdown
+        );
+        assert_eq!(
+            detect_format(b"# Titolo", Some("nota.markdown")),
+            DocumentFormat::Markdown
+        );
+        assert_eq!(detect_format(b"# Titolo", None), DocumentFormat::Unknown);
+        assert_eq!(
+            detect_format(b"<p>x</p>", Some("pagina.htm")),
+            DocumentFormat::Html
+        );
+        assert_eq!(
+            detect_format(b"\xEF\xBB\xBF  <!DOCTYPE html><p>x</p>", None),
+            DocumentFormat::Html
+        );
+        assert_eq!(detect_format(b"<HTML><body>x", None), DocumentFormat::Html);
+        assert_eq!(DocumentFormat::Markdown.as_str(), "md");
+        assert_eq!(DocumentFormat::Html.as_str(), "html");
     }
 
     #[test]

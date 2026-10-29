@@ -13,10 +13,12 @@
 //! renaming sheets and pasting move their references the way a spreadsheet does.
 //!
 //! [`read_spreadsheet`] opens xlsx, xls, ods, csv and tsv; [`write_xlsx`] saves as xlsx with the
-//! computed values cached next to each formula.
+//! computed values cached next to each formula, [`write_ods`] as ods and [`write_csv`] one sheet
+//! as delimited text.
 
 mod address;
 mod arrange;
+mod csv;
 mod dates;
 mod display;
 mod edit;
@@ -34,6 +36,7 @@ mod xlsx;
 
 pub use address::{CellRef, MAX_COLUMNS, MAX_ROWS, column_index, column_name};
 pub use arrange::{AutoFilter, MAX_FILTER_CHOICES, MAX_SORT_KEYS, SortKey};
+pub use csv::{default_separator, write_csv};
 pub use dates::{date_from_serial, serial_from_date};
 pub use fill::MAX_FILL_CELLS;
 pub use formula::{

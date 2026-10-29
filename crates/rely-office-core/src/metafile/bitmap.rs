@@ -431,25 +431,6 @@ fn adler32(bytes: &[u8]) -> u32 {
     (second << 16) | first
 }
 
-/// Bytes in standard base64 with padding.
-pub(super) fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for group in bytes.chunks(3) {
-        let value = (u32::from(group[0]) << 16)
-            | (u32::from(*group.get(1).unwrap_or(&0)) << 8)
-            | u32::from(*group.get(2).unwrap_or(&0));
-        for (index, shift) in [18, 12, 6, 0].into_iter().enumerate() {
-            if index <= group.len() {
-                text.push(char::from(ALPHABET[((value >> shift) & 0x3F) as usize]));
-            } else {
-                text.push('=');
-            }
-        }
-    }
-    text
-}
-
 pub(super) fn u16_at(bytes: &[u8], at: usize) -> Option<u16> {
     Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?))
 }

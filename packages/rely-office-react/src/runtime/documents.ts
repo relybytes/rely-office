@@ -87,6 +87,7 @@ export function readDocumentTree(
   bytes: DocumentBytes,
   limits?: Limits,
   options?: TreeOptions,
+  fileName?: string,
 ): DocumentTree {
   ready();
   const handle = call(() =>
@@ -94,6 +95,7 @@ export function readDocumentTree(
       toBytes(bytes),
       toLimitsJson(limits),
       options === undefined ? undefined : JSON.stringify(options),
+      fileName,
     ),
   );
   try {
@@ -145,6 +147,32 @@ export function writeDocx(tree: DocxInput): Uint8Array {
   } finally {
     writer.free();
   }
+}
+
+/** The tree in a writer with its images added, for `write` to turn into a file. */
+function withTreeWriter<T>(tree: DocxInput, write: (writer: DocxWriter, json: string) => T): T {
+  ready();
+  const { blocks, page, media, notes, headersFooters, sections, comments } = tree;
+  const writer = new DocxWriter();
+  try {
+    for (const item of media ?? []) {
+      writer.addMedia(toBytes(item));
+    }
+    const json = JSON.stringify({ blocks: blocks ?? [], page, notes, headersFooters, sections, comments });
+    return call(() => write(writer, json));
+  } finally {
+    writer.free();
+  }
+}
+
+/** The tree as Markdown with GitHub's tables, footnotes and math, its images in `data:` addresses. */
+export function writeMarkdown(tree: DocxInput): string {
+  return withTreeWriter(tree, (writer, json) => writer.writeMarkdown(json));
+}
+
+/** The tree as a page of HTML that stands alone, its images in `data:` addresses. */
+export function writeHtml(tree: DocxInput, title = ''): string {
+  return withTreeWriter(tree, (writer, json) => writer.writeHtml(json, title));
 }
 
 /** A doc, an odt or a docx as a docx. */

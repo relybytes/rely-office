@@ -5,7 +5,7 @@
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
 import type { DocumentBytes, Limits, TreeOptions } from '../model.js';
-import { readDocumentTree, writeDocx } from '../runtime/documents.js';
+import { readDocumentTree, writeDocx, writeHtml, writeMarkdown } from '../runtime/documents.js';
 import type { EditorDocument, EditorMappingReport, TreeToEditorOptions } from './editor-document.js';
 import { editorToDocumentTree } from './editor-to-tree.js';
 import { documentTreeToEditor } from './tree-to-editor.js';
@@ -15,11 +15,17 @@ export interface OpenDocumentOptions extends TreeToEditorOptions {
   limits?: Limits;
   /** `keep` shows tracked changes as marks the editor can accept or reject. */
   trackedChanges?: TreeOptions['trackedChanges'];
+  /** The file's name, which tells a Markdown file or an HTML page from its extension. */
+  fileName?: string;
 }
 
+/** The formats the editor's document is saved in. */
+export type SavedDocumentFormat = 'docx' | 'markdown' | 'html';
+
 /**
- * A docx, doc or odt opened for the editor, once `initDocuments` has loaded the module. A doc and
- * an odt are saved back as docx.
+ * A docx, doc, odt, Markdown file or HTML page opened for the editor, once `initDocuments` has
+ * loaded the module. A doc and an odt are saved back as docx; Markdown and HTML with
+ * `saveDocumentAs`.
  */
 export function openDocument(
   bytes: DocumentBytes,
@@ -29,6 +35,7 @@ export function openDocument(
     bytes,
     options.limits,
     options.trackedChanges === undefined ? undefined : { trackedChanges: options.trackedChanges },
+    options.fileName,
   );
   return documentTreeToEditor(tree, options);
 }
@@ -46,4 +53,27 @@ export function saveDocument(document: EditorDocument): Uint8Array {
     ...(tree.comments === undefined ? {} : { comments: tree.comments }),
     ...(tree.objects === undefined ? {} : { objects: tree.objects }),
   });
+}
+
+/**
+ * The editor's document in a format of a file: a docx, Markdown (what Markdown cannot say is
+ * left out: fonts, colours, alignment, merged cells, headers, footers, comments) or a page of
+ * HTML titled `title`. The text formats come as UTF-8 bytes.
+ */
+export function saveDocumentAs(
+  document: EditorDocument,
+  format: SavedDocumentFormat,
+  title = '',
+): Uint8Array {
+  if (format === 'docx') return saveDocument(document);
+  const tree = editorToDocumentTree(document);
+  const input = {
+    blocks: tree.blocks,
+    media: tree.media.map((item) => item.bytes),
+    page: tree.page,
+    notes: tree.notes,
+    headersFooters: tree.headersFooters,
+  };
+  const text = format === 'markdown' ? writeMarkdown(input) : writeHtml(input, title);
+  return new TextEncoder().encode(text);
 }

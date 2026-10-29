@@ -16,9 +16,9 @@ use std::io::{Cursor, Write};
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use rely_office_core::{
     Border, BorderStyle, CarriedPart, CellBorders, CellFont, CellRange, CellStyle, DocumentFormat,
-    HorizontalAlignment, Limits, OfficeError, SheetLayout, VerticalAlignment, detect_format,
-    excel_formula_from_odf, read_ods_sheet_layouts, read_workbook, read_xlsx_drawing_parts,
-    read_xlsx_layouts, read_xlsx_pivot_parts, read_xlsx_theme_part,
+    HorizontalAlignment, Limits, OfficeError, SheetLayout, VerticalAlignment, delimited_separator,
+    detect_format, excel_formula_from_odf, read_ods_sheet_layouts, read_workbook,
+    read_xlsx_drawing_parts, read_xlsx_layouts, read_xlsx_pivot_parts, read_xlsx_theme_part,
 };
 use zip::write::SimpleFileOptions;
 
@@ -110,6 +110,7 @@ pub fn read_spreadsheet(
         return Err(too_large("cells", MAX_CELLS));
     }
     let mut workbook = Workbook::from_parts(sheets, styles.styles);
+    workbook.delimiter = delimited_separator(bytes, format);
     if format == DocumentFormat::Xlsx {
         workbook.theme = read_xlsx_theme_part(bytes, limits);
     }

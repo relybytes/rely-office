@@ -23,6 +23,8 @@ export type DocumentFormat =
   | 'ppt'
   | 'csv'
   | 'tsv'
+  | 'md'
+  | 'html'
   | 'unknown';
 
 /** Bounds applied while reading; a field left out keeps its default. */
@@ -913,6 +915,14 @@ export interface SheetDocument {
   save(): Uint8Array;
   /** The workbook as ods; pictures, charts and pivot tables are kept by `save` only. */
   saveOds(): Uint8Array;
+  /**
+   * One sheet as csv: each cell as it shows in the document's locale, a formula as its result,
+   * UTF-8 with a byte order mark and CRLF line ends. The separator is `separator`, else the one
+   * of the file read (`delimiter`), else the locale's: `;` in Italian, `,` in English.
+   */
+  saveCsv(sheet: number, separator?: string): Uint8Array;
+  /** The separator of the csv or tsv the document was read from; null for any other file. */
+  delimiter(): string | null;
   /**
    * Put back the workbook as it was before the last edit; false when there is none. Every call
    * that changes the workbook is a step, up to 100 steps and 2,000,000 cells held together.

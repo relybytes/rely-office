@@ -411,3 +411,24 @@ fn shows_the_cells_an_array_spills_into() {
     assert_eq!(document.input(0, 1, 0), "");
     assert_eq!(document.input(0, 0, 0), "=SEQUENZA(3;1;10;5)");
 }
+
+#[test]
+fn saves_a_sheet_as_csv_with_the_separator_it_was_read_with() {
+    let mut document = SheetDocument::create("it").unwrap();
+    document
+        .set_inputs_json(0, r#"[[0,0,"Nome"],[0,1,"12,5"],[1,0,"=2*3"]]"#)
+        .unwrap();
+    let written = document.save_csv(0, None).unwrap();
+    assert_eq!(written, "\u{feff}Nome;12,5\r\n6\r\n".as_bytes());
+    assert_eq!(document.delimiter(), None);
+    let tabbed = SheetDocument::open(b"a\tb\r\n", Some("a.tsv".to_owned()), "en").unwrap();
+    assert_eq!(tabbed.delimiter().as_deref(), Some("\t"));
+    assert_eq!(
+        tabbed.save_csv(0, None).unwrap(),
+        "\u{feff}a\tb\r\n".as_bytes()
+    );
+    assert_eq!(
+        tabbed.save_csv(0, Some(";".to_owned())).unwrap(),
+        "\u{feff}a;b\r\n".as_bytes()
+    );
+}

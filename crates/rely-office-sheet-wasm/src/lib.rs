@@ -15,7 +15,8 @@ use rely_office_core::{Limits, OfficeError, SheetDrawing};
 use rely_office_sheet::{
     Border, BorderPlacement, CellLook, CellRef, ConditionalFormat, DataValidation, EditError,
     EditHistory, Input, Locale, MAX_COLUMNS, MAX_ROWS, NumberFormat, SortKey, StylePatch, Value,
-    Workbook, function_names, read_spreadsheet, write_ods, write_xlsx,
+    Workbook, default_separator, function_names, read_spreadsheet, write_csv, write_ods,
+    write_xlsx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -805,6 +806,29 @@ impl SheetDocument {
     #[wasm_bindgen(js_name = saveOds)]
     pub fn save_ods(&self) -> Result<Vec<u8>, JsError> {
         write_ods(&self.workbook).map_err(|error| throw(&error.into()))
+    }
+
+    /// One sheet as delimited text, each cell as it shows in the document's locale. The
+    /// separator is the one given, else the one of the file read, else the locale's (`;` in
+    /// Italian, `,` in English).
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = saveCsv)]
+    pub fn save_csv(&self, sheet: usize, separator: Option<String>) -> Result<Vec<u8>, JsError> {
+        let separator = separator
+            .and_then(|text| text.chars().next())
+            .or_else(|| self.workbook.delimiter())
+            .unwrap_or_else(|| default_separator(self.locale));
+        write_csv(&self.workbook, sheet, self.locale, separator)
+            .map_err(|error| throw(&error.into()))
+    }
+
+    /// The separator of the csv or tsv the document was read from; undefined for any other file.
+    #[must_use]
+    pub fn delimiter(&self) -> Option<String> {
+        self.workbook.delimiter().map(String::from)
     }
 
     /// `[{ name, rows, columns, columnWidths: [[column, width]] }]`.

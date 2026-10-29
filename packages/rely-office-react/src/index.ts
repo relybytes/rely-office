@@ -11,7 +11,13 @@ export {
   type DocumentEditorHandle,
   type DocumentEditorProps,
 } from './document/document-editor.js';
-export { openDocument, saveDocument, type OpenDocumentOptions } from './document/document-files.js';
+export {
+  openDocument,
+  saveDocument,
+  saveDocumentAs,
+  type OpenDocumentOptions,
+  type SavedDocumentFormat,
+} from './document/document-files.js';
 export type {
   DocumentAside,
   EditorDocument,

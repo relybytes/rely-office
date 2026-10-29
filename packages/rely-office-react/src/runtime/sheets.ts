@@ -285,6 +285,14 @@ class BrowserSheetDocument implements SheetDocument {
     return call(() => this.document.saveOds());
   }
 
+  saveCsv(sheet: number, separator?: string): Uint8Array {
+    return call(() => this.document.saveCsv(sheet, separator === undefined ? undefined : String(separator)));
+  }
+
+  delimiter(): string | null {
+    return this.document.delimiter() ?? null;
+  }
+
   undo(): boolean {
     return this.document.undo();
   }

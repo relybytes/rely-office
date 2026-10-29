@@ -182,11 +182,11 @@ fn writes_a_valid_png_and_base64() {
     assert!(large.len() > 80_000, "stored blocks, one per 65,535 bytes");
     assert!(rgba_png(2, 2, &[0; 4]).is_none());
     assert!(rgba_png(0, 0, &[]).is_none(), "an image with no pixels");
-    assert_eq!(base64(b""), "");
-    assert_eq!(base64(b"f"), "Zg==");
-    assert_eq!(base64(b"fo"), "Zm8=");
-    assert_eq!(base64(b"foo"), "Zm9v");
-    assert_eq!(base64(&[0xFB, 0xFF]), "+/8=");
+    assert_eq!(crate::base64::encode(b""), "");
+    assert_eq!(crate::base64::encode(b"f"), "Zg==");
+    assert_eq!(crate::base64::encode(b"fo"), "Zm8=");
+    assert_eq!(crate::base64::encode(b"foo"), "Zm9v");
+    assert_eq!(crate::base64::encode(&[0xFB, 0xFF]), "+/8=");
     assert_eq!(channel(0x1F, 0x1F), 255);
     assert_eq!(channel(5, 0), 0);
 }

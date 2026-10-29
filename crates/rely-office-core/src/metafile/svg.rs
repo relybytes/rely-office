@@ -10,7 +10,6 @@
 use std::fmt::Write as _;
 
 use super::MAX_SVG_BYTES;
-use super::bitmap::base64;
 
 /// How a path is painted.
 #[derive(Debug, Clone, PartialEq)]
@@ -204,7 +203,7 @@ impl Canvas {
         let _ = write!(
             element,
             r#" href="data:{media_type};base64,{}"/>"#,
-            base64(bytes)
+            crate::base64::encode(bytes)
         );
         self.push(&element);
     }

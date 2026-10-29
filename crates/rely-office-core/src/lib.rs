@@ -17,6 +17,7 @@
 //! function panics on malformed bytes.
 
 mod archive;
+mod base64;
 mod chart;
 mod compound;
 mod doc;
@@ -55,7 +56,8 @@ pub use document::{
     NoteKind, OUTLINE_BANDS, PageField, PageLayout, ParagraphFormat, ParagraphLook, RunLook,
     Section, TabKind, TabLeader, TabStop, TableCell, TableLook, TableRow, TextFrame,
     TrackedChanges, TreeOptions, VerticalAlignment, Wrap, WrapOutline, read_document_tree,
-    read_document_tree_with, sniff_image_type, write_docx,
+    read_document_tree_named, read_document_tree_with, read_html_tree, read_markdown_tree,
+    sniff_image_type, write_docx, write_html, write_markdown,
 };
 pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};
@@ -68,7 +70,9 @@ pub use number_format::{
     is_date_code,
 };
 pub use opendocument::excel_formula_from_odf;
-pub use sheet::{Sheet, Workbook, read_ods_sheet_layouts, read_workbook, read_workbook_in};
+pub use sheet::{
+    Sheet, Workbook, delimited_separator, read_ods_sheet_layouts, read_workbook, read_workbook_in,
+};
 pub use sheet_drawings::{
     CarriedDrawing, CarriedPart, CarriedPivot, ChartValue, SheetDrawing, chart_formula_range,
     redraw_carried_drawing,

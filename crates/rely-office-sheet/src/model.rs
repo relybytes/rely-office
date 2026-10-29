@@ -181,6 +181,8 @@ pub struct Workbook {
     pub(crate) style_index: HashMap<CellStyle, u32>,
     /// The theme of the file the workbook was read from, written back for its charts.
     pub(crate) theme: Option<CarriedPart>,
+    /// The separator of the delimited file the workbook was read from.
+    pub(crate) delimiter: Option<char>,
 }
 
 impl Default for Workbook {
@@ -223,6 +225,7 @@ impl Workbook {
             styles,
             style_index,
             theme: None,
+            delimiter: None,
         };
         workbook.recalculate();
         workbook
@@ -686,6 +689,13 @@ impl Workbook {
             return Err(EditError::DuplicateSheetName(name.to_owned()));
         }
         Ok(())
+    }
+
+    /// The separator of the csv or tsv the workbook was read from, so a save writes the file
+    /// back as it came; `None` for any other file.
+    #[must_use]
+    pub fn delimiter(&self) -> Option<char> {
+        self.delimiter
     }
 
     /// The pictures and charts of a sheet, the charts drawn again from the values the cells hold

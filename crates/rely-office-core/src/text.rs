@@ -65,6 +65,16 @@ pub fn extract_text(
             let workbook = read_workbook(bytes, file_name, &text_limits)?;
             append_workbook_text(&workbook.sheets, &mut buffer);
         }
+        DocumentFormat::Markdown | DocumentFormat::Html => {
+            let tree =
+                crate::document::read_text_tree(bytes, format, limits).map_err(
+                    |error| match error {
+                        OfficeError::UnsupportedFormat(_) => OfficeError::UnsupportedFormat(format),
+                        other => other,
+                    },
+                )?;
+            crate::document::append_tree_text(&tree.blocks, &mut buffer);
+        }
         DocumentFormat::Unknown => return Err(OfficeError::UnsupportedFormat(format)),
     }
 
@@ -150,6 +160,25 @@ impl TextBuffer {
 mod tests {
     use super::*;
     use crate::test_support::{build_docx, build_xlsx};
+
+    #[test]
+    fn extracts_the_text_of_markdown_and_html() {
+        let markdown = extract_text(
+            b"# Titolo\n\n| a | b |\n| - | - |\n| uno | due |\n",
+            Some("nota.md"),
+            &Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(markdown.format, DocumentFormat::Markdown);
+        assert_eq!(markdown.text, "Titolo\na\nb\nuno\ndue\n");
+        let page = extract_text(
+            b"<html><script>nascosto()</script><p>Ciao <b>mondo</b></p></html>",
+            None,
+            &Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(page.text, "Ciao mondo\n");
+    }
 
     #[test]
     fn extracts_the_text_of_a_docx() {
