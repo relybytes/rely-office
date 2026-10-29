@@ -2,10 +2,11 @@
 
 Office documents on the backend, in Node, without an office suite, through
 [rely-office](https://github.com/relybytes/rely-office) compiled to WebAssembly: the format of a
-file, its text for a search index, the sheets of a spreadsheet as tables, a `.docx`, `.doc` or
-`.odt` as a neutral document tree for a rich-text editor and back, a presentation as slides and
-back, PDF and PNG pages through Typst, and an editable spreadsheet with formulas, conditional
-formats and validation that saves xlsx and ods.
+file, its text for a search index, the sheets of a spreadsheet as tables, a `.docx`, `.doc`,
+`.odt`, Markdown or HTML file as a neutral document tree for a rich-text editor and back as docx,
+odt, Markdown or HTML, a presentation as slides and back as pptx or odp, PDF and PNG pages through
+Typst, and an editable spreadsheet with Excel's function library, names, comments, charts,
+conditional formats and validation that saves xlsx, ods and csv.
 
 Everything runs in process; there is no native addon to build and no external program to call.
 Every read is bounded by limits, so an uploaded file cannot exhaust memory.
@@ -59,11 +60,12 @@ A document is a `Uint8Array` (a Node `Buffer` is one), an `ArrayBuffer` or any t
 | `detectFormat(bytes, fileName?)` | anything | `'docx' \| 'xlsx' \| 'pptx' \| 'odt' \| 'ods' \| 'odp' \| 'doc' \| 'xls' \| 'ppt' \| 'csv' \| 'tsv' \| 'unknown'` |
 | `extractText(bytes, fileName?, limits?)` | every format above | `{ format, text, truncated }` |
 | `readSheets(bytes, fileName?, limits?)` | xlsx, xls, ods, csv, tsv | `{ format, sheets: [{ name, rows, totalRows, totalColumns }] }` |
-| `readDocumentTree(bytes, limits?, options?)` | docx, doc (Word 97-2003, 6 and 95), odt | `{ blocks, media, report, notes, headersFooters, page, sections?, comments?, objects? }` |
+| `readDocumentTree(bytes, limits?, options?, fileName?)` | docx, doc (Word 97-2003, 6 and 95), odt; Markdown and HTML given their name | `{ blocks, media, report, notes, headersFooters, page, sections?, comments?, objects? }` |
 | `readPresentation(bytes, limits?)` | pptx, odp, ppt | `{ widthEmu, heightEmu, slides, media, truncated }` |
 | `render(bytes, fileName?, options?)` | docx, doc, odt, xlsx, xls, ods, csv, tsv, pptx, ppt, odp (layout); a doc or ppt that cannot be read (text) | `{ format, fidelity, pageCount, truncated, pdf, thumbnail, pageImages }` |
 | `writeDocx({ blocks, media?, page?, sections?, comments?, objects? })` | a document tree | the docx bytes |
-| `writePptx({ widthEmu, heightEmu, slides, media? })` | slides | the pptx bytes |
+| `writeOdt(tree)`, `writeMarkdown(tree)`, `writeHtml(tree, title?)` | a document tree | the odt bytes, the Markdown or the HTML page as UTF-8 bytes |
+| `writePptx({ widthEmu, heightEmu, slides, media? })`, `writeOdp(...)` | slides | the pptx or the odp bytes |
 | `convertToDocx(bytes, limits?)` | doc, odt, docx | the docx bytes |
 | `convertToPptx(bytes, limits?)` | ppt, odp, pptx | the pptx bytes |
 | `createSheet(options?)`, `openSheet(bytes, fileName?, options?)` | xlsx, xls, ods, csv, tsv | a `SheetDocument` |
@@ -115,7 +117,7 @@ const rendered = office.render(bytes, 'contratto.docx', {
 //   pdf: Uint8Array, thumbnail: Uint8Array, pageImages: [Uint8Array, ...] }
 ```
 
-The typesetter, 27 MB of WebAssembly, loads on the first call with the fonts the package ships
+The typesetter, 31 MB of WebAssembly, loads on the first call with the fonts the package ships
 (Carlito, Caladea and the Liberation fonts, matching Calibri, Cambria, Arial, Times New Roman and
 Courier New, and DejaVu Math TeX Gyre for equations). `fidelity` is `text` for the formats set as their text on A4. Errors add
 `INVALID_OPTIONS`, `TYPESET_FAILED` and `EXPORT_FAILED` to the codes above.
@@ -161,7 +163,7 @@ A slide holds its `background`, its `shapes` in drawing order (each with its `id
 whether it is `hidden`, its `transition` and its `animations` (each naming its shape by index, its
 class, PowerPoint's preset number, its trigger, delay and duration). A shape drawn from the
 layout or the master is resolved onto the slide and marked `inherited`. A pptx, an odp or a ppt
-reads the same way; `writePptx` always writes a pptx.
+reads the same way; `writePptx` writes a pptx and `writeOdp` an odp.
 
 ## Spreadsheets
 
@@ -186,7 +188,8 @@ try {
 Rows, columns and sheets are zero-based. The locale (`it`, the default, or `en`) decides how
 numbers are typed and shown. `TODAY()` and `NOW()` read the date set with `setToday`. Failures
 throw `INVALID_FORMULA`, `NO_SUCH_SHEET`, `DUPLICATE_SHEET_NAME`, `INVALID_SHEET_NAME`,
-`LAST_SHEET`, `OUT_OF_BOUNDS`, `INVALID_INPUT`, `INVALID_LOCALE` or `INVALID_STYLE`. Each cell of
+`LAST_SHEET`, `OUT_OF_BOUNDS`, `INVALID_INPUT`, `INVALID_LOCALE`, `INVALID_STYLE`, `INVALID_NAME`
+or `INVALID_CHART`. Each cell of
 `cells` carries its `style`; `stylesJson` and `mergesJson` give the styles and merged ranges a grid
 draws, `clearStyles`, `unmergeCells` and `setRowHeight` complete the set. Saving keeps the styles,
 merges and row heights, and writes the pictures, charts and pivot tables of the file back as they
@@ -199,8 +202,24 @@ what a cell accepts and the items of its list, and `invalidCells` the cells thei
 refuses. `input(sheet, row, column)` gives what a cell holds as the document's locale writes it, so in
 Italian `=SOMMA(A1;0,5)`, and it reads back the same through `setInput`. `undo()` and `redo()`
 go back and forth over the edits, up to 100 of them, with `canUndo()` and `canRedo()` for the
-buttons. `save()` writes an xlsx and `saveOds()` an ods, which keeps everything but the pictures,
-charts and pivot tables. The formulas, functions, rules and edits are described in
+buttons.
+
+`definedNames()`, `setDefinedName(name, formula, sheet?)` and `removeDefinedName(name, sheet?)`
+manage the names formulas read, a `LAMBDA` among them; `comments(sheet)` and
+`setComment(sheet, row, column, text, author?)` the comments of the cells. `charts(sheet)` lists
+the charts with where they sit and, when they can be changed, what they show;
+`chartForRange(sheet, window, 'column')` suggests the chart of a selection, which `addChart(sheet,
+chart, placement)` adds, `setChart(sheet, index, { chart?, placement? })` changes or moves and
+`removeChart(sheet, index)` removes:
+
+```js
+const chart = sheet.chartForRange(0, { top: 0, left: 0, bottom: 12, right: 2 }, 'line');
+sheet.addChart(0, { ...chart, title: 'Vendite' }, { row: 1, column: 5, width: 4389120, height: 2651760 });
+```
+
+`save()` writes an xlsx, `saveOds()` an ods, which keeps everything but the pivot tables, and
+`saveCsv(sheet, separator?)` one sheet as csv, by default with the separator of the csv it was
+read from (`delimiter()`) or of the locale. The formulas, functions, rules and edits are described in
 [docs/editing.md](https://github.com/relybytes/rely-office/blob/main/docs/editing.md).
 
 ## The document tree

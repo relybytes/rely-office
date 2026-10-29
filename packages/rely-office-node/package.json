@@ -1,6 +1,6 @@
 {
   "name": "@relybytes/rely-office",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Office documents in Node through WebAssembly, for the backend: format detection, text for search, sheet tables, the document tree, PDF and PNG rendering through Typst, docx and pptx writing and an editable spreadsheet with formulas. The browser and the editor components are @relybytes/rely-office-react.",
   "license": "MPL-2.0",
   "author": "RelyBytes Consulting (https://relybytes.com)",

@@ -121,6 +121,18 @@ frontend one, and both declare the same model from `packages/rely-office-node/mo
 The host application keeps what is its own: where a file is stored, who may open it, locking and
 autosave, and where an inserted image goes, all through the components' props.
 
+## Phase 8: every format edited and saved (0.8.0)
+
+| Step | Content | Status |
+| --- | --- | --- |
+| 8.1 | Markdown and HTML read into the document tree and written from it; a sheet saved as csv | done (0.8.0) |
+| 8.2 | A document tree written as an odt, and slides as an odp, so an odt and an odp are saved as themselves | done (0.8.0) |
+| 8.3 | Defined names, `LET`, `LAMBDA` and the functions that call one, read and written in xlsx and ods | done (0.8.0) |
+| 8.4 | Cell comments read, edited and written in xlsx and ods | done (0.8.0) |
+| 8.5 | The rest of Excel's function library, 489 functions, with the computed references of `OFFSET` and `INDIRECT` | done (0.8.0) |
+| 8.6 | Charts of a sheet made from a selection, changed, moved and removed; the pictures and charts of an ods kept on save | done (0.8.0) |
+| 8.7 | Floating images edited in the document editor and written to docx, odt and HTML | done (0.8.0) |
+
 ## Next
 
 - The adjust values of the bent, curved, circular and U-turn arrows, the quad arrow callout, the

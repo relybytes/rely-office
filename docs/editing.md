@@ -3,17 +3,20 @@
 rely-office edits in three ways, one per kind of document:
 
 - **Text documents** are edited as a document tree. `read_document_tree` turns a docx, a doc or an
-  odt into neutral blocks an editor maps onto its own schema; `write_docx` turns the tree back into
-  a docx, so a doc or an odt edited this way is saved as a docx. The library has no editor of its
-  own for text: the tree is the contract with the editor.
+  odt into neutral blocks an editor maps onto its own schema, and `read_document_tree_named` reads
+  a Markdown or an HTML file the same way; `write_docx`, `write_odt`, `write_markdown` and
+  `write_html` turn the tree back into a file, so a document is saved in the format it came in or
+  any other of these. The tree is the contract with the editor; the frontend package has the
+  editor built on it.
 - **Presentations** are edited as slides. `read_presentation` turns a pptx, an odp or a ppt into
-  the slide model, serializable as JSON like the tree; `write_pptx` writes it back as a pptx.
+  the slide model, serializable as JSON like the tree; `write_pptx` and `write_odp` write it back.
 - **Spreadsheets** are edited through `rely-office-sheet`, a workbook model with formulas that an
-  editor drives cell by cell, and that opens xlsx, xls, ods, csv and tsv and saves xlsx and ods.
+  editor drives cell by cell, and that opens xlsx, xls, ods, csv and tsv and saves xlsx, ods and
+  csv.
 
-The old binary formats are converted, not edited in place: a doc becomes a docx and a ppt a pptx
-through the same structures the new formats are read into, so nothing downstream knows the old
-formats and a file saved after an edit is always in the new one.
+The old binary formats are converted, not edited in place: a doc becomes a docx or an odt and a
+ppt a pptx or an odp through the same structures the new formats are read into, so nothing
+downstream knows the old formats and a file saved after an edit is always in a new one.
 
 ## Writing a docx
 
@@ -73,6 +76,53 @@ definition), the space before and after, the line spacing (a multiple, exact or 
 indents and a page break before. A paragraph that sets nothing has no `format`, so a tree read
 before stays the same. A table carries `columnWidthsTwips` when the file gives its grid.
 
+## Writing an odt
+
+`write_odt(&DocumentTree) -> Vec<u8>` writes the same tree as an OpenDocument text LibreOffice and
+Word open, its looks in automatic styles and its structure in LibreOffice's own named styles:
+
+| Tree | odt |
+| --- | --- |
+| `heading` 1 to 6, `blockquote`, `codeBlock`, `horizontalRule` | `text:h` in `Heading_20_1` to `_6`, paragraphs in `Quotations`, `Preformatted_20_Text` and `Horizontal_20_Line` |
+| `paragraph` with `align` and `format` | a paragraph style with its alignment, spacing, indents, line spacing and page break, kept once per look |
+| `listItem` | `text:list` nested by level, one list style per kind of list, bullets and numbers by level |
+| `table` | `table:table` with its column widths, header rows, cells spanned and the cells they cover, each paragraph of a cell in `Table_20_Contents` |
+| `text` marks | bold, italic, underline, strike, super- and subscript, font, size and colour, highlight, code as `Source_20_Text`, links as `text:a` in `Internet_20_link` |
+| `image` | a `draw:frame` in the line, the image stored once in `Pictures/`; a floating image's `anchor` as a frame anchored to its paragraph, with a graphic style for its wrapping (parallel, none, run-through in front or behind), position and margins |
+| `math` | the LaTeX as text, since no formula object is written |
+| `noteReference` and `notes` | `text:note` with its citation and body, in place |
+| `comment` marks, `commentAnchor` and `comments` | `office:annotation` and `office:annotation-end` around the text, replies after their parent with `loext:parent-name`, a comment on no text at its point |
+| `insertion` and `deletion` marks | `text:tracked-changes` with each change's author and date, `text:change-start` and `text:change-end` in the text, deleted text inside the change |
+| page number and page count runs | `text:page-number` and `text:page-count` |
+| `headersFooters`, `sections` | a master page per section with its page layout, headers and footers in `styles.xml`, each section starting on its master page |
+
+The `mimetype` member comes first and uncompressed, as OpenDocument asks. Reading the written file
+gives back the same blocks, marks, lists, tables, notes, comments and changes (tested in
+`opendocument/text_write/tests.rs`), and LibreOffice draws it as the tree says (checked by hand).
+
+## Markdown and HTML
+
+`read_document_tree_named(bytes, file_name, limits, options)` reads a Markdown file (`.md`, by its
+name) with CommonMark and its common extensions, and an HTML page (by its name or a doctype or
+`<html>` at its start):
+
+- **Markdown** (through `pulldown-cmark`): headings, paragraphs, emphasis, strong, strike,
+  inline code and code blocks, block quotes, nested lists and task lists (`☑`, `☐`), tables,
+  links, footnotes, inline and display math (`$…$`, `$$…$$`), and the inline HTML
+  a Markdown file uses for what it has no syntax for (`<u>`, `<sup>`, `<sub>`, `<mark>`, `<br>`).
+  An image written as a `data:` URL is kept as an image; one on the web stays a link, since
+  nothing is fetched.
+- **HTML** (through `html5gum`, which tokenizes and never runs anything): headings, paragraphs,
+  the inline formatting tags, lists, tables with their header cells and spans,
+  block quotes, `pre`, `hr`, links and `data:` images. Scripts, styles, frames, forms and the head
+  are left out, and only links to the web and to mail are kept.
+
+`write_markdown(&tree)` writes CommonMark with the same extensions, keeping in inline HTML what
+Markdown cannot say, and the images as `data:` URLs; `write_html(&tree, title)` writes a page of
+its own with the images inside, the notes at its end, a floating image floated to its side and
+math as LaTeX in a `span` a math renderer can typeset. Text is escaped in both, and a link that is
+not to the web or to mail is written as text.
+
 ## Writing a pptx
 
 `write_pptx(&Presentation) -> Vec<u8>` writes the slide model `read_presentation` gives, from a
@@ -109,8 +159,19 @@ from the layout or the master is marked `inherited`, so an editor can show it lo
 
 From JavaScript: `readPresentation(bytes, limits?)` returns `{ widthEmu, heightEmu, slides, media,
 truncated }`, the slides tagged by `type` like the tree's blocks, and `writePptx({ widthEmu,
-heightEmu, slides, media })` writes them; `convertToPptx(bytes)` reads a ppt, an odp or a pptx and
-writes it as a pptx in one call.
+heightEmu, slides, media })` and `writeOdp(...)` write them; `convertToPptx(bytes)` reads a ppt, an
+odp or a pptx and writes it as a pptx in one call.
+
+## Writing an odp
+
+`write_odp(&Presentation) -> Vec<u8>` writes the same slides as an OpenDocument presentation, every
+page on one empty master: a text shape as a `draw:frame` with its text box, any other geometry as a
+`draw:custom-shape` (rectangles, rounded rectangles and ellipses by type, a path by its enhanced
+path), lines, pictures and tables; rotation in `draw:transform`; fills (solid, gradient, picture),
+outlines, text anchors, insets and wrapping in graphic styles; paragraphs with their bullets and
+numbers in list styles. The speaker notes, hidden slides, transitions (type, direction, speed and
+how they advance) and animations (an `anim:par` tree with LibreOffice's presets, triggers and
+delays) are written too, and read back to the same slides.
 
 ## The spreadsheet model
 
@@ -192,7 +253,7 @@ does not rename (`XOR`, `INT`) keeps its name.
   `Riepilogo!A1` and `'Vendite 2026'!B2:C9`, sheet names case-insensitive.
 - **Operators** with Excel's precedence: comparison `= <> < <= > >=`, `&`, `+ -`, `* /`, `^` (left
   to right, so `2^3^2` is 64), unary signs (tighter than `^`, so `-2^2` is 4), postfix `%`.
-- **Functions** (298, listed by `FUNCTION_NAMES` and, in the locale's names, by `function_names`
+- **Functions** (489, listed by `FUNCTION_NAMES` and, in the locale's names, by `function_names`
   for an editor's suggestions), in families: mathematics (`SUM`, `SUMPRODUCT`, `ROUND`, `MROUND`, `TRUNC`,
   `FLOOR`, `GCD`, `LOG`, the trigonometric functions, ...), statistics (`AVERAGE`, `MEDIAN`,
   `MODE.SNGL`, `STDEV.S`, `VAR.P`, `LARGE`, `SMALL`, `RANK.EQ`, `MAXIFS`, `MINIFS`, ...), logic (`IF`,
@@ -212,9 +273,34 @@ does not rename (`XOR`, `INT`) keeps its name.
   the eleven other base conversions, the `BIT` functions, `CONVERT` over length, mass, volume,
   time, speed, area, energy, power, pressure, information and temperature); text (`FIXED`,
   `DOLLAR`, `NUMBERVALUE`, `TEXTBEFORE`, `TEXTAFTER`, `UNICHAR`); information (`TYPE`,
-  `ERROR.TYPE`, `ISREF`, `ADDRESS`). Every one has its Italian name. `TEXT` reads its format code
-  in Italian notation too. The `_xlfn.` prefix files store before the newer functions is read and
-  written back, and `_xlfn._xlws.` before `FILTER` and `SORT`.
+  `ERROR.TYPE`, `ISREF`, `ADDRESS`). A third set completes Excel's library: the beta,
+  chi-squared, F, gamma, hypergeometric, lognormal, negative binomial, Student's t and Weibull
+  distributions with their inverses and their legacy names, `BINOM.DIST.RANGE`, `CHISQ.TEST`,
+  `F.TEST`, `T.TEST` (paired, equal and unequal variances), `Z.TEST`, `CONFIDENCE.T`, `PROB`,
+  `SKEW.P`, `ERF`, `ERFC` and `GAUSS`; complex numbers (`COMPLEX` and the 26 `IM` functions, in
+  `i` or `j`, written with Excel's fifteen digits) and the Bessel functions; the database functions
+  (`DSUM`, `DAVERAGE`, `DCOUNT`, `DGET` and the rest, a plain text criterion matching what begins
+  with it); bonds and discounted securities (the six `COUP` functions, `PRICE`, `YIELD`,
+  `DURATION`, `MDURATION`, `ACCRINT`, `ACCRINTM`, `DISC`, `INTRATE`, `RECEIVED`, `PRICEDISC`,
+  `PRICEMAT`, `YIELDDISC`, `YIELDMAT`, the three Treasury bill functions, `AMORLINC`,
+  `AMORDEGRC`, `VDB`) on Excel's five day-count bases; regression and matrices (`LINEST` and
+  `LOGEST` with their statistics, `TREND`, `GROWTH`, `MINVERSE`, `MDETERM`, `MODE.MULT`); the
+  references a formula computes (`OFFSET`, `INDIRECT` in A1 and R1C1, `TRIMRANGE`), `XMATCH`,
+  `AGGREGATE` with its options, `CELL`, `SHEET`, `SHEETS`, `AREAS`, `FORMULATEXT`, `ISFORMULA`;
+  random numbers (`RAND`, `RANDBETWEEN`, `RANDARRAY`, drawn again at each recalculation); regular
+  expressions (`REGEXTEST`, `REGEXEXTRACT` in its three modes, `REGEXREPLACE` with `$1`
+  groups and an occurrence, Unicode classes so `\w` takes `à`); and `SERIESSUM`, `PERCENTOF`,
+  `ENCODEURL`, `VALUETOTEXT`, `ARRAYTOTEXT`, `ASC`, `DBCS` and the byte variants of the text
+  functions. Every function has its Italian name where Italian Excel gives it one. `TEXT` reads
+  its format code in Italian notation too. The `_xlfn.` prefix files store before the newer
+  functions is read and written back, and `_xlfn._xlws.` before `FILTER` and `SORT`.
+
+  Left out on purpose, and `#NAME?` like any unknown name: what calls outside the workbook
+  (`CALL`, `REGISTER.ID`, `RTD`, `WEBSERVICE`, `STOCKHISTORY`, `IMAGE`, `TRANSLATE`, `FILTERXML`,
+  `INFO`), what a pivot table answers (`GETPIVOTDATA`, `GROUPBY`, `PIVOTBY`), the Japanese and Thai
+  text functions (`PHONETIC`, `BAHTTEXT`), `EUROCONVERT`, the exponential smoothing of
+  `FORECAST.ETS` and its three companions, and the odd-period bond functions (`ODDFPRICE`,
+  `ODDFYIELD`, `ODDLPRICE`, `ODDLYIELD`).
 - **Arrays**: a formula whose result is an array spills it into the cells below and to the right
   of its own (`=FILTER(A2:C9;B2:B9="Nord")`). `FILTER`, `SORT`, `SORTBY`, `UNIQUE`, `SEQUENCE`,
   `TRANSPOSE`, `TAKE`, `DROP`, `CHOOSEROWS`, `CHOOSECOLS`, `VSTACK`, `HSTACK`, `TOCOL`, `TOROW`,
@@ -234,7 +320,24 @@ does not rename (`XOR`, `INT`) keeps its name.
   at with a warning and an xlsx stores as `#REF!`.
 - **Dates** are serial day counts from 30 December 1899, as in Excel's 1900 system. `TODAY` and
   `NOW` read a date the host sets with `set_today`, since WebAssembly has no clock.
-- **Limits**: 8,192 characters and 128 levels of nesting per formula.
+- **Names**: a word that is no cell is a name. `LET(x, 2, y, x*3, x+y)` binds names for the
+  formula it ends with, `LAMBDA(x, y, x*y)` makes a function called in place (`LAMBDA(x, x*2)(3)`)
+  or by `MAP`, `REDUCE`, `SCAN`, `BYROW`, `BYCOL` and `MAKEARRAY`, `ISOMITTED` says a parameter
+  was left out, and a function sees the names around the `LAMBDA` that made it. The workbook
+  defines names (`set_defined_name`, `remove_defined_name`, `defined_names`), for the whole
+  workbook or for one sheet, which wins on its own sheet: a range, a value or a formula, a
+  `LAMBDA` among them, which formulas then call by its name, recursion included. A name defined
+  from a formula keeps the sheet of each reference, as Excel's name manager does, and follows the
+  rows and columns inserted and deleted and the sheets renamed and removed. Names compare without
+  case; one Excel refuses (`A1`, `R1C1`, `TRUE`, a space) is refused with `InvalidName`. An xlsx
+  keeps them as `definedName` (a function's parameters with the `_xlpm.` prefix Excel writes), an
+  ods as `table:named-expressions`; both read back.
+- **References a formula computes**: `OFFSET`, `INDIRECT` and `TRIMRANGE` give a range known only
+  while computing, so the formula cells they reach are found then, and the formula is computed
+  again after them; one that reaches its own cell is `#CIRC!`. A function that only describes a
+  reference, `ROW`, `COLUMNS` or `OFFSET`'s first argument, makes no dependency on it.
+- **Limits**: 8,192 characters and 128 levels of nesting per formula; functions and names call
+  one another at most 100 levels deep, then `#NUM!`.
 
 Recalculation computes every formula once, each after the formulas it reads, walking its own stack
 rather than recursing: a chain of 100,000 formulas computes in WebAssembly without exhausting the
@@ -269,9 +372,38 @@ a large workbook keeps fewer steps rather than its size a hundred times over.
   and English follow the calendar in the case they were written, formulas move their relative
   references, and anything else repeats with its look. It is one step of the history.
 
-The pictures and charts of an xlsx are also given, as they were drawn when it was opened, by
-`Sheet::pictures`: a chart is an SVG drawn from the values the file cached, so an editor shows it
-over the grid; it is not drawn again as the cells change.
+### Comments
+
+`set_comment(sheet, cell, author, text)` writes the comment of a cell, an empty text removing it,
+and `Sheet::comments` and `Sheet::comment` read them. A comment moves with its cell when rows and
+columns are inserted and deleted, and goes when its row or column does. An xlsx keeps the comments
+in its comments part with the VML note boxes Excel shows them in; an ods as `office:annotation`;
+both read back with the author and the lines.
+
+### Charts
+
+`charts(sheet)` lists the charts of a sheet, each with where it sits (`ChartPlacement`: the cell
+of its corner, the offset into it and the size, in EMU) and, when an editor can change it, a
+`ChartSpec`: its type (column, bar, line, area, pie, doughnut, scatter), whether it stacks, its
+title and legend, and the ranges its categories and series read, as chart formulas
+(`'Vendite'!$B$2:$B$7`). `chart_for_range(sheet, range, type)` makes the spec a selection
+suggests: a series for each column, or each row of a selection wider than tall, a first row of
+text naming them and a first column of text giving the categories. `add_chart`, `set_chart` (what
+it shows, where it sits, or both) and `remove_chart` edit them; a range on a sheet the workbook
+does not have is refused with `InvalidChart`.
+
+The charts live in the drawing part the sheet carries: a new chart is an anchor and a chart part
+added to it, a changed one has its part written again, and everything else the drawing holds,
+pictures and charts no editor can describe, stays as the file had it. A chart part of one plot
+whose series read ranges is described, so a chart made here, or a simple one from Excel or
+LibreOffice, stays editable after a save. The parts are written with explicit colours, so the
+chart looks the same in a workbook without a theme, and with no cached values: Excel and
+LibreOffice compute them from the cells. Charts stay anchored to their cells as they were when
+rows or columns move.
+
+`Workbook::pictures(sheet)` draws the pictures and charts of a sheet, each chart from the values
+its cells hold now, so a chart follows an edit; the drawing is kept until the workbook changes, a
+change of a chart included.
 
 ### Edits that move cells
 
@@ -303,18 +435,25 @@ opens and recalculates the files (checked by hand on the corpus); the round trip
 
 `write_ods` saves the workbook as an ods: cells with their computed values, formulas in
 OpenFormula, styles with data styles built from the number formats, merges, column widths and row
-heights, conditional formats and validations as LibreOffice writes them. Pictures, charts and
-pivot tables are kept by `write_xlsx` only. An xls is always saved as xlsx.
+heights, conditional formats and validations as LibreOffice writes them, the defined names and the
+comments. Each picture is written as an image and each chart a spec describes as a chart object
+reading the same cells, both in a frame anchored to their cell; a chart no spec describes is
+written as the picture it is drawn as. A sheet read from an ods gets the same drawing a sheet of an
+xlsx carries, built from its pictures and charts, so they are edited the same way and an xlsx saved
+from it keeps them as charts. Pivot tables are kept by `write_xlsx` only. An xls is always saved as
+xlsx.
+
+`write_csv(workbook, sheet, locale, separator)` saves one sheet as UTF-8 with its byte order mark
+and CRLF line ends, each cell as it is shown, fields quoted when they hold the separator, a quote
+or a line break; `default_separator(locale)` is `;` in Italian and `,` in English, and
+`Workbook::delimiter` gives the one of the csv or tsv the workbook was read from, so a save writes
+the file back as it came.
 
 An ods keeps the frozen panes in `settings.xml` and the filter as a `table:database-range` with its
 conditions, the rows it hides marked as filtered.
 
-`Workbook::pictures(sheet)`, and `pictures` with `pictureBytes` from JavaScript, give the pictures
-and charts of a sheet with each chart drawn again from the values its cells hold now, so a chart
-follows an edit; the drawing is kept until the workbook changes.
-
-Not kept: comments, defined names other than the filter's, and formulas with functions outside
-the list, which show `#NAME?` after an edit recalculates them.
+Not kept: the threaded comments of Excel 365 (their legacy note is kept), and formulas with
+functions outside the list, which show `#NAME?` after an edit recalculates them.
 
 ## From JavaScript
 
@@ -327,8 +466,10 @@ each with its `input`, `display`, `kind` and `format`) and sends each action as 
 `clearStyles`, `mergeCells`, `unmergeCells`, `clearRange`, `copyRange`, `insertRows`, `deleteRows`,
 `insertColumns`, `deleteColumns`, `addSheet`, `renameSheet`, `removeSheet`,
 `setConditionalFormats`, `setValidations`, `fillRange`, `sortRange`, `setAutoFilter`,
-`setFilterColumn`, `setFrozen`, `setToday`, `save`, `saveOds`; `filterChoices`, `pictures` with
-`pictureBytes`, and `functionNames` serve an editor's menus; `stylesJson` and
+`setFilterColumn`, `setFrozen`, `setDefinedName`, `removeDefinedName`, `setComment`, `addChart`,
+`setChart`, `removeChart`, `setToday`, `save`, `saveOds`, `saveCsv`; `filterChoices`, `pictures`
+with `pictureBytes`, `definedNames`, `comments`, `charts`, `chartForRange`, `delimiter` and
+`functionNames` serve an editor's menus; `stylesJson` and
 `mergesJson` give the styles and merges to draw, `conditionalFormats`, `validations`,
 `conditionalLooks`, `validation` and `invalidCells` the rules and what they make of the cells. A
 cell of `cells` carries its `style`.
@@ -337,5 +478,5 @@ it and `canUndo()` and `canRedo()` say whether they can; a call that is refused 
 `input` gives a cell as the document's locale writes it, Italian names and `;` in Italian. Failures
 throw a `RelyOfficeError` with a stable
 code (`INVALID_FORMULA`, `NO_SUCH_SHEET`, `DUPLICATE_SHEET_NAME`, `INVALID_SHEET_NAME`,
-`LAST_SHEET`, `OUT_OF_BOUNDS`, `INVALID_INPUT`, `INVALID_LOCALE`, `INVALID_STYLE`, and the
-reading codes on open).
+`LAST_SHEET`, `OUT_OF_BOUNDS`, `INVALID_INPUT`, `INVALID_LOCALE`, `INVALID_STYLE`, `INVALID_NAME`,
+`INVALID_CHART`, and the reading codes on open).

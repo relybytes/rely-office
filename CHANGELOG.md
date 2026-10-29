@@ -3,7 +3,57 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
-## 0.7.1
+## 0.8.0
+
+### Added
+
+- Markdown and HTML read into the document tree (`read_document_tree_named`, and
+  `readDocumentTree(bytes, limits, options, fileName)` from JavaScript): CommonMark with tables,
+  task lists, footnotes and math through `pulldown-cmark`, and HTML through `html5gum`, which
+  never runs what a page holds. `write_markdown` and `write_html` write the tree back; the
+  renderer draws both formats like a document.
+- `write_odt` writes the document tree as an odt: styles, lists, tables, images, notes, comments
+  with replies, tracked changes, page fields, headers, footers and sections. `write_odp` writes
+  slides as an odp, with their shapes, fills, tables, notes, transitions and animations. From
+  JavaScript, `writeOdt`, `writeMarkdown`, `writeHtml`, `writeOdp`; in the frontend package,
+  `saveDocumentAs(document, 'odt' | 'markdown' | 'html' | 'docx')` and the slide editor's
+  `saveOdp`.
+- `write_csv` saves a sheet as csv (UTF-8 with its byte order mark, CRLF, the cells as shown),
+  with `default_separator(locale)` and `Workbook::delimiter` for the separator of the file read;
+  `saveCsv` and `delimiter` from JavaScript.
+- Names in formulas: `LET`, `LAMBDA` called in place or by `MAP`, `REDUCE`, `SCAN`, `BYROW`,
+  `BYCOL` and `MAKEARRAY`, `ISOMITTED`, and the names a workbook defines (`set_defined_name`,
+  `remove_defined_name`, `defined_names`), for the workbook or one sheet, which follow row,
+  column and sheet edits and are read and written in xlsx and ods; a named `LAMBDA` is called by
+  its name.
+- Cell comments: `set_comment`, `Sheet::comments`, read from and written to xlsx (with Excel's
+  note boxes) and ods, moved with their cells.
+- The rest of Excel's function library, 489 functions in all, each with its Italian name where it
+  has one: the distributions and their tests, complex numbers and Bessel functions, the database
+  functions, bonds and discounted securities, regression and matrices, `OFFSET`, `INDIRECT`,
+  `TRIMRANGE`, `XMATCH`, `AGGREGATE`, `CELL`, random numbers and regular expressions. See
+  `docs/editing.md` for the list and for the functions left out on purpose.
+- Charts made and changed in a sheet: `charts`, `chart_for_range`, `add_chart`, `set_chart` and
+  `remove_chart`, over the drawing part the sheet carries, so the rest of the drawing is kept as
+  the file had it; a chart read back from xlsx or ods stays editable. `ChartSpec` is read from
+  and written as a `DrawingML` chart part and an `OpenDocument` chart object.
+- The grid: panels for comments, defined names and charts, a commented cell marked and its
+  comment shown on hover, charts chosen, dragged, resized and removed with Delete.
+- Floating images in the document editor: the anchor crosses the JSON, the image stands on its
+  side of the text, and the toolbar sets its wrapping and side; resizing it resizes its anchor.
+
+### Changed
+
+- A floating image's `anchor` is part of the tree's JSON (`ImageAnchor` in the model); an editor
+  that ignores it keeps it as it came.
+- An ods keeps its pictures and charts on save, and a chart of an xlsx goes to an ods as a chart.
+- The odt writer and the HTML writer place a floating image as its anchor says.
+- `YEARFRAC` on basis 1 follows Excel within a year, and on basis 0 applies the February rule.
+- A reference a function only describes (`ROW`, `COLUMNS`, `OFFSET`'s first argument) is no
+  longer a dependency, so `=OFFSET(A1,1,0)` in `A1` is not circular.
+- A function the grid does not know keeps the name it was typed with, as a defined `LAMBDA`
+  needs; an unknown name computes `#NAME?` as before.
+- New error codes: `INVALID_NAME` and `INVALID_CHART`.
 
 ### Fixed
 

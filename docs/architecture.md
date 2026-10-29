@@ -2,7 +2,8 @@
 
 rely-office turns office documents into what a file manager needs from them: what they are, the
 text to index, a table to show, a document tree to import into an editor, a PDF and a thumbnail;
-it writes a docx back from that tree, and it is the model behind a spreadsheet editor.
+it writes a docx, an odt, Markdown or HTML back from that tree and a pptx or an odp from slides,
+and it is the model behind a spreadsheet editor.
 
 ## Why a library of our own
 
@@ -19,16 +20,16 @@ editing a Word document goes through the document tree and the platform's own ri
 editing a spreadsheet goes through `rely-office-sheet` and the platform's own grid.
 
 What it deliberately does not do: collaboration, pixel-perfect Word layout (Typst lays pages out
-its own way; [rendering.md](rendering.md) measures how close), a rich-text editor of its own, and
-spreadsheet features past values, formulas, number formats and column widths.
+its own way; [rendering.md](rendering.md) measures how close), macros, editing pivot tables, and
+the functions that call outside the workbook.
 
 ## Crates and packages
 
 | Crate or package | Role | Depends on |
 | --- | --- | --- |
-| `rely-office-core` | detection, text extraction, sheet tables, print settings and rules, the document tree with its looks, the slide model, the docx and pptx writers | `zip`, `quick-xml`, `calamine`, `cfb`, `encoding_rs`, `thiserror`; `serde` behind the `serde` feature |
+| `rely-office-core` | detection, text extraction, sheet tables, print settings and rules, defined names, comments and chart specs, the document tree with its looks, Markdown and HTML, the slide model, the docx, odt, Markdown, HTML, pptx and odp writers | `zip`, `quick-xml`, `calamine`, `cfb`, `encoding_rs`, `pulldown-cmark`, `html5gum`, `thiserror`; `serde` behind the `serde` feature |
 | `rely-office-render` | documents written as Typst source and typeset to PDF and PNG, see [rendering.md](rendering.md) | `rely-office-core`, `rely-office-sheet` (for the looks of conditional formats), `typst`, `typst-layout`, `typst-pdf`, `typst-render`, `comemo` |
-| `rely-office-sheet` | the editable spreadsheet: formulas, recalculation, edits, conditional formats and validation, xlsx and ods out, see [editing.md](editing.md) | `rely-office-core`, `calamine`, `quick-xml`, `zip`, `thiserror` |
+| `rely-office-sheet` | the editable spreadsheet: formulas, names and functions, recalculation, edits, comments, charts, conditional formats and validation, xlsx, ods and csv out, see [editing.md](editing.md) | `rely-office-core`, `calamine`, `quick-xml`, `zip`, `regex`, `thiserror` |
 | `rely-office-cli` | the `rely-office` command for trying files by hand | the three crates above |
 | `rely-office-wasm`, `rely-office-render-wasm`, `rely-office-sheet-wasm` | the WebAssembly fronts for JavaScript, not published as crates | `wasm-bindgen`, `serde`, `serde_json` |
 | `rely-office-corpus` | the page comparison with LibreOffice, not published | `rely-office-render`, `tiny-skia` |
@@ -44,7 +45,7 @@ spreadsheet features past values, formulas, number formats and column widths.
 | `relationships` | the `_rels/*.rels` parts of OOXML: targets resolved like OPC, the main part from `_rels/.rels` |
 | `xml_text` | a streaming walk from XML to search text, configured per format by a `TextRules` |
 | `xml_tree` | a small element tree with resolved namespaces, depth-capped, for structural reads |
-| `word`, `presentation`, `opendocument` | the text of docx, pptx, odt and odp; `opendocument` also reads an odt into the document tree, an odp into slides and an ods into a sheet layout, through its style resolver |
+| `word`, `presentation`, `opendocument` | the text of docx, pptx, odt and odp; `opendocument` also reads an odt into the document tree, an odp into slides and an ods into a sheet layout, through its style resolver, and writes the tree as an odt (`text_write`) and slides as an odp (`presentation_write`) |
 | `doc`, `ppt` | the text of the binary formats, a doc as the document tree and a ppt as slides; `doc/word6` rewrites the structures of a Word 6 or 95 file as Word 97 stores them |
 | `office_art` | the drawing records doc and ppt share: shapes, their properties and the pictures of the blip store |
 | `geometry` | shape outlines as paths: the `DrawingML` presets (the ones `presets.rs` writes in guide language, the rest generated into `enhanced_presets.rs`) and custom geometries, `OpenDocument` enhanced geometries, polygons and SVG paths; `picture` draws the shapes of a document as an SVG picture |
@@ -53,7 +54,9 @@ spreadsheet features past values, formulas, number formats and column widths.
 | `sheet_layout`, `sheet_styles`, `number_format` | the print settings, cell styles and merges of xlsx sheets, read as a stream that skips the cells, and Excel's number format codes |
 | `sheet_drawings` | the pictures and charts a sheet's drawing anchors to its cells, and the drawing and pivot table parts an editor writes back unchanged |
 | `sheet_rules` | the conditional formats and data validations of a sheet, the model the renderer and the editor share, read from xlsx and ods |
-| `document` | the docx document tree: styles, table styles, numbering, notes, comments, tracked changes, headers and footers, sections, floating anchors and wrap outlines, shapes and SmartArt (`convert/shapes`), embedded objects (`objects`), conversion, looks, media sniffing, and the docx writer |
+| `sheet_names` | the names a workbook defines and the comments of its cells, read from xlsx and ods |
+| `chart_spec` | a chart as an editor describes it, read from and written as a `DrawingML` chart part and an `OpenDocument` chart object |
+| `document` | the docx document tree: styles, table styles, numbering, notes, comments, tracked changes, headers and footers, sections, floating anchors and wrap outlines, shapes and SmartArt (`convert/shapes`), embedded objects (`objects`), conversion, looks, media sniffing, the docx writer, and Markdown and HTML read and written (`markdown`, `html`) |
 | `math` | one formula tree for equations: LaTeX read and written, Office Math and MathML read, Office Math and Typst math written |
 | `slides`, `theme` | a pptx as slides over its layouts and masters, their notes, transitions and animations (`show`), the pptx writer, and the colours and fonts of a `DrawingML` theme |
 | `chart` | `DrawingML` and `OpenDocument` charts, read from their cached values or cells and drawn as SVG, and the Office 2016 kinds of `cx:chartSpace` (`extended`) |
@@ -105,12 +108,16 @@ spreadsheet features past values, formulas, number formats and column widths.
   the caller maps it onto its own; its shape is in [document-tree.md](document-tree.md).
 - **Looks stay out of the editor's JSON.** Spacing, fonts and table geometry are read for the
   renderer into `look` fields that `serde` skips, so the tree an editor receives keeps its shape
-  and its size.
+  and its size. A floating image's anchor is the exception: an editor shows it, so it crosses.
 - **The renderer writes Typst source, never Typst code from input.** Document text enters the
   source only as string literals, so a crafted document cannot become markup.
 - **Formulas are trees.** A formula is parsed once into an expression tree and printed back for
   storage; that is what lets row and column edits, sheet renames and pastes move references the
   way a spreadsheet does, and what makes the Italian syntax a reader concern only.
+- **A sheet's drawing is edited in place.** Charts are made and changed in the drawing part the
+  sheet carries, anchor by anchor and part by part, so what no editor describes is written back as
+  the file had it; an ods's pictures and charts are built into the same kind of drawing when it is
+  read.
 - **No `unsafe`.** The workspace forbids it; parsing goes through crates that do the same or are
   widely fuzzed.
 - **Tests carry no binaries.** Documents are built in memory in `test_support.rs` (zip writer,
@@ -119,9 +126,9 @@ spreadsheet features past values, formulas, number formats and column widths.
 ## The WebAssembly boundary
 
 Three modules compile for `wasm32-unknown-unknown`, apart so a process loads only what it uses:
-`rely_office_wasm` (reading and docx writing, 1.2 MB), `rely_office_render_wasm` (Typst, 27 MB,
-loaded on the first render) and `rely_office_sheet_wasm` (the spreadsheet, 1.2 MB, loaded on the
-first sheet). `wasm-bindgen-cli` generates the Node bindings (`--target nodejs`, loaded
+`rely_office_wasm` (reading and writing documents and slides, 3.6 MB), `rely_office_render_wasm`
+(Typst, 31 MB, loaded on the first render) and `rely_office_sheet_wasm` (the spreadsheet, 3.7 MB,
+loaded on the first sheet). `wasm-bindgen-cli` generates the Node bindings (`--target nodejs`, loaded
 synchronously) for all three, and browser bindings (`--target web`) for the spreadsheet, the one
 module an editor runs in the page. The boundary is JSON text, so the package needs no JavaScript
 glue crate:

@@ -1,10 +1,11 @@
 # rely-office
 
 Office documents without an office suite, in safe Rust: format detection, text for search, sheets
-as tables, a `.docx`, `.doc` or `.odt` as a document tree for a rich-text editor, rendering to
-PDF and PNG through Typst, writing `.docx` back from that tree and `.pptx` from slides, so a Word
-or PowerPoint 97-2003 file converts to the new format, slides edited as JSON, and an editable
-spreadsheet with formulas, conditional formats and validation that saves xlsx and ods. It runs natively and, compiled to WebAssembly, in process from Node and in the
+as tables, a `.docx`, `.doc`, `.odt`, Markdown or HTML file as a document tree for a rich-text
+editor, rendering to PDF and PNG through Typst, writing `.docx`, `.odt`, Markdown or HTML back from
+that tree and `.pptx` or `.odp` from slides, so a Word or PowerPoint 97-2003 file converts to a new
+format, slides edited as JSON, and an editable spreadsheet with Excel's function library, names,
+comments, charts, conditional formats and validation that saves xlsx, ods and csv. It runs natively and, compiled to WebAssembly, in process from Node and in the
 browser, where React components edit documents, spreadsheets and slides.
 
 rely-office is built and maintained by [RelyBytes Consulting](https://relybytes.com) for the Drive
@@ -43,15 +44,16 @@ In the Drive of the Rely Platform, rely-office runs inside the Node service as W
 
 | Format | Detect | Text for search | Sheets as tables | Document tree | Render | Write | Edit |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| docx | yes | body, headers, footers, notes | - | yes, with comments, tracked changes, equations and embedded objects | layout, with sections, headers, footers, notes, floating objects with text around their outline, drawn shapes, metafiles, charts, SmartArt and equations | yes | through the tree |
-| doc (97-2003, Word 6 and 95) | yes | every story | - | yes | layout, as a docx | as docx | through the tree |
-| odt | yes | body with headers and footers | - | yes | layout, as a docx | as docx | through the tree |
-| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings, cell formats, conditional formats, merges, and pictures and charts over their cells | yes | yes, its styles, merges, rules, pictures, charts and pivot tables kept |
-| ods | yes | every sheet | yes | - | layout, as an xlsx | as ods or xlsx | yes |
+| docx | yes | body, headers, footers, notes | - | yes, with comments, tracked changes, equations, floating images and embedded objects | layout, with sections, headers, footers, notes, floating objects with text around their outline, drawn shapes, metafiles, charts, SmartArt and equations | as docx, odt, Markdown or HTML | through the tree |
+| doc (97-2003, Word 6 and 95) | yes | every story | - | yes | layout, as a docx | as docx or odt | through the tree |
+| odt | yes | body with headers and footers | - | yes | layout, as a docx | as odt, docx, Markdown or HTML | through the tree |
+| md, html | by name or doctype | yes | - | yes | layout, as a docx | as Markdown, HTML, docx or odt | through the tree |
+| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings, cell formats, conditional formats, merges, and pictures and charts over their cells | yes | yes, with names, comments and charts made and changed; its styles, merges, rules, pictures and pivot tables kept |
+| ods | yes | every sheet | yes | - | layout, as an xlsx | as ods, xlsx or csv | yes, its names, comments, pictures and charts kept |
 | xls | yes | every sheet | yes | - | layout | as xlsx | yes |
-| csv, tsv | by name, text only | yes | yes, UTF-8 or Windows-1252, `;` or `,` | - | layout | as xlsx | yes |
-| pptx, odp | yes | slides and pages with their notes | - | slides | slides, with their masters, shapes, gradient and picture fills, tables, pictures, charts and SmartArt | as pptx | as slides, with notes, transitions and animations |
-| ppt (97-2003) | yes | every text atom outside the masters | - | slides | slides, with their masters, shapes, fills, tables and pictures | as pptx | as slides |
+| csv, tsv | by name, text only | yes | yes, UTF-8 or Windows-1252, `;` or `,` | - | layout | as csv, xlsx or ods | yes |
+| pptx, odp | yes | slides and pages with their notes | - | slides | slides, with their masters, shapes, gradient and picture fills, tables, pictures, charts and SmartArt | as pptx or odp | as slides, with notes, transitions and animations |
+| ppt (97-2003) | yes | every text atom outside the masters | - | slides | slides, with their masters, shapes, fills, tables and pictures | as pptx or odp | as slides |
 
 The format comes from the bytes, never from the file name alone. Every input is bounded by
 [`Limits`](crates/rely-office-core/src/limits.rs): the input size, each decompressed archive
@@ -63,9 +65,9 @@ length and nesting.
 
 ```toml
 [dependencies]
-rely-office-core = "0.7"    # reading, the document tree, writing docx and pptx
-rely-office-render = "0.7"  # PDF and PNG through Typst
-rely-office-sheet = "0.7"   # the editable spreadsheet
+rely-office-core = "0.8"    # reading, the document tree, writing docx, odt, Markdown, HTML, pptx and odp
+rely-office-render = "0.8"  # PDF and PNG through Typst
+rely-office-sheet = "0.8"   # the editable spreadsheet
 ```
 
 ```rust
@@ -95,7 +97,7 @@ let xlsx = write_xlsx(&workbook)?;
 
 They declare the same model from one file, so a tree read on the server opens in the editor and a
 document saved in the browser is read back by the server. Rendering stays on the backend: the
-typesetter is 29 MB of WebAssembly.
+typesetter is 31 MB of WebAssembly.
 
 ### On the backend
 
@@ -106,7 +108,7 @@ office.extractText(bytes, 'contratto.docx');            // { format, text, trunc
 office.readDocumentTree(bytes);                         // { blocks, media, report, comments?, objects? }
 office.readPresentation(pptx);                          // { slides, media, ... }, back with writePptx
 office.render(bytes, 'contratto.docx', { thumbnailWidth: 320 }); // { pdf, thumbnail, ... }
-office.writeDocx({ blocks, media });                    // Uint8Array
+office.writeDocx({ blocks, media });                    // Uint8Array, or writeOdt, writeMarkdown, writeHtml
 office.convertToDocx(doc);                              // a Word 97-2003 file as docx
 office.convertToPptx(ppt);                              // a PowerPoint 97-2003 file as pptx
 const sheet = office.openSheet(xlsx, 'conti.xlsx');     // edit, recalculate, save()
@@ -121,8 +123,8 @@ import { DocumentEditor, initDocuments, openDocument } from '@relybytes/rely-off
 import '@relybytes/rely-office-react/styles.css';
 
 await initDocuments();
-const { document } = openDocument(bytes);              // docx, doc or odt
-<DocumentEditor ref={editor} document={document} />;   // then editor.current.saveDocx()
+const { document } = openDocument(bytes, { fileName }); // docx, doc, odt, Markdown or HTML
+<DocumentEditor ref={editor} document={document} />;    // then editor.current.saveDocx(), or saveDocumentAs
 ```
 
 `SheetGrid` edits a workbook from `openSheet` and `SlideEditor` a presentation from
@@ -156,12 +158,12 @@ Renders use the fonts of the folder `RELY_OFFICE_FONTS` names, by default `./fon
   <img src="docs/assets/rely-office-roadmap.svg" width="100%" alt="Releases 0.1 to 0.6 read, render, write and edit every format; 0.7 adds the React editor components for documents, sheets and slides.">
 </p>
 
-Six releases took the library from text extraction to drawing and saving every format above;
-**0.7 adds the editor components**: React components that edit the document tree, the workbook
-and the slides directly, so an application gets a Word-like editor, a spreadsheet grid and a slide
-editor that open and save Office files without writing the mapping itself. They ship in the
-frontend package, leaving storage, sharing and locking to the host application. What comes next
-is in the [roadmap](docs/roadmap.md).
+Six releases took the library from text extraction to drawing and saving every format above; 0.7
+added the editor components, React components that edit the document tree, the workbook and the
+slides directly. **0.8 makes the editing complete across the formats**: an odt, an odp, Markdown,
+HTML and csv are saved as themselves, the spreadsheet has Excel's function library with names,
+`LET` and `LAMBDA`, comments and charts made and changed in the grid, and floating images are
+edited in the document editor. What comes next is in the [roadmap](docs/roadmap.md).
 
 ## Build and test
 
@@ -180,9 +182,9 @@ SOFFICE=soffice node scripts/corpus.mjs           # pages compared with LibreOff
 
 | Path | Purpose |
 | --- | --- |
-| [`crates/rely-office-core`](crates/rely-office-core) | detection, text, sheet tables, print settings and rules, the document tree and its looks, the slide model, the docx and pptx writers |
+| [`crates/rely-office-core`](crates/rely-office-core) | detection, text, sheet tables, print settings and rules, the document tree and its looks, Markdown and HTML, the slide model, the docx, odt, Markdown, HTML, pptx and odp writers |
 | [`crates/rely-office-render`](crates/rely-office-render) | documents to Typst source, typeset to PDF and PNG |
-| [`crates/rely-office-sheet`](crates/rely-office-sheet) | the editable spreadsheet: formulas, recalculation, edits, conditional formats and validation, xlsx and ods out |
+| [`crates/rely-office-sheet`](crates/rely-office-sheet) | the editable spreadsheet: formulas, names, recalculation, edits, comments, charts, conditional formats and validation, xlsx, ods and csv out |
 | [`crates/rely-office-cli`](crates/rely-office-cli) | the `rely-office` command |
 | [`crates/rely-office-wasm`](crates/rely-office-wasm), [`-render-wasm`](crates/rely-office-render-wasm), [`-sheet-wasm`](crates/rely-office-sheet-wasm) | the WebAssembly fronts |
 | [`crates/rely-office-corpus`](crates/rely-office-corpus) | the page comparison with LibreOffice |

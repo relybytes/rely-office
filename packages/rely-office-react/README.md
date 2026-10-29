@@ -1,18 +1,18 @@
 # @relybytes/rely-office-react
 
-Office documents in the browser, for the frontend: a docx, doc or odt, a pptx, ppt or odp and an
-xlsx, xls, ods or csv read and written by [rely-office](https://github.com/relybytes/rely-office)
+Office documents in the browser, for the frontend: a docx, doc, odt, Markdown or HTML file, a
+pptx, ppt or odp and an xlsx, xls, ods or csv read and written by [rely-office](https://github.com/relybytes/rely-office)
 compiled to WebAssembly, and three React editors over them.
 
 | Component | Edits | Saves |
 | --- | --- | --- |
-| `DocumentEditor` | the document tree in a rich-text editor (TipTap): headings, Word's named styles, fonts, sizes, line spacing, every mark of the tree, nested lists, tables with merged cells and resizable columns, images resized in the line, comments, tracked changes recorded while typing, footnote references, equations, page breaks, a page view with headers and footers, find and replace | docx |
-| `SheetGrid` | a `SheetDocument`: cells, formulas with function suggestions, styles, borders, number formats, merges, conditional formats and data validation with their editors, rows and columns resized by drag, the fill handle, frozen panes, sort and filter, the file's charts and pictures, sheets, the clipboard | xlsx or ods |
-| `SlideEditor` | the slide model: shapes moved along guides, resized, rotated, selected several at a time, copied and written into, preset shapes, text styled, pictures, tables edited cell by cell, backgrounds, slides added, duplicated, reordered and hidden, speaker notes, transitions and animations, the slide show | pptx |
+| `DocumentEditor` | the document tree in a rich-text editor (TipTap): headings, Word's named styles, fonts, sizes, line spacing, every mark of the tree, nested lists, tables with merged cells and resizable columns, images resized, floating images with their wrapping and side, comments, tracked changes recorded while typing, footnote references, equations, page breaks, a page view with headers and footers, find and replace | docx, odt, Markdown or HTML |
+| `SheetGrid` | a `SheetDocument`: cells, formulas with function suggestions, styles, borders, number formats, merges, conditional formats and data validation with their editors, comments, defined names, charts made from a selection, changed, dragged and resized, rows and columns resized by drag, the fill handle, frozen panes, sort and filter, the file's pictures, sheets, the clipboard | xlsx, ods or csv |
+| `SlideEditor` | the slide model: shapes moved along guides, resized, rotated, selected several at a time, copied and written into, preset shapes, text styled, pictures, tables edited cell by cell, backgrounds, slides added, duplicated, reordered and hidden, speaker notes, transitions and animations, the slide show | pptx or odp |
 
 The backend has its own package, [`@relybytes/rely-office`](../rely-office-node/README.md), with
 the same model plus rendering to PDF and PNG, which this package leaves out: the typesetter is
-29 MB of WebAssembly and belongs on a server.
+31 MB of WebAssembly and belongs on a server.
 
 ## Install
 
@@ -43,7 +43,7 @@ await initSheets('/static/rely_office_sheet_wasm_bg.wasm');
 import { DocumentEditor, ITALIAN_DOCUMENT_EDITOR_LABELS, openDocument, type DocumentEditorHandle } from '@relybytes/rely-office-react';
 import '@relybytes/rely-office-react/styles.css';
 
-const { document, report } = openDocument(bytes); // docx, doc or odt
+const { document, report } = openDocument(bytes, { fileName: 'verbale.docx' }); // docx, doc, odt, md or html
 const editor = useRef<DocumentEditorHandle>(null);
 
 <DocumentEditor
@@ -55,6 +55,7 @@ const editor = useRef<DocumentEditorHandle>(null);
 />;
 
 const docx = editor.current!.saveDocx(); // Uint8Array
+const odt = saveDocumentAs(editor.current!.getDocument(), 'odt'); // or 'docx', 'markdown', 'html'
 ```
 
 Beside the text, a panel edits what a document holds around it: the comments with their replies
@@ -76,7 +77,9 @@ toolbar), what is typed is marked inserted, what is deleted stays, marked delete
 formatting keeps the formatting it replaced, all by `author`, until it is accepted or rejected,
 one change or all of them; rejecting a formatting change puts the old formatting back.
 An image is resized by dragging its corner, its proportions kept, and a table column by dragging
-its edge; both sizes are saved.
+its edge; both sizes are saved. A floating image stands beside the text on its side; chosen, the
+toolbar sets how the text goes around it (in line, square, top and bottom, behind or in front of
+the text) and its side, and it is saved where it was placed.
 
 What the editor does not show rides along and is written back untouched: the page, the sections
 and the embedded objects. `report` counts what the mapping had to leave out: marks a code run
@@ -102,7 +105,7 @@ const sheet = await openSheet(bytes, 'conti.xlsx', { locale: 'it' });
 
 <SheetGrid sheet={sheet} labels={ITALIAN_SHEET_GRID_LABELS} onChange={() => setDirty(true)} />;
 
-const xlsx = sheet.save(); // or sheet.saveOds()
+const xlsx = sheet.save(); // or sheet.saveOds(), sheet.saveCsv(0)
 ```
 
 The grid changes the workbook in place and draws only the cells in view, so a large sheet scrolls
@@ -120,7 +123,13 @@ buttons on the table (each opens the list of its values to show), freezes the ro
 above and left of the active cell, sets borders, and opens the panels that add and remove the
 conditional formats and the validations of the selection. While a formula is typed the functions
 it could be calling are offered in the locale's names; Tab or Enter takes one. The pictures and
-charts of the file are drawn over the cells.
+charts of the file are drawn over the cells, each chart from the cells as they are now.
+
+The comments panel writes the comment of the active cell (by `author`), and a commented cell
+shows a mark and its comment on hover; the names panel defines the names formulas read. The
+charts panel inserts a chart of the selection in the type chosen, and changes the chosen one: its
+type, title, legend, stacking and data. A chart is chosen by a click, moved by dragging it,
+resized by its corner and removed with Delete.
 
 ## A presentation
 
@@ -132,7 +141,7 @@ const slides = useRef<SlideEditorHandle>(null);
 
 <SlideEditor ref={slides} presentation={presentation} labels={ITALIAN_SLIDE_EDITOR_LABELS} />;
 
-const pptx = slides.current!.savePptx();
+const pptx = slides.current!.savePptx(); // or saveOdp()
 ```
 
 A shape is moved by dragging it or with the arrows (Shift for larger steps), resized from its
@@ -169,8 +178,9 @@ pass any of them to translate the rest.
 
 `@relybytes/rely-office-react/runtime` exports the WebAssembly calls without the components, for
 a page that only reads or converts: `detectFormat`, `extractText`, `readSheets`,
-`readDocumentTree`, `writeDocx`, `convertToDocx`, `readPresentation`, `writePptx`,
-`convertToPptx`, `createSheet` and `openSheet`, each as the backend package has it.
+`readDocumentTree`, `writeDocx`, `writeOdt`, `writeMarkdown`, `writeHtml`, `convertToDocx`,
+`readPresentation`, `writePptx`, `writeOdp`, `convertToPptx`, `createSheet` and `openSheet`, each
+as the backend package has it.
 
 ## Develop
 

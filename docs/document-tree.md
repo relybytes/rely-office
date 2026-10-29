@@ -1,8 +1,8 @@
 # The document tree
 
 `read_document_tree` (Rust) and `readDocumentTree` (Node) read a `.docx`, a `.doc` (Word 97-2003,
-and Word 6 and 95) or an `.odt`
-as a neutral tree for import into a rich-text editor. It is not HTML and not any editor's schema:
+and Word 6 and 95) or an `.odt`, and given the file's name a Markdown or an HTML file
+([editing.md](editing.md#markdown-and-html)), as a neutral tree for import into a rich-text editor. It is not HTML and not any editor's schema:
 the caller maps each block and mark onto its own. The JSON names below are those of the `serde`
 feature and of the npm package; the Rust names are the same in snake case. The sections below
 describe the docx; [the odt](#the-odt) and [the doc](#the-doc) give the same tree from their own
@@ -68,13 +68,29 @@ gives one.
 
 In Rust, paragraphs, headings, list items, tables and text runs also carry a `look`: spacing,
 line spacing, indents, page breaks, fonts, sizes and colours, column widths, cell margins and
-borders, and the tree has a `layout` with the page size, margins and body font. A floating image
-carries its `anchor` (what its position is measured from, its offset or alignment, its size and
-how the text goes around it, a tight wrap with its outline), and the blocks of a floating text box
-a `frame` with the same anchor, the box's fill and outline and the preset shape it is drawn as.
-The renderer lays
-the document out from them; they are not serialized, since an editor has its own styles. The tree
-also deserializes from the same JSON, which is how `writeDocx` reads it.
+borders, and the tree has a `layout` with the page size, margins and body font, and the blocks of
+a floating text box a `frame` with its anchor, the box's fill and outline and the preset shape it
+is drawn as. The renderer lays the document out from them; they are not serialized, since an
+editor has its own styles. The tree also deserializes from the same JSON, which is how
+`writeDocx` reads it.
+
+A floating image does cross the JSON: its `anchor` says where it stands and how the text goes
+around it, so an editor keeps it floating and a save writes it back where it was:
+
+```json
+{ "type": "image", "media": 0, "width": 100, "height": 50, "anchor": {
+    "horizontal": { "base": "column", "offsetEmu": 0, "align": "end" },
+    "vertical": { "base": "paragraph", "offsetEmu": 12700 },
+    "widthEmu": 952500, "heightEmu": 476250,
+    "wrap": { "type": "around" },
+    "distanceEmu": [0, 0, 114300, 114300] } }
+```
+
+`base` is `page`, `margin`, `column`, `paragraph` or `line`; `align`, when given, is `start`,
+`center` or `end` and wins over the offset; `wrap` is `around`, `topAndBottom`, `inFront`,
+`behind`, or `contour` with its `outline` (sixteen bands from the top, each side in 255ths of the
+width); `distanceEmu` is the space kept from the text at the top, bottom, left and right. An image
+without `anchor` stands in the line.
 
 Lists are flat: an editor that nests lists builds the nesting from `level`, grouping consecutive
 items with the same `listId`. A heading wins over list numbering, a list over a quote style.
@@ -98,7 +114,7 @@ The style chain (`w:basedOn`) is followed for up to 16 steps.
 | --- | --- |
 | `text` | `text`, `marks` (left out when empty) |
 | `hardBreak` | a line break inside the block (`w:br` without a type, `w:cr`) |
-| `image` | `media` (index into `media`), `alt`, `width`, `height` in CSS pixels (each left out when unknown) |
+| `image` | `media` (index into `media`), `alt`, `width`, `height` in CSS pixels (each left out when unknown), and `anchor` for a floating image |
 | `noteReference` | `note`, the index of the note in `notes`; the number it shows is its position among the notes of its kind |
 | `math` | `latex`, `display`: an equation as LaTeX, in the line or, with `display`, on a line of its own |
 | `commentAnchor` | `comment`, the index of a comment on a point rather than on text |
