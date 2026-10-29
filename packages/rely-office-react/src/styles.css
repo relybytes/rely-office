@@ -153,6 +153,61 @@
   margin: 0 0 0.6em;
 }
 
+/* Set rather than inherited from the browser: a host's CSS reset (Tailwind's preflight among
+   them) takes away the size of headings and the markers of lists. */
+:is(.rely-document-content, .rely-blocks-content) :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0.8em 0 0.4em;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+:is(.rely-document-content, .rely-blocks-content) h1 {
+  font-size: 2em;
+}
+
+:is(.rely-document-content, .rely-blocks-content) h2 {
+  font-size: 1.5em;
+}
+
+:is(.rely-document-content, .rely-blocks-content) h3 {
+  font-size: 1.25em;
+}
+
+:is(.rely-document-content, .rely-blocks-content) h4 {
+  font-size: 1.1em;
+}
+
+:is(.rely-document-content, .rely-blocks-content) :is(h5, h6) {
+  font-size: 1em;
+}
+
+:is(.rely-document-content, .rely-blocks-content) :is(ul, ol) {
+  margin: 0 0 0.6em;
+  padding-left: 1.6em;
+}
+
+:is(.rely-document-content, .rely-blocks-content) ul {
+  list-style: disc;
+}
+
+:is(.rely-document-content, .rely-blocks-content) ol {
+  list-style: decimal;
+}
+
+:is(.rely-document-content, .rely-blocks-content) :is(ul, ol) :is(ul, ol) {
+  margin-bottom: 0;
+}
+
+:is(.rely-document-content, .rely-blocks-content) li > p {
+  margin-bottom: 0.2em;
+}
+
+:is(.rely-document-content, .rely-blocks-content) hr {
+  margin: 1em 0;
+  border: 0;
+  border-top: 1px solid var(--rely-border);
+}
+
 .rely-document-content img {
   max-width: 100%;
   height: auto;

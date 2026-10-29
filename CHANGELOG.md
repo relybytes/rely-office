@@ -3,6 +3,15 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## 0.7.1
+
+### Fixed
+
+- `styles.css` sets the size and weight of headings, the markers and indent of lists and the
+  rule of a horizontal line in the document editor and in the panel's small editors. A host with
+  a CSS reset, Tailwind's preflight among them, showed headings at the size of the text and lists
+  without bullets.
+
 ## 0.7.0
 
 ### Added

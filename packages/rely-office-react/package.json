@@ -1,6 +1,6 @@
 {
   "name": "@relybytes/rely-office-react",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Office documents in the browser, for the frontend: docx, doc, odt, pptx, ppt, odp, xlsx, xls and ods read and written through WebAssembly, and React editor components for documents, spreadsheets and slides.",
   "license": "MPL-2.0",
   "author": "RelyBytes Consulting (https://relybytes.com)",

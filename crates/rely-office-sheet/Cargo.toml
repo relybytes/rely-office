@@ -18,7 +18,7 @@ workspace = true
 [dependencies]
 calamine = "0.37"
 quick-xml = "0.42"
-rely-office-core = { path = "../rely-office-core", version = "0.7.0" }
+rely-office-core = { path = "../rely-office-core", version = "0.7.1" }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 thiserror = "2.0.21"
 zip = { version = "9", default-features = false, features = ["deflate"] }
