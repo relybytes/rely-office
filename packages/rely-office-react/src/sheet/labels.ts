@@ -120,6 +120,19 @@ export interface SheetGridLabels {
   errorMessage: string;
   promptMessage: string;
   saveValidation: string;
+  comments: string;
+  commentOn: string;
+  commentPlaceholder: string;
+  saveComment: string;
+  noComments: string;
+  definedNames: string;
+  noNames: string;
+  name: string;
+  nameRefersTo: string;
+  nameScope: string;
+  wholeWorkbook: string;
+  addName: string;
+  invalidName: string;
   functions: string;
   resizeColumn: string;
   resizeRow: string;
@@ -240,6 +253,19 @@ export const ENGLISH_SHEET_GRID_LABELS: SheetGridLabels = {
   errorMessage: 'Error message',
   promptMessage: 'Input message',
   saveValidation: 'Apply to the selection',
+  comments: 'Comments',
+  commentOn: 'Comment on',
+  commentPlaceholder: 'Write a comment',
+  saveComment: 'Save comment',
+  noComments: 'No comments on this sheet',
+  definedNames: 'Names',
+  noNames: 'The workbook defines no names',
+  name: 'Name',
+  nameRefersTo: 'Refers to',
+  nameScope: 'Scope',
+  wholeWorkbook: 'Workbook',
+  addName: 'Define name',
+  invalidName: 'A name starts with a letter and holds letters, digits, dots and underscores; it cannot look like a cell',
   functions: 'Functions',
   resizeColumn: 'Resize column; double click fits it',
   resizeRow: 'Resize row; double click fits it',
@@ -360,6 +386,19 @@ export const ITALIAN_SHEET_GRID_LABELS: SheetGridLabels = {
   errorMessage: 'Messaggio di errore',
   promptMessage: 'Messaggio di input',
   saveValidation: 'Applica alla selezione',
+  comments: 'Commenti',
+  commentOn: 'Commento su',
+  commentPlaceholder: 'Scrivi un commento',
+  saveComment: 'Salva commento',
+  noComments: 'Nessun commento in questo foglio',
+  definedNames: 'Nomi',
+  noNames: 'La cartella non definisce nomi',
+  name: 'Nome',
+  nameRefersTo: 'Riferito a',
+  nameScope: 'Ambito',
+  wholeWorkbook: 'Cartella di lavoro',
+  addName: 'Definisci nome',
+  invalidName: 'Un nome inizia con una lettera e contiene lettere, cifre, punti e trattini bassi; non può sembrare una cella',
   functions: 'Funzioni',
   resizeColumn: 'Ridimensiona colonna; doppio clic per adattarla',
   resizeRow: 'Ridimensiona riga; doppio clic per adattarla',

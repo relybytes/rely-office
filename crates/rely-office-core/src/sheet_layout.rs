@@ -141,6 +141,8 @@ pub struct SheetLayout {
     /// The array formulas of the sheet: the cell of each and the range its array fills, where
     /// the file caches the values of every cell but the formula's own.
     pub array_formulas: Vec<((u32, u32), CellRange)>,
+    /// The comments on the sheet's cells, in the order the file gives them.
+    pub comments: Vec<crate::sheet_names::CellComment>,
 }
 
 /// The filter buttons of a sheet: the range they head and the values each filtered column
@@ -277,6 +279,9 @@ fn read_layouts(
             &cells,
         )
         .unwrap_or_default();
+        layout.comments =
+            crate::sheet_names::xlsx_sheet_comments(&mut package, &relationship.target, limits)
+                .unwrap_or_default();
         layout.font_family.clone_from(&font_family);
         layout.font_size_tenths = font_size_tenths;
         layout.styles.clone_from(&styles);

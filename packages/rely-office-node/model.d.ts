@@ -70,6 +70,7 @@ export type ErrorCode =
   | 'LAST_SHEET'
   | 'OUT_OF_BOUNDS'
   | 'INVALID_STYLE'
+  | 'INVALID_NAME'
   | 'INTERNAL';
 
 export interface ExtractedText {
@@ -641,6 +642,26 @@ export interface CellRange {
   lastColumn: number;
 }
 
+/** A name the workbook defines, `Aliquota` or a `LAMBDA` a formula calls by name. */
+export interface DefinedName {
+  name: string;
+  /** The sheet the name belongs to; absent for the whole workbook. */
+  sheet?: number;
+  /** What the name refers to, with its `=`, as the document's locale writes it. */
+  formula: string;
+  /** Whether the file hid the name from its list. */
+  hidden: boolean;
+}
+
+/** The comment on a cell. */
+export interface CellComment {
+  row: number;
+  column: number;
+  author: string;
+  /** The text, lines separated by `\n`. */
+  text: string;
+}
+
 /** A zero-based, inclusive rectangle of cells. */
 export interface CellWindow {
   top: number;
@@ -853,6 +874,19 @@ export interface SheetDocument {
   /** The looks the cells name by index; the first is the default. */
   styles(): CellStyle[];
   merges(sheet: number): CellRange[];
+  /** The names the workbook defines, the workbook's and each sheet's. */
+  definedNames(): DefinedName[];
+  /**
+   * Define a name or change what it refers to: `formula` typed as in a cell, in the document's
+   * locale; `sheet` keeps it to one sheet. Throws `INVALID_NAME` for a name Excel refuses.
+   */
+  setDefinedName(name: string, formula: string, sheet?: number): void;
+  /** Remove a name; false when there is none. Formulas that read it show `#NAME?`. */
+  removeDefinedName(name: string, sheet?: number): boolean;
+  /** The comments of a sheet's cells, row by row. */
+  comments(sheet: number): CellComment[];
+  /** Write the comment on a cell; an empty text removes it. */
+  setComment(sheet: number, row: number, column: number, text: string, author?: string): void;
   /** Merge a window into one cell, keeping the content of its top-left cell. */
   mergeCells(sheet: number, window: CellWindow): void;
   /** Split the merged ranges a window overlaps. */

@@ -8,12 +8,15 @@ import { useMemo, useState, type ReactElement } from 'react';
 import type {
   Border,
   BorderPlacement,
+  CellComment,
   CellWindow,
   ComparisonOperator,
   ConditionalFormat,
   DataValidation,
+  DefinedName,
   FilterChoice,
 } from '../model.js';
+import { cellName } from './geometry.js';
 import type { SheetGridLabels } from './labels.js';
 import {
   EMPTY_RULE,
@@ -329,6 +332,181 @@ export function ValidationPanel({
         ) : null}
         <button type="submit" className="rely-sheet-panel-submit">
           {words.saveValidation}
+        </button>
+      </form>
+    </aside>
+  );
+}
+
+/** The comments of a sheet, and the comment of the selected cell to write or remove. */
+export function CommentPanel({
+  words,
+  selection,
+  comments,
+  onChange,
+  onSelect,
+  onClose,
+}: PanelProps & {
+  comments: CellComment[];
+  onChange: (row: number, column: number, text: string) => void;
+  onSelect: (row: number, column: number) => void;
+}): ReactElement {
+  const target = { row: selection.top, column: selection.left };
+  const current = comments.find((comment) => comment.row === target.row && comment.column === target.column);
+  const [draft, setDraft] = useState(current?.text ?? '');
+  const [shown, setShown] = useState(`${target.row}:${target.column}:${current?.text ?? ''}`);
+  // A new cell selected, or its comment changed elsewhere, starts the draft again.
+  const key = `${target.row}:${target.column}:${current?.text ?? ''}`;
+  if (key !== shown) {
+    setShown(key);
+    setDraft(current?.text ?? '');
+  }
+  return (
+    <aside className="rely-sheet-panel" aria-label={words.comments}>
+      <header>
+        <h2>{words.comments}</h2>
+        <button type="button" className="rely-tool" aria-label={words.close} title={words.close} onClick={onClose}>
+          {'×'}
+        </button>
+      </header>
+      {comments.length === 0 ? <p className="rely-sheet-panel-empty">{words.noComments}</p> : null}
+      <ol className="rely-sheet-rules">
+        {comments.map((comment) => (
+          <li
+            key={`${comment.row}:${comment.column}`}
+            className={comment === current ? 'rely-sheet-rule-here' : undefined}
+          >
+            <button type="button" className="rely-sheet-rule-range" onClick={() => onSelect(comment.row, comment.column)}>
+              {cellName(comment)}
+            </button>
+            <span className="rely-sheet-rule-text">
+              {comment.author ? <strong>{comment.author}: </strong> : null}
+              {comment.text}
+            </span>
+            <button type="button" onClick={() => onChange(comment.row, comment.column, '')}>
+              {words.remove}
+            </button>
+          </li>
+        ))}
+      </ol>
+      <form
+        className="rely-sheet-panel-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onChange(target.row, target.column, draft);
+        }}
+      >
+        <p className="rely-sheet-panel-target">
+          {words.commentOn} <strong>{cellName(target)}</strong>
+        </p>
+        <label>
+          <span>{words.comments}</span>
+          <textarea
+            value={draft}
+            rows={4}
+            placeholder={words.commentPlaceholder}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+        </label>
+        <button type="submit" className="rely-sheet-panel-submit">
+          {words.saveComment}
+        </button>
+      </form>
+    </aside>
+  );
+}
+
+/** The names a workbook defines, and a form to define one or change what it refers to. */
+export function NamesPanel({
+  words,
+  sheets,
+  names,
+  error,
+  onDefine,
+  onRemove,
+  onClose,
+}: {
+  words: SheetGridLabels;
+  /** The names of the sheets, for a name's scope. */
+  sheets: string[];
+  names: DefinedName[];
+  /** Why the last definition was refused, if it was. */
+  error: string | null;
+  onDefine: (name: string, formula: string, sheet: number | undefined) => void;
+  onRemove: (name: string, sheet: number | undefined) => void;
+  onClose: () => void;
+}): ReactElement {
+  const [draft, setDraft] = useState({ name: '', formula: '', scope: '' });
+  return (
+    <aside className="rely-sheet-panel" aria-label={words.definedNames}>
+      <header>
+        <h2>{words.definedNames}</h2>
+        <button type="button" className="rely-tool" aria-label={words.close} title={words.close} onClick={onClose}>
+          {'×'}
+        </button>
+      </header>
+      {names.length === 0 ? <p className="rely-sheet-panel-empty">{words.noNames}</p> : null}
+      <ol className="rely-sheet-rules">
+        {names
+          .filter((name) => !name.hidden)
+          .map((name) => (
+            <li key={`${name.sheet ?? ''}:${name.name}`}>
+              <button
+                type="button"
+                className="rely-sheet-rule-range"
+                onClick={() =>
+                  setDraft({ name: name.name, formula: name.formula, scope: name.sheet === undefined ? '' : String(name.sheet) })
+                }
+              >
+                {name.name}
+              </button>
+              <span className="rely-sheet-rule-text">
+                {name.formula}
+                {name.sheet === undefined ? '' : ` (${sheets[name.sheet] ?? ''})`}
+              </span>
+              <button type="button" onClick={() => onRemove(name.name, name.sheet)}>
+                {words.remove}
+              </button>
+            </li>
+          ))}
+      </ol>
+      <form
+        className="rely-sheet-panel-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onDefine(draft.name.trim(), draft.formula, draft.scope === '' ? undefined : Number(draft.scope));
+        }}
+      >
+        <label>
+          <span>{words.name}</span>
+          <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+        </label>
+        <label>
+          <span>{words.nameRefersTo}</span>
+          <input
+            value={draft.formula}
+            placeholder="=Foglio1!$A$1:$A$10"
+            onChange={(event) => setDraft({ ...draft, formula: event.target.value })}
+          />
+        </label>
+        <label>
+          <span>{words.nameScope}</span>
+          <select value={draft.scope} onChange={(event) => setDraft({ ...draft, scope: event.target.value })}>
+            <option value="">{words.wholeWorkbook}</option>
+            {sheets.map((sheet, index) => (
+              <option key={sheet} value={String(index)}>
+                {sheet}
+              </option>
+            ))}
+          </select>
+        </label>
+        {error ? (
+          <p className="rely-sheet-panel-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <button type="submit" className="rely-sheet-panel-submit">
+          {words.addName}
         </button>
       </form>
     </aside>

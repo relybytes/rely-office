@@ -55,6 +55,8 @@ import type {
   StylePatch,
   BorderPlacement,
   CellRange,
+  CellComment,
+  DefinedName,
   CellWindow,
   SheetSummary,
   ComparisonOperator,

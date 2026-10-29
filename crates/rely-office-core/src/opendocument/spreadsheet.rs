@@ -32,6 +32,7 @@ const CONFIG: Namespace = Namespace::OdfConfig;
 const MAX_FILTER_COLUMNS: usize = 1_024;
 const MAX_FILTER_VALUES: usize = 10_000;
 const MAX_ARRAY_FORMULAS: usize = 100_000;
+const MAX_COMMENTS: usize = 100_000;
 const TABLE: Namespace = Namespace::OdfTable;
 const DRAW: Namespace = Namespace::OdfDraw;
 const SVG: Namespace = Namespace::OdfSvg;
@@ -533,6 +534,12 @@ impl LayoutReader<'_, '_, '_> {
                 continue;
             }
             let repeated = repeat(cell, "number-columns-repeated").min(MAX_COLUMNS - column);
+            if !covered
+                && build.layout.comments.len() < MAX_COMMENTS
+                && let Some(comment) = crate::sheet_names::ods_cell_comment(cell, index, column)
+            {
+                build.layout.comments.push(comment);
+            }
             if let Some(name) = cell.attribute(TABLE, "content-validation-name") {
                 let last = column + repeated - 1;
                 if let Some((_, ranges)) = build

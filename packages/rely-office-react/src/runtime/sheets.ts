@@ -11,6 +11,7 @@ import init, { SheetDocument as WasmSheetDocument } from '../../wasm/rely_office
 import type {
   Border,
   BorderPlacement,
+  CellComment,
   CellFormat,
   CellRange,
   CellStyle,
@@ -19,6 +20,7 @@ import type {
   ConditionalFormat,
   ConditionalLook,
   DataValidation,
+  DefinedName,
   DocumentBytes,
   FilterChoice,
   SheetCell,
@@ -130,6 +132,28 @@ class BrowserSheetDocument implements SheetDocument {
 
   merges(sheet: number): CellRange[] {
     return parse(() => this.document.mergesJson(sheet));
+  }
+
+  definedNames(): DefinedName[] {
+    return parse<(DefinedName & { sheet?: number | null })[]>(() => this.document.definedNamesJson()).map(
+      ({ sheet, ...name }) => (sheet === null || sheet === undefined ? name : { ...name, sheet }),
+    );
+  }
+
+  setDefinedName(name: string, formula: string, sheet?: number): void {
+    call(() => this.document.setDefinedName(name, sheet ?? undefined, formula));
+  }
+
+  removeDefinedName(name: string, sheet?: number): boolean {
+    return this.document.removeDefinedName(name, sheet ?? undefined);
+  }
+
+  comments(sheet: number): CellComment[] {
+    return parse(() => this.document.commentsJson(sheet));
+  }
+
+  setComment(sheet: number, row: number, column: number, text: string, author = ''): void {
+    call(() => this.document.setComment(sheet, row, column, author, text));
   }
 
   mergeCells(sheet: number, { top, left, bottom, right }: CellWindow): void {

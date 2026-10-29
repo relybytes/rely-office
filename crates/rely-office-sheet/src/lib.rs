@@ -46,7 +46,10 @@ pub use formula::{
 };
 pub use history::{EditHistory, MAX_UNDO_CELLS, MAX_UNDO_STEPS};
 pub use looks::{CellLook, DataBarLook, IconLook};
-pub use model::{Cell, EditError, MAX_CELLS, MAX_SHEETS, NumberFormat, Sheet, Workbook};
+pub use model::{
+    Cell, Comment, DefinedName, EditError, MAX_CELLS, MAX_COMMENT_CHARS, MAX_SHEETS, NumberFormat,
+    Sheet, Workbook,
+};
 pub use ods::write_ods;
 pub use rely_office_core::{
     Border, BorderStyle, CellBorders, CellFont, CellRange, CellStyle, ComparisonOperator,

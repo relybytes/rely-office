@@ -432,3 +432,41 @@ fn saves_a_sheet_as_csv_with_the_separator_it_was_read_with() {
         "\u{feff}a;b\r\n".as_bytes()
     );
 }
+
+#[test]
+fn lists_names_and_comments_as_json() {
+    let mut document = SheetDocument::create("it").unwrap();
+    document
+        .workbook
+        .set_defined_name("Aliquota", None, "=0,22", Locale::Italian)
+        .unwrap();
+    document
+        .workbook
+        .set_defined_name("Somma", Some(0), "=SOMMA(A1:A2;1)", Locale::Italian)
+        .unwrap();
+    assert_eq!(
+        parse(&document.defined_names_summary().unwrap()),
+        json!([
+            { "name": "Aliquota", "sheet": null, "formula": "=0,22", "hidden": false },
+            { "name": "Somma", "sheet": 0, "formula": "=SOMMA(Foglio1!A1:A2;1)", "hidden": false }
+        ])
+    );
+    document
+        .workbook
+        .set_comment(0, CellRef::new(1, 2), "Anna", "Da rivedere")
+        .unwrap();
+    assert_eq!(
+        parse(&document.comments_summary(0).unwrap()),
+        json!([{ "row": 1, "column": 2, "author": "Anna", "text": "Da rivedere" }])
+    );
+    assert_eq!(
+        document.comments_summary(4).unwrap_err().code,
+        "NO_SUCH_SHEET"
+    );
+    let failure: Failure = document
+        .workbook
+        .set_defined_name("A1", None, "1", Locale::Italian)
+        .unwrap_err()
+        .into();
+    assert_eq!(failure.code, "INVALID_NAME");
+}

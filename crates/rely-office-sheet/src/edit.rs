@@ -13,7 +13,7 @@ use rely_office_core::CellRange;
 
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS};
 use crate::formula::{CellAddress, Expr, RangeAddress};
-use crate::model::{EditError, Sheet};
+use crate::model::{DefinedName, EditError, Sheet};
 use crate::rules::rewrite_rule_formulas;
 use crate::value::{ErrorKind, Input};
 
@@ -217,7 +217,12 @@ fn shifted_expression(expression: &Expr, local: bool, target: &str, shift: Shift
 }
 
 /// Move the cells of a sheet and make every formula of the workbook follow them.
-pub(crate) fn shift(sheets: &mut [Sheet], target: usize, shift: Shift) -> Result<(), EditError> {
+pub(crate) fn shift(
+    sheets: &mut [Sheet],
+    names: &mut [DefinedName],
+    target: usize,
+    shift: Shift,
+) -> Result<(), EditError> {
     if let Shift::InsertRows { count, .. } | Shift::InsertColumns { count, .. } = shift {
         if count == 0 {
             return Ok(());
@@ -237,6 +242,10 @@ pub(crate) fn shift(sheets: &mut [Sheet], target: usize, shift: Shift) -> Result
         .collect();
     sheets[target].cells = moved;
     move_looks(&mut sheets[target], shift);
+    sheets[target].comments = std::mem::take(&mut sheets[target].comments)
+        .into_iter()
+        .filter_map(|(cell, comment)| shift.cell(cell).map(|cell| (cell, comment)))
+        .collect();
 
     let target_name = sheets[target].name.to_lowercase();
     for (index, sheet) in sheets.iter_mut().enumerate() {
@@ -249,6 +258,10 @@ pub(crate) fn shift(sheets: &mut [Sheet], target: usize, shift: Shift) -> Result
             }
         }
         rewrite_rule_formulas(sheet, &mut moved);
+    }
+    for defined in names.iter_mut() {
+        let local = defined.sheet == Some(target);
+        defined.expression = shifted_expression(&defined.expression, local, &target_name, shift);
     }
     Ok(())
 }
@@ -291,15 +304,24 @@ fn shift_range(range: &RangeAddress, shift: Shift) -> Expr {
 }
 
 /// Formulas that name `old` name `new` instead.
-pub(crate) fn rename_references(sheets: &mut [Sheet], old: &str, new: &str) {
+pub(crate) fn rename_references(
+    sheets: &mut [Sheet],
+    names: &mut [DefinedName],
+    old: &str,
+    new: &str,
+) {
     let old = old.to_lowercase();
-    rewrite_named(sheets, &old, &mut |sheet| {
+    rewrite_named(sheets, names, &old, &mut |sheet| {
         sheet.as_ref().map(|_| new.to_owned())
     });
 }
 
 /// References to a removed sheet become `#REF!`.
-pub(crate) fn break_references_to_sheet(sheets: &mut [Sheet], name: &str) {
+pub(crate) fn break_references_to_sheet(
+    sheets: &mut [Sheet],
+    workbook_names: &mut [DefinedName],
+    name: &str,
+) {
     let name = name.to_lowercase();
     let named = |sheet: &Option<String>| {
         sheet
@@ -321,10 +343,14 @@ pub(crate) fn break_references_to_sheet(sheets: &mut [Sheet], name: &str) {
         }
         rewrite_rule_formulas(sheet, &mut broken);
     }
+    for defined in workbook_names.iter_mut() {
+        defined.expression = broken(&defined.expression);
+    }
 }
 
 fn rewrite_named(
     sheets: &mut [Sheet],
+    workbook_names: &mut [DefinedName],
     old: &str,
     rename: &mut dyn FnMut(&Option<String>) -> Option<String>,
 ) {
@@ -364,6 +390,9 @@ fn rewrite_named(
             }
         }
         rewrite_rule_formulas(sheet, &mut renamed);
+    }
+    for defined in workbook_names.iter_mut() {
+        defined.expression = renamed(&defined.expression);
     }
 }
 
@@ -413,6 +442,32 @@ pub(crate) fn offset_relative(expression: &Expr, rows: i64, columns: i64) -> Exp
 
 /// A copy of an expression where `replace` may substitute any node; the others are copied with
 /// their children transformed.
+/// A formula with every reference that names no sheet given `sheet`.
+pub(crate) fn qualify_references(expression: &Expr, sheet: &str) -> Expr {
+    transform(expression, &mut |node| match node {
+        Expr::Cell(address) if address.sheet.is_none() => Some(Expr::Cell(CellAddress {
+            sheet: Some(sheet.to_owned()),
+            ..address.clone()
+        })),
+        Expr::Range(range) if range.sheet.is_none() => {
+            let named = Some(sheet.to_owned());
+            Some(Expr::Range(RangeAddress {
+                start: CellAddress {
+                    sheet: named.clone(),
+                    ..range.start.clone()
+                },
+                end: CellAddress {
+                    sheet: named.clone(),
+                    ..range.end.clone()
+                },
+                sheet: named,
+                whole_columns: range.whole_columns,
+            }))
+        }
+        _ => None,
+    })
+}
+
 fn transform(expression: &Expr, replace: &mut dyn FnMut(&Expr) -> Option<Expr>) -> Expr {
     if let Some(replaced) = replace(expression) {
         return replaced;
@@ -430,6 +485,13 @@ fn transform(expression: &Expr, replace: &mut dyn FnMut(&Expr) -> Option<Expr>) 
         ),
         Expr::Call(name, arguments) => Expr::Call(
             name.clone(),
+            arguments
+                .iter()
+                .map(|argument| transform(argument, replace))
+                .collect(),
+        ),
+        Expr::Invoke(callee, arguments) => Expr::Invoke(
+            Box::new(transform(callee, replace)),
             arguments
                 .iter()
                 .map(|argument| transform(argument, replace))

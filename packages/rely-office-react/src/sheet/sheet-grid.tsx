@@ -51,7 +51,8 @@ import {
   type CellPosition,
 } from './geometry.js';
 import { ENGLISH_SHEET_GRID_LABELS, type SheetGridLabels } from './labels.js';
-import { BorderMenu, ConditionalFormatPanel, FilterMenu, ValidationPanel } from './sheet-panels.js';
+import { BorderMenu, CommentPanel, ConditionalFormatPanel, FilterMenu, NamesPanel, ValidationPanel } from './sheet-panels.js';
+import { RelyOfficeError } from '../runtime/shared.js';
 
 const DEFAULT_ROW_HEIGHT = rowHeightPixels(15);
 const DEFAULT_COLUMN_WIDTH = columnWidthPixels(8.43);
@@ -101,7 +102,7 @@ interface FunctionHints {
   active: number;
 }
 
-type Panel = 'conditional' | 'validation' | null;
+type Panel = 'conditional' | 'validation' | 'comments' | 'names' | null;
 
 interface OpenFilter {
   column: number;
@@ -129,6 +130,8 @@ export interface SheetGridProps {
   editable?: boolean;
   /** The words of the grid, in the host's language; English by default. */
   labels?: Partial<SheetGridLabels>;
+  /** Who writes the comments added in the grid. */
+  author?: string;
   className?: string;
 }
 
@@ -197,7 +200,7 @@ function textWidth(text: string): number {
  * a cell to dragging its fill handle or the edge of a column.
  */
 export const SheetGrid = forwardRef(function SheetGrid(
-  { sheet, onChange, editable = true, labels, className }: SheetGridProps,
+  { sheet, onChange, editable = true, labels, author, className }: SheetGridProps,
   ref: Ref<SheetGridHandle>,
 ): ReactElement {
   const words = useMemo(() => ({ ...ENGLISH_SHEET_GRID_LABELS, ...labels }), [labels]);
@@ -215,6 +218,7 @@ export const SheetGrid = forwardRef(function SheetGrid(
   const [panel, setPanel] = useState<Panel>(null);
   const [bordersOpen, setBordersOpen] = useState(false);
   const [openFilter, setOpenFilter] = useState<OpenFilter | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const cellEditor = useRef<HTMLInputElement>(null);
   const barEditor = useRef<HTMLInputElement>(null);
@@ -237,6 +241,8 @@ export const SheetGrid = forwardRef(function SheetGrid(
       merges: sheet.merges(index),
       looks,
       invalid: new Set(sheet.invalidCells(index).map(([row, column]) => `${row}:${column}`)),
+      comments: sheet.comments(index),
+      commented: new Map(sheet.comments(index).map((comment) => [`${comment.row}:${comment.column}`, comment])),
     };
     // `revision` stands for every edit of the workbook, which changes in place.
   }, [sheet, activeSheet, revision]);
@@ -656,13 +662,22 @@ export const SheetGrid = forwardRef(function SheetGrid(
     const showValue = !look?.bar && !look?.icon ? true : (look.bar?.showValue ?? look.icon?.showValue ?? true);
     const filterButton = filter !== null && row === filter.top && column >= filter.left && column <= filter.right;
     const filtered = filterButton && filter.columns.some((entry) => entry.column === column - filter.left);
+    const comment = workbook.commented.get(key);
     return (
       <div
         key={key}
         role="gridcell"
         aria-label={cellName({ row, column })}
         aria-selected={contains(selected, { row, column })}
-        className={['rely-sheet-cell', workbook.invalid.has(key) ? 'rely-sheet-invalid' : ''].filter(Boolean).join(' ')}
+        aria-description={comment ? comment.text : undefined}
+        title={comment ? (comment.author ? `${comment.author}: ${comment.text}` : comment.text) : undefined}
+        className={[
+          'rely-sheet-cell',
+          workbook.invalid.has(key) ? 'rely-sheet-invalid' : '',
+          comment ? 'rely-sheet-commented' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
         style={{ ...area, ...cellCss(cell, style, look) }}
         onMouseDown={(event) => {
           if (event.button !== 0) return;
@@ -1089,6 +1104,29 @@ export const SheetGrid = forwardRef(function SheetGrid(
             >
               {'✓'}
             </button>
+            <button
+              type="button"
+              className="rely-tool"
+              aria-label={words.comments}
+              title={words.comments}
+              aria-pressed={panel === 'comments'}
+              onClick={() => setPanel((current) => (current === 'comments' ? null : 'comments'))}
+            >
+              {'✎'}
+            </button>
+            <button
+              type="button"
+              className="rely-tool"
+              aria-label={words.definedNames}
+              title={words.definedNames}
+              aria-pressed={panel === 'names'}
+              onClick={() => {
+                setNameError(null);
+                setPanel((current) => (current === 'names' ? null : 'names'));
+              }}
+            >
+              {'N'}
+            </button>
           </div>
           <div className="rely-tool-group">
             <button type="button" className="rely-tool" aria-label={words.merge} title={words.merge} onClick={() => mutate(() => sheet.mergeCells(workbook.index, selected))}>
@@ -1295,6 +1333,38 @@ export const SheetGrid = forwardRef(function SheetGrid(
             selection={selected}
             validations={sheet.validations(workbook.index)}
             onChange={(validations) => mutate(() => sheet.setValidations(workbook.index, validations))}
+            onClose={() => setPanel(null)}
+          />
+        ) : null}
+        {panel === 'comments' ? (
+          <CommentPanel
+            words={words}
+            selection={selected}
+            comments={workbook.comments}
+            onChange={(row, column, text) => mutate(() => sheet.setComment(workbook.index, row, column, text, author ?? ''))}
+            onSelect={(row, column) => moveTo({ row, column }, false)}
+            onClose={() => setPanel(null)}
+          />
+        ) : null}
+        {panel === 'names' ? (
+          <NamesPanel
+            words={words}
+            sheets={workbook.sheets.map((summary) => summary.name)}
+            names={sheet.definedNames()}
+            error={nameError}
+            onDefine={(name, formula, scope) => {
+              try {
+                sheet.setDefinedName(name, formula, scope);
+                setNameError(null);
+              } catch (error) {
+                if (error instanceof RelyOfficeError && error.code === 'INVALID_NAME') setNameError(words.invalidName);
+                else setNameError(error instanceof Error ? error.message : String(error));
+                return;
+              }
+              refresh();
+              onChange?.();
+            }}
+            onRemove={(name, scope) => mutate(() => sheet.removeDefinedName(name, scope))}
             onClose={() => setPanel(null)}
           />
         ) : null}

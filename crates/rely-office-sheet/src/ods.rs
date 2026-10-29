@@ -29,7 +29,7 @@ use self::styles::OdsStyles;
 use crate::address::{CellRef, column_name};
 use crate::dates::date_from_serial;
 use crate::formula::number_text;
-use crate::model::{NumberFormat, Sheet, Workbook};
+use crate::model::{Comment, NumberFormat, Sheet, Workbook};
 use crate::value::{ErrorKind, Input, Locale, Value};
 
 const MIMETYPE: &str = "application/vnd.oasis.opendocument.spreadsheet";
@@ -51,6 +51,7 @@ const NAMESPACES: &str = concat!(
     r#"xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" "#,
     r#"xmlns:calcext="urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0" "#,
     r#"xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0" "#,
+    r#"xmlns:dc="http://purl.org/dc/elements/1.1/" "#,
     r#"office:version="1.3""#
 );
 
@@ -97,6 +98,44 @@ pub fn write_ods(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
 /// A sheet name as an `OpenDocument` address names it, quoted.
 fn quoted_sheet(name: &str) -> String {
     format!("'{}'", name.replace('\'', "''"))
+}
+
+/// The names the workbook defines for `sheet`, or for the whole workbook with `None`, each a
+/// named expression in `OpenFormula`, its relative references read from the first cell.
+fn named_expressions_xml(workbook: &Workbook, sheet: Option<usize>) -> String {
+    let mut xml = String::new();
+    let home = &workbook.sheets[sheet.unwrap_or(0)].name;
+    for defined in workbook
+        .names
+        .iter()
+        .filter(|defined| defined.sheet == sheet)
+    {
+        let _ = write!(
+            xml,
+            r#"<table:named-expression table:name="{}" table:base-cell-address="{}.$A$1" table:expression="of:={}"/>"#,
+            escape(&defined.name),
+            escape(&format!("${}", quoted_sheet(home))),
+            escape(&odf_formula(&defined.expression))
+        );
+    }
+    if xml.is_empty() {
+        xml
+    } else {
+        format!("<table:named-expressions>{xml}</table:named-expressions>")
+    }
+}
+
+/// The annotation `LibreOffice` shows for a cell's comment.
+fn annotation_xml(comment: &Comment) -> String {
+    let mut xml = String::from("<office:annotation>");
+    if !comment.author.is_empty() {
+        let _ = write!(xml, "<dc:creator>{}</dc:creator>", escape(&comment.author));
+    }
+    for line in comment.text.split('\n') {
+        let _ = write!(xml, "<text:p>{}</text:p>", paragraph_text(line));
+    }
+    xml.push_str("</office:annotation>");
+    xml
 }
 
 /// The filter of each sheet, as `LibreOffice` keeps it: a database range with filter buttons,
@@ -287,13 +326,14 @@ fn content_part(workbook: &Workbook, conditional: &ConditionalStyles) -> String 
         concat!(
             r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content {}>"#,
             "<office:automatic-styles>{}</office:automatic-styles>",
-            "<office:body><office:spreadsheet>{}{}{}</office:spreadsheet></office:body>",
+            "<office:body><office:spreadsheet>{}{}{}{}</office:spreadsheet></office:body>",
             "</office:document-content>"
         ),
         NAMESPACES,
         automatic,
         content_validations_xml(workbook),
         tables,
+        named_expressions_xml(workbook, None),
         database_ranges_xml(workbook)
     )
 }
@@ -337,6 +377,10 @@ fn table_xml(
 ) -> String {
     let (mut rows, mut columns) = sheet.extent();
     for cell in sheet.styles.keys() {
+        rows = rows.max(cell.row + 1);
+        columns = columns.max(cell.column + 1);
+    }
+    for cell in sheet.comments.keys() {
         rows = rows.max(cell.row + 1);
         columns = columns.max(cell.column + 1);
     }
@@ -468,10 +512,15 @@ fn table_xml(
         );
     }
     xml.push_str(&conditional_formats_xml(&sheet.name, sheet, conditional));
+    xml.push_str(&named_expressions_xml(workbook, Some(index)));
     xml.push_str("</table:table>");
     xml
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one cell's attributes, value and annotation in order"
+)]
 fn cell_xml(
     workbook: &Workbook,
     index: usize,
@@ -506,8 +555,18 @@ fn cell_xml(
     }
     // A cell an array spills into has no content of its own but shows the array's value.
     let spilled = content.is_none() && workbook.spill_anchor(index, cell).is_some();
+    let annotation = sheet
+        .comments
+        .get(&cell)
+        .filter(|_| element == "table:table-cell")
+        .map(annotation_xml)
+        .unwrap_or_default();
     if content.is_none() && !spilled {
-        xml.push_str("/>");
+        if annotation.is_empty() {
+            xml.push_str("/>");
+        } else {
+            let _ = write!(xml, ">{annotation}</{element}>");
+        }
         return xml;
     }
     let value = workbook.value(index, cell);
@@ -562,6 +621,7 @@ fn cell_xml(
         Value::Empty => {}
     }
     xml.push('>');
+    xml.push_str(&annotation);
     let text = match &value {
         Value::Error(ErrorKind::Circular) => "Err:522".to_owned(),
         Value::Empty => String::new(),

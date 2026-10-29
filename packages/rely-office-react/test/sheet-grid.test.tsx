@@ -385,6 +385,56 @@ describe('SheetGrid', () => {
     expect(sheet.validation(0, 0, 4).items).toEqual(['Sì', 'No']);
   });
 
+  test('the comments panel writes a comment, marks its cell, and removes it', () => {
+    const { cell } = mount({ author: 'Anna' });
+    fireEvent.mouseDown(cell('B1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Comments' }));
+    const panel = screen.getByRole('complementary', { name: 'Comments' });
+    expect(within(panel).getByText('No comments on this sheet')).toBeTruthy();
+
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Comments' }), { target: { value: 'Da rivedere' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Save comment' }));
+
+    expect(sheet.comments(0)).toEqual([{ row: 0, column: 1, author: 'Anna', text: 'Da rivedere' }]);
+    expect(cell('B1').className).toContain('rely-sheet-commented');
+    expect(cell('B1').getAttribute('title')).toBe('Anna: Da rivedere');
+
+    fireEvent.mouseDown(cell('A1'));
+    expect((within(panel).getByRole('textbox', { name: 'Comments' }) as HTMLTextAreaElement).value).toBe('');
+    fireEvent.click(within(panel).getByRole('button', { name: 'B1' }));
+    expect((within(panel).getByRole('textbox', { name: 'Comments' }) as HTMLTextAreaElement).value).toBe('Da rivedere');
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Remove' }));
+    expect(sheet.comments(0)).toEqual([]);
+    expect(cell('B1').className).not.toContain('rely-sheet-commented');
+  });
+
+  test('the names panel defines a name formulas read, and shows a refused one', () => {
+    const { cell } = mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Names' }));
+    const panel = screen.getByRole('complementary', { name: 'Names' });
+    expect(within(panel).getByText('The workbook defines no names')).toBeTruthy();
+
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Name' }), { target: { value: 'A1' } });
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Refers to' }), { target: { value: '=1' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Define name' }));
+    expect(within(panel).getByRole('alert').textContent).toContain('starts with a letter');
+
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Name' }), { target: { value: 'Valori' } });
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Refers to' }), { target: { value: '=A1:A2' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Define name' }));
+    expect(sheet.definedNames()).toEqual([{ name: 'Valori', formula: '=Foglio1!A1:A2', hidden: false }]);
+    expect(within(panel).queryByRole('alert')).toBeNull();
+
+    sheet.setInput(0, 4, 0, '=SOMMA(Valori)');
+    act(() => screen.getByRole('button', { name: 'Names' }).focus());
+    expect(sheet.cells(0, { top: 4, left: 0, bottom: 4, right: 0 })[0].display).toBe('30');
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Remove' }));
+    expect(sheet.definedNames()).toEqual([]);
+    expect(cell('A1').textContent).toBe('10');
+  });
+
   test('the borders menu puts a border on the selection', () => {
     const { cell } = mount();
     fireEvent.mouseDown(cell('B1'));

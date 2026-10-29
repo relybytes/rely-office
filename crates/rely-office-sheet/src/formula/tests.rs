@@ -87,9 +87,26 @@ fn reads_references() {
         (CellRef::new(0, 1), CellRef::new(MAX_ROWS - 1, 3))
     );
     assert_eq!(
-        parse_formula("NOMESCONOSCIUTO").unwrap(),
-        Expr::Error(ErrorKind::Name)
+        parse_formula("NomeSconosciuto").unwrap(),
+        Expr::Name("NomeSconosciuto".to_owned())
     );
+    assert_eq!(
+        parse_formula("_xlpm.total").unwrap(),
+        Expr::Name("total".to_owned())
+    );
+    assert_eq!(
+        print_formula(&parse_formula("Doppio(2)+_xlfn.MiaFunzione(1)").unwrap()),
+        "Doppio(2)+MiaFunzione(1)"
+    );
+    assert_eq!(
+        print_formula(&parse_formula("LAMBDA(x,x*2)(3)").unwrap()),
+        "LAMBDA(x,x*2)(3)"
+    );
+    assert_eq!(
+        print_formula(&parse_formula("(LAMBDA(x,x))(1)(2)").unwrap()),
+        "(LAMBDA(x,x))(1)(2)"
+    );
+    assert!(parse_formula("Foglio1!Nome").is_err());
 }
 
 #[test]

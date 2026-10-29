@@ -15,8 +15,8 @@ use rely_office_core::{Limits, OfficeError, SheetDrawing};
 use rely_office_sheet::{
     Border, BorderPlacement, CellLook, CellRef, ConditionalFormat, DataValidation, EditError,
     EditHistory, Input, Locale, MAX_COLUMNS, MAX_ROWS, NumberFormat, SortKey, StylePatch, Value,
-    Workbook, default_separator, function_names, read_spreadsheet, write_csv, write_ods,
-    write_xlsx,
+    Workbook, default_separator, function_names, print_formula_in, read_spreadsheet, write_csv,
+    write_ods, write_xlsx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -56,6 +56,7 @@ impl From<EditError> for Failure {
             EditError::LastSheet => "LAST_SHEET",
             EditError::OutOfBounds => "OUT_OF_BOUNDS",
             EditError::InvalidStyle => "INVALID_STYLE",
+            EditError::InvalidName => "INVALID_NAME",
         };
         Self::new(code, error.to_string())
     }
@@ -100,6 +101,27 @@ struct SheetSummary<'a> {
     auto_filter: Option<FilterSummary<'a>>,
     /// How many pictures and charts [`SheetDocument::pictures_summary`] lists.
     pictures: usize,
+}
+
+/// A name the workbook defines, its formula written as the document's locale writes it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DefinedNameSummary<'a> {
+    name: &'a str,
+    /// The sheet the name belongs to; absent for the whole workbook.
+    sheet: Option<usize>,
+    formula: String,
+    hidden: bool,
+}
+
+/// The comment on a cell.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommentSummary<'a> {
+    row: u32,
+    column: u32,
+    author: &'a str,
+    text: &'a str,
 }
 
 /// The filter buttons of a sheet.
@@ -584,6 +606,51 @@ impl SheetDocument {
             return Err(EditError::NoSuchSheet(sheet).into());
         }
         to_json(&self.workbook.merges(sheet))
+    }
+
+    /// The names the workbook defines: `[{ name, sheet?, formula, hidden }]`, each formula with
+    /// its `=` in the document's locale.
+    ///
+    /// # Errors
+    ///
+    /// `INTERNAL` when the JSON cannot be written.
+    pub fn defined_names_summary(&self) -> Result<String, Failure> {
+        let names: Vec<DefinedNameSummary<'_>> = self
+            .workbook
+            .defined_names()
+            .iter()
+            .map(|defined| DefinedNameSummary {
+                name: &defined.name,
+                sheet: defined.sheet,
+                formula: format!("={}", print_formula_in(&defined.expression, self.locale)),
+                hidden: defined.hidden,
+            })
+            .collect();
+        to_json(&names)
+    }
+
+    /// The comments of a sheet's cells: `[{ row, column, author, text }]`, row by row.
+    ///
+    /// # Errors
+    ///
+    /// `NO_SUCH_SHEET`, `INTERNAL` when the JSON cannot be written.
+    pub fn comments_summary(&self, sheet: usize) -> Result<String, Failure> {
+        let content = self
+            .workbook
+            .sheets()
+            .get(sheet)
+            .ok_or(EditError::NoSuchSheet(sheet))?;
+        let comments: Vec<CommentSummary<'_>> = content
+            .comments()
+            .iter()
+            .map(|(cell, comment)| CommentSummary {
+                row: cell.row,
+                column: cell.column,
+                author: &comment.author,
+                text: &comment.text,
+            })
+            .collect();
+        to_json(&comments)
     }
 
     /// Type several cells at once: `[[row, column, text], ...]`.
@@ -1123,6 +1190,89 @@ impl SheetDocument {
                     sheet,
                     (CellRef::new(top, left), CellRef::new(bottom, right)),
                 )
+                .map_err(|error| throw(&error.into()))
+        })
+    }
+
+    /// The names the workbook defines, as JSON.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = definedNamesJson)]
+    pub fn defined_names_json(&self) -> Result<String, JsError> {
+        self.defined_names_summary()
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// Define a name, or change what it refers to: `formula` as typed in a cell, in the
+    /// document's locale; `sheet` keeps it to one sheet, absent for the whole workbook.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = setDefinedName)]
+    pub fn set_defined_name(
+        &mut self,
+        name: &str,
+        sheet: Option<u32>,
+        formula: &str,
+    ) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .workbook
+                .set_defined_name(
+                    name,
+                    sheet.map(|sheet| sheet as usize),
+                    formula,
+                    document.locale,
+                )
+                .map_err(|error| throw(&error.into()))
+        })
+    }
+
+    /// Remove a name; false when the workbook has none by that name there.
+    #[wasm_bindgen(js_name = removeDefinedName)]
+    pub fn remove_defined_name(&mut self, name: &str, sheet: Option<u32>) -> bool {
+        self.history.record(&self.workbook);
+        let removed = self
+            .workbook
+            .remove_defined_name(name, sheet.map(|sheet| sheet as usize));
+        if !removed {
+            self.history.discard_last();
+        }
+        removed
+    }
+
+    /// The comments of a sheet, as JSON.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = commentsJson)]
+    pub fn comments_json(&self, sheet: usize) -> Result<String, JsError> {
+        self.comments_summary(sheet)
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// Write the comment on a cell; an empty text removes it.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = setComment)]
+    pub fn set_comment(
+        &mut self,
+        sheet: usize,
+        row: u32,
+        column: u32,
+        author: &str,
+        text: &str,
+    ) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .workbook
+                .set_comment(sheet, CellRef::new(row, column), author, text)
                 .map_err(|error| throw(&error.into()))
         })
     }

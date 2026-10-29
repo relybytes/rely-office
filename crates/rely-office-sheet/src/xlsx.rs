@@ -16,9 +16,10 @@ use std::io::{Cursor, Write};
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use rely_office_core::{
     Border, BorderStyle, CarriedPart, CellBorders, CellFont, CellRange, CellStyle, DocumentFormat,
-    HorizontalAlignment, Limits, OfficeError, SheetLayout, VerticalAlignment, delimited_separator,
-    detect_format, excel_formula_from_odf, read_ods_sheet_layouts, read_workbook,
-    read_xlsx_drawing_parts, read_xlsx_layouts, read_xlsx_pivot_parts, read_xlsx_theme_part,
+    HorizontalAlignment, Limits, OfficeError, SheetLayout, VerticalAlignment, WorkbookName,
+    delimited_separator, detect_format, excel_formula_from_odf, read_ods_sheet_layouts,
+    read_workbook, read_workbook_names, read_xlsx_drawing_parts, read_xlsx_layouts,
+    read_xlsx_pivot_parts, read_xlsx_theme_part,
 };
 use zip::write::SimpleFileOptions;
 
@@ -29,7 +30,9 @@ use crate::formula::{
     Expr, PREFIXED_FUNCTIONS, WORKSHEET_PREFIXED_FUNCTIONS, number_text, parse_formula,
     print_formula,
 };
-use crate::model::{Cell, MAX_CELLS, MAX_SHEETS, NumberFormat, Sheet, Workbook};
+use crate::model::{
+    Cell, Comment, DefinedName, MAX_CELLS, MAX_SHEETS, NumberFormat, Sheet, Workbook, is_valid_name,
+};
 use crate::value::{ErrorKind, Input, Locale, Value};
 
 mod rules;
@@ -109,18 +112,56 @@ pub fn read_spreadsheet(
     if cells > MAX_CELLS {
         return Err(too_large("cells", MAX_CELLS));
     }
+    let count = sheets.len();
     let mut workbook = Workbook::from_parts(sheets, styles.styles);
     workbook.delimiter = delimited_separator(bytes, format);
+    if matches!(format, DocumentFormat::Xlsx | DocumentFormat::Ods) {
+        workbook.names = defined_names(read_workbook_names(bytes, limits), count);
+        workbook.recalculate();
+    }
     if format == DocumentFormat::Xlsx {
         workbook.theme = read_xlsx_theme_part(bytes, limits);
     }
     Ok(workbook)
 }
 
+/// The names a file defines that this model can compute: one Excel would refuse, one for a sheet
+/// the workbook lacks or one whose formula does not parse is left out.
+fn defined_names(names: Vec<WorkbookName>, sheets: usize) -> Vec<DefinedName> {
+    names
+        .into_iter()
+        .filter(|name| is_valid_name(&name.name) && name.sheet.is_none_or(|sheet| sheet < sheets))
+        .filter_map(|name| {
+            let formula = name.formula.trim();
+            let expression = parse_formula(formula.strip_prefix('=').unwrap_or(formula)).ok()?;
+            Some(DefinedName {
+                name: name.name,
+                sheet: name.sheet,
+                expression,
+                hidden: name.hidden,
+            })
+        })
+        .collect()
+}
+
 /// What a file says of how a sheet is viewed: its frozen panes and its filter, and the arrays
 /// its formulas spill.
 fn apply_view(sheet: &mut Sheet, layout: &SheetLayout) {
     drop_spilled_values(sheet, &layout.array_formulas);
+    sheet.comments = layout
+        .comments
+        .iter()
+        .filter(|comment| comment.row < MAX_ROWS && comment.column < MAX_COLUMNS)
+        .map(|comment| {
+            (
+                CellRef::new(comment.row, comment.column),
+                Comment {
+                    author: comment.author.clone(),
+                    text: comment.text.clone(),
+                },
+            )
+        })
+        .collect();
     sheet.frozen_rows = layout.frozen_rows;
     sheet.frozen_columns = layout.frozen_columns;
     sheet.auto_filter = layout
@@ -482,9 +523,19 @@ pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
     let count = workbook.sheets.len();
     let carried = carried_parts(workbook);
     let spills = workbook.spills.iter().any(|spills| !spills.is_empty());
+    let commented: Vec<usize> = (0..count)
+        .filter(|index| !workbook.sheets[*index].comments.is_empty())
+        .collect();
     add(
         "[Content_Types].xml",
-        content_types(count, &carried, workbook.theme.is_some(), spills).as_bytes(),
+        content_types(
+            count,
+            &carried,
+            workbook.theme.is_some(),
+            spills,
+            &commented,
+        )
+        .as_bytes(),
     )?;
     add("_rels/.rels", PACKAGE_RELATIONSHIPS.as_bytes())?;
     add("xl/workbook.xml", workbook_part(workbook).as_bytes())?;
@@ -517,10 +568,20 @@ pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
             &format!("xl/worksheets/sheet{}.xml", index + 1),
             xml.as_bytes(),
         )?;
-        if sheet.drawing.is_some() || !sheet.pivots.is_empty() {
+        if sheet.drawing.is_some() || !sheet.pivots.is_empty() || !sheet.comments.is_empty() {
             add(
                 &format!("xl/worksheets/_rels/sheet{}.xml.rels", index + 1),
-                sheet_relationships(sheet).as_bytes(),
+                sheet_relationships(sheet, index).as_bytes(),
+            )?;
+        }
+        if !sheet.comments.is_empty() {
+            add(
+                &format!("xl/comments{}.xml", index + 1),
+                comments_part(sheet).as_bytes(),
+            )?;
+            add(
+                &format!("xl/drawings/vmlDrawing{}.vml", index + 1),
+                comment_shapes_part(sheet, index).as_bytes(),
             )?;
         }
     }
@@ -900,6 +961,12 @@ fn sheet_part(
     if sheet.drawing.is_some() {
         let _ = write!(xml, r#"<drawing r:id="{DRAWING_RELATIONSHIP}"/>"#);
     }
+    if !sheet.comments.is_empty() {
+        let _ = write!(
+            xml,
+            r#"<legacyDrawing r:id="{COMMENT_SHAPES_RELATIONSHIP}"/>"#
+        );
+    }
     xml.push_str("</worksheet>");
     xml
 }
@@ -968,9 +1035,29 @@ fn auto_filter_xml(sheet: &Sheet) -> String {
     xml
 }
 
-/// The hidden names Excel keeps for the range of each sheet's filter.
+/// The names the workbook defines, and the hidden ones Excel keeps for the range of each sheet's
+/// filter.
 fn defined_names_xml(workbook: &Workbook) -> String {
-    let names: Vec<String> = workbook
+    let mut names: Vec<String> = workbook
+        .names
+        .iter()
+        .map(|defined| {
+            let mut xml = format!(r#"<definedName name="{}""#, escape(&defined.name));
+            if let Some(sheet) = defined.sheet {
+                let _ = write!(xml, r#" localSheetId="{sheet}""#);
+            }
+            if defined.hidden {
+                xml.push_str(r#" hidden="1""#);
+            }
+            let _ = write!(
+                xml,
+                ">{}</definedName>",
+                escape(&print_formula(&file_names(&defined.expression)))
+            );
+            xml
+        })
+        .collect();
+    let filters: Vec<String> = workbook
         .sheets
         .iter()
         .enumerate()
@@ -986,6 +1073,7 @@ fn defined_names_xml(workbook: &Workbook) -> String {
             ))
         })
         .collect();
+    names.extend(filters);
     if names.is_empty() {
         String::new()
     } else {
@@ -993,24 +1081,65 @@ fn defined_names_xml(workbook: &Workbook) -> String {
     }
 }
 
-/// A formula with the functions newer than Excel 2007 named as a file names them.
+/// A formula with the functions newer than Excel 2007 named as a file names them, and the names
+/// a `LET` or a `LAMBDA` binds with the `_xlpm.` Excel writes before them.
 fn file_names(expression: &Expr) -> Expr {
-    let boxed = |inner: &Expr| Box::new(file_names(inner));
+    file_names_within(expression, &mut Vec::new())
+}
+
+fn file_names_within(expression: &Expr, bound: &mut Vec<String>) -> Expr {
+    if let Expr::Name(name) = expression
+        && bound.contains(&name.to_ascii_lowercase())
+    {
+        return Expr::Name(format!("_xlpm.{name}"));
+    }
+    let mut boxed = |inner: &Expr| Box::new(file_names_within(inner, bound));
     match expression {
-        Expr::Call(name, arguments) => Expr::Call(
-            if WORKSHEET_PREFIXED_FUNCTIONS.contains(&name.as_str()) {
+        Expr::Call(name, arguments) => {
+            let file_name = if WORKSHEET_PREFIXED_FUNCTIONS.contains(&name.as_str()) {
                 format!("_xlfn._xlws.{name}")
             } else if PREFIXED_FUNCTIONS.contains(&name.as_str()) {
                 format!("_xlfn.{name}")
             } else {
                 name.clone()
-            },
-            arguments.iter().map(file_names).collect(),
-        ),
+            };
+            let depth = bound.len();
+            let last = arguments.len().saturating_sub(1);
+            let mut written = Vec::with_capacity(arguments.len());
+            for (index, argument) in arguments.iter().enumerate() {
+                let binds = match name.as_str() {
+                    "LET" => index % 2 == 0 && index < last,
+                    "LAMBDA" => index < last,
+                    _ => false,
+                };
+                match argument {
+                    Expr::Name(parameter) if binds => {
+                        bound.push(parameter.to_ascii_lowercase());
+                        written.push(Expr::Name(format!("_xlpm.{parameter}")));
+                    }
+                    argument => written.push(file_names_within(argument, bound)),
+                }
+            }
+            bound.truncate(depth);
+            Expr::Call(file_name, written)
+        }
+        Expr::Invoke(callee, arguments) => {
+            let callee = boxed(callee);
+            Expr::Invoke(
+                callee,
+                arguments
+                    .iter()
+                    .map(|argument| file_names_within(argument, bound))
+                    .collect(),
+            )
+        }
         Expr::Unary(operator, operand) => Expr::Unary(*operator, boxed(operand)),
         Expr::Percent(operand) => Expr::Percent(boxed(operand)),
         Expr::Group(operand) => Expr::Group(boxed(operand)),
-        Expr::Binary(operator, left, right) => Expr::Binary(*operator, boxed(left), boxed(right)),
+        Expr::Binary(operator, left, right) => {
+            let left = boxed(left);
+            Expr::Binary(*operator, left, Box::new(file_names_within(right, bound)))
+        }
         other => other.clone(),
     }
 }
@@ -1228,8 +1357,8 @@ fn carried_parts(workbook: &Workbook) -> Vec<&CarriedPart> {
         .collect()
 }
 
-/// The relationships of a worksheet: its drawing and its pivot tables.
-fn sheet_relationships(sheet: &Sheet) -> String {
+/// The relationships of a worksheet: its drawing, its pivot tables and its comments.
+fn sheet_relationships(sheet: &Sheet, index: usize) -> String {
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
@@ -1249,14 +1378,102 @@ fn sheet_relationships(sheet: &Sheet) -> String {
             escape(&target_from(1, &pivot.table_part))
         );
     }
+    if !sheet.comments.is_empty() {
+        let _ = write!(
+            xml,
+            concat!(
+                r#"<Relationship Id="rIdComments1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments{0}.xml"/>"#,
+                r#"<Relationship Id="{1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing{0}.vml"/>"#
+            ),
+            index + 1,
+            COMMENT_SHAPES_RELATIONSHIP
+        );
+    }
     xml.push_str("</Relationships>");
     xml
 }
 
 /// The relationship a worksheet names its drawing by.
 const DRAWING_RELATIONSHIP: &str = "rIdDrawing1";
+/// The relationship a worksheet names the shapes of its comments by.
+const COMMENT_SHAPES_RELATIONSHIP: &str = "rIdCommentShapes1";
 
-fn content_types(sheets: usize, carried: &[&CarriedPart], theme: bool, metadata: bool) -> String {
+/// The comments of a sheet, each author listed once.
+fn comments_part(sheet: &Sheet) -> String {
+    let mut authors: Vec<&str> = Vec::new();
+    for comment in sheet.comments.values() {
+        if !authors.contains(&comment.author.as_str()) {
+            authors.push(&comment.author);
+        }
+    }
+    let mut xml = String::from(concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><authors>"#
+    ));
+    for author in &authors {
+        let _ = write!(xml, "<author>{}</author>", escape(author));
+    }
+    xml.push_str("</authors><commentList>");
+    for (cell, comment) in &sheet.comments {
+        let author = authors
+            .iter()
+            .position(|known| *known == comment.author)
+            .unwrap_or(0);
+        let _ = write!(
+            xml,
+            r#"<comment ref="{}{}" authorId="{author}"><text><r><t xml:space="preserve">{}</t></r></text></comment>"#,
+            column_name(cell.column),
+            cell.row + 1,
+            escape(&comment.text)
+        );
+    }
+    xml.push_str("</commentList></comments>");
+    xml
+}
+
+/// The note boxes Excel draws for the comments of a sheet, hidden until the cell is pointed at.
+fn comment_shapes_part(sheet: &Sheet, index: usize) -> String {
+    let mut xml = format!(
+        concat!(
+            r#"<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">"#,
+            r#"<o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data="{}"/></o:shapelayout>"#,
+            r#"<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe">"#,
+            r#"<v:stroke joinstyle="miter"/><v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype>"#
+        ),
+        index + 1
+    );
+    for (number, cell) in sheet.comments.keys().enumerate() {
+        let _ = write!(
+            xml,
+            concat!(
+                r##"<v:shape id="_x0000_s{}" type="#_x0000_t202" style="position:absolute;margin-left:59.25pt;margin-top:1.5pt;width:108pt;height:59.25pt;z-index:{};visibility:hidden" fillcolor="#ffffe1" o:insetmode="auto">"##,
+                r##"<v:fill color2="#ffffe1"/><v:shadow on="t" color="black" obscured="t"/><v:path o:connecttype="none"/>"##,
+                r##"<v:textbox style="mso-direction-alt:auto"><div style="text-align:left"></div></v:textbox>"##,
+                r##"<x:ClientData ObjectType="Note"><x:MoveWithCells/><x:SizeWithCells/>"##,
+                r##"<x:Anchor>{}, 15, {}, 2, {}, 15, {}, 16</x:Anchor><x:AutoFill>False</x:AutoFill>"##,
+                r##"<x:Row>{}</x:Row><x:Column>{}</x:Column></x:ClientData></v:shape>"##
+            ),
+            (index + 1) * 1_024 + number + 1,
+            number + 1,
+            cell.column + 1,
+            cell.row,
+            cell.column + 3,
+            cell.row + 4,
+            cell.row,
+            cell.column
+        );
+    }
+    xml.push_str("</xml>");
+    xml
+}
+
+fn content_types(
+    sheets: usize,
+    carried: &[&CarriedPart],
+    theme: bool,
+    metadata: bool,
+    commented: &[usize],
+) -> String {
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">"#,
@@ -1269,6 +1486,16 @@ fn content_types(sheets: usize, carried: &[&CarriedPart], theme: bool, metadata:
         let _ = write!(
             xml,
             r#"<Override PartName="/xl/worksheets/sheet{index}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>"#
+        );
+    }
+    if !commented.is_empty() {
+        xml.push_str(r#"<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>"#);
+    }
+    for index in commented {
+        let _ = write!(
+            xml,
+            r#"<Override PartName="/xl/comments{}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>"#,
+            index + 1
         );
     }
     if theme {

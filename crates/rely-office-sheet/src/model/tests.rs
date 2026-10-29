@@ -229,3 +229,159 @@ fn copies_with_relative_references() {
         Err(EditError::NoSuchSheet(3))
     );
 }
+
+#[test]
+fn names_follow_the_edits_of_rows_columns_and_sheets() {
+    let mut workbook = Workbook::new();
+    workbook
+        .set_input(0, CellRef::parse("B2").unwrap(), "5", Locale::English)
+        .unwrap();
+    workbook
+        .set_defined_name("Target", None, "B2", Locale::English)
+        .unwrap();
+    workbook
+        .set_input(
+            0,
+            CellRef::parse("D1").unwrap(),
+            "=Target*2",
+            Locale::English,
+        )
+        .unwrap();
+    let expression = |workbook: &Workbook| {
+        crate::formula::print_formula(&workbook.defined_names()[0].expression)
+    };
+    assert_eq!(expression(&workbook), "Foglio1!B2");
+    workbook.insert_rows(0, 0, 2).unwrap();
+    assert_eq!(expression(&workbook), "Foglio1!B4");
+    assert_eq!(
+        workbook.value(0, CellRef::parse("D3").unwrap()),
+        Value::Number(10.0)
+    );
+    workbook.insert_columns(0, 0, 1).unwrap();
+    assert_eq!(expression(&workbook), "Foglio1!C4");
+    workbook.rename_sheet(0, "Dati").unwrap();
+    assert_eq!(expression(&workbook), "Dati!C4");
+    workbook.delete_rows(0, 3, 1).unwrap();
+    assert_eq!(expression(&workbook), "#REF!");
+}
+
+#[test]
+fn removing_a_sheet_removes_its_names_and_breaks_the_references() {
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Altro").unwrap();
+    workbook.add_sheet("Terzo").unwrap();
+    workbook
+        .set_defined_name("Local", Some(1), "1", Locale::English)
+        .unwrap();
+    workbook
+        .set_defined_name("Later", Some(2), "2", Locale::English)
+        .unwrap();
+    workbook
+        .set_defined_name("There", None, "Altro!A1", Locale::English)
+        .unwrap();
+    workbook.remove_sheet(1).unwrap();
+    let names: Vec<(&str, Option<usize>, String)> = workbook
+        .defined_names()
+        .iter()
+        .map(|defined| {
+            (
+                defined.name.as_str(),
+                defined.sheet,
+                crate::formula::print_formula(&defined.expression),
+            )
+        })
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            ("Later", Some(1), "2".to_owned()),
+            ("There", None, "#REF!".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn refuses_a_name_excel_refuses() {
+    let mut workbook = Workbook::new();
+    for name in [
+        "",
+        "A1",
+        "r1c1",
+        "R",
+        "TRUE",
+        "1abc",
+        "a b",
+        "x-y",
+        &"n".repeat(256),
+    ] {
+        assert_eq!(
+            workbook.set_defined_name(name, None, "1", Locale::English),
+            Err(EditError::InvalidName),
+            "{name}"
+        );
+    }
+    for name in ["Rate", "_hidden", r"\path", "Tax.2026", "XFD1048577A"] {
+        assert!(
+            workbook
+                .set_defined_name(name, None, "1", Locale::English)
+                .is_ok(),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        workbook.set_defined_name("Rate", Some(4), "1", Locale::English),
+        Err(EditError::NoSuchSheet(4))
+    );
+    assert!(matches!(
+        workbook.set_defined_name("Rate", None, "=1+", Locale::English),
+        Err(EditError::Formula(_))
+    ));
+    // An Italian formula is read in Italian.
+    workbook
+        .set_defined_name("Somma", None, "=SOMMA(1;2)", Locale::Italian)
+        .unwrap();
+    workbook
+        .set_input(0, CellRef::parse("A1").unwrap(), "=Somma", Locale::English)
+        .unwrap();
+    assert_eq!(
+        workbook.value(0, CellRef::parse("A1").unwrap()),
+        Value::Number(3.0)
+    );
+}
+
+#[test]
+fn comments_are_written_moved_and_removed() {
+    let mut workbook = Workbook::new();
+    let b2 = CellRef::parse("B2").unwrap();
+    workbook
+        .set_comment(0, b2, " Anna ", "Da verificare\r\nentro venerdi")
+        .unwrap();
+    assert_eq!(
+        workbook.sheets()[0].comment(b2),
+        Some(&Comment {
+            author: "Anna".to_owned(),
+            text: "Da verificare\nentro venerdi".to_owned(),
+        })
+    );
+    workbook.insert_rows(0, 0, 1).unwrap();
+    let b3 = CellRef::parse("B3").unwrap();
+    assert!(workbook.sheets()[0].comment(b2).is_none());
+    assert!(workbook.sheets()[0].comment(b3).is_some());
+    workbook.delete_rows(0, 2, 1).unwrap();
+    assert!(workbook.sheets()[0].comments().is_empty());
+    workbook.set_comment(0, b2, "", "x").unwrap();
+    workbook.set_comment(0, b2, "", "  ").unwrap();
+    assert!(workbook.sheets()[0].comments().is_empty());
+    assert_eq!(
+        workbook.set_comment(3, b2, "", "x"),
+        Err(EditError::NoSuchSheet(3))
+    );
+    assert_eq!(
+        workbook.set_comment(0, b2, "", &"x".repeat(MAX_COMMENT_CHARS + 1)),
+        Err(EditError::OutOfBounds)
+    );
+    assert_eq!(
+        workbook.set_comment(0, CellRef::new(MAX_ROWS, 0), "", "x"),
+        Err(EditError::OutOfBounds)
+    );
+}

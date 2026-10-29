@@ -339,3 +339,143 @@ fn reads_the_iso_dates_and_durations_of_an_ods() {
         Input::Number(0.5)
     );
 }
+
+fn member(bytes: &[u8], name: &str) -> String {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut archive.by_name(name).unwrap(), &mut text).unwrap();
+    text
+}
+
+fn named_book() -> Workbook {
+    let mut book = Workbook::new();
+    book.set_input(0, cell("A1"), "4", Locale::English).unwrap();
+    book.set_input(0, cell("A2"), "6", Locale::English).unwrap();
+    book.add_sheet("Riepilogo").unwrap();
+    book.set_defined_name("Valori", None, "Foglio1!$A$1:$A$2", Locale::English)
+        .unwrap();
+    book.set_defined_name("Doppio", None, "LAMBDA(x, x*2)", Locale::English)
+        .unwrap();
+    book.set_defined_name("Soglia", Some(1), "5", Locale::English)
+        .unwrap();
+    book.set_input(
+        1,
+        cell("A1"),
+        "=LET(total, SUM(Valori), IF(total>Soglia, Doppio(total), 0))",
+        Locale::English,
+    )
+    .unwrap();
+    book.set_comment(0, cell("A2"), "Anna", "Ultimo valore\nda confermare")
+        .unwrap();
+    book.set_comment(1, cell("C3"), "", "Senza autore & <tag>")
+        .unwrap();
+    book
+}
+
+#[test]
+fn writes_names_and_the_parameters_of_let_as_excel_does() {
+    let bytes = write_xlsx(&named_book()).unwrap();
+    let workbook = member(&bytes, "xl/workbook.xml");
+    assert!(workbook.contains(r#"<definedName name="Valori">Foglio1!$A$1:$A$2</definedName>"#));
+    assert!(
+        workbook.contains(
+            r#"<definedName name="Doppio">_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2)</definedName>"#
+        )
+    );
+    assert!(workbook.contains(r#"<definedName name="Soglia" localSheetId="1">5</definedName>"#));
+    let sheet = member(&bytes, "xl/worksheets/sheet2.xml");
+    assert!(sheet.contains(
+        "_xlfn.LET(_xlpm.total,SUM(Valori),IF(_xlpm.total&gt;Soglia,Doppio(_xlpm.total),0))"
+    ));
+}
+
+#[test]
+fn writes_the_comments_excel_shows() {
+    let bytes = write_xlsx(&named_book()).unwrap();
+    let comments = member(&bytes, "xl/comments1.xml");
+    assert!(comments.contains("<author>Anna</author>"));
+    assert!(comments.contains(r#"<comment ref="A2" authorId="0">"#));
+    let shapes = member(&bytes, "xl/drawings/vmlDrawing1.vml");
+    assert!(shapes.contains("<x:Row>1</x:Row><x:Column>0</x:Column>"));
+    let relationships = member(&bytes, "xl/worksheets/_rels/sheet2.xml.rels");
+    assert!(relationships.contains("../comments2.xml"));
+    assert!(relationships.contains("../drawings/vmlDrawing2.vml"));
+    assert!(member(&bytes, "xl/worksheets/sheet1.xml").contains("<legacyDrawing r:id="));
+    let types = member(&bytes, "[Content_Types].xml");
+    assert!(types.contains(r#"<Default Extension="vml""#));
+    assert!(types.contains("/xl/comments2.xml"));
+    // A workbook without comments writes none of their parts.
+    let plain = write_xlsx(&Workbook::new()).unwrap();
+    assert!(!member(&plain, "[Content_Types].xml").contains("vml"));
+}
+
+#[test]
+fn names_and_comments_survive_xlsx_and_ods() {
+    let book = named_book();
+    assert_eq!(book.value(1, cell("A1")), Value::Number(20.0));
+    for (bytes, name) in [
+        (write_xlsx(&book).unwrap(), "a.xlsx"),
+        (crate::ods::write_ods(&book).unwrap(), "a.ods"),
+    ] {
+        let read =
+            read_spreadsheet(&bytes, Some(name), &Limits::default(), Locale::English).unwrap();
+        let names: Vec<(&str, Option<usize>)> = read
+            .defined_names()
+            .iter()
+            .map(|defined| (defined.name.as_str(), defined.sheet))
+            .collect();
+        assert!(names.contains(&("Valori", None)), "{name} {names:?}");
+        assert!(names.contains(&("Doppio", None)), "{name} {names:?}");
+        assert!(names.contains(&("Soglia", Some(1))), "{name} {names:?}");
+        assert_eq!(read.value(1, cell("A1")), Value::Number(20.0), "{name}");
+        assert_eq!(
+            read.sheets()[0].comment(cell("A2")),
+            Some(&Comment {
+                author: "Anna".to_owned(),
+                text: "Ultimo valore\nda confermare".to_owned(),
+            }),
+            "{name}"
+        );
+        assert_eq!(
+            read.sheets()[1]
+                .comment(cell("C3"))
+                .map(|comment| comment.text.as_str()),
+            Some("Senza autore & <tag>"),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_name_the_model_cannot_keep_is_left_out() {
+    let names = vec![
+        WorkbookName {
+            name: "Good".to_owned(),
+            sheet: None,
+            formula: "=1+1".to_owned(),
+            hidden: true,
+        },
+        WorkbookName {
+            name: "A1".to_owned(),
+            sheet: None,
+            formula: "1".to_owned(),
+            hidden: false,
+        },
+        WorkbookName {
+            name: "Far".to_owned(),
+            sheet: Some(7),
+            formula: "1".to_owned(),
+            hidden: false,
+        },
+        WorkbookName {
+            name: "Broken".to_owned(),
+            sheet: None,
+            formula: "1+".to_owned(),
+            hidden: false,
+        },
+    ];
+    let kept = defined_names(names, 1);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].name, "Good");
+    assert!(kept[0].hidden);
+}

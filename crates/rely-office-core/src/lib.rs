@@ -37,6 +37,7 @@ mod relationships;
 mod sheet;
 mod sheet_drawings;
 mod sheet_layout;
+mod sheet_names;
 mod sheet_rules;
 mod sheet_styles;
 mod slides;
@@ -81,6 +82,7 @@ pub use sheet_layout::{
     AutoFilterLayout, CellRange, MergePlace, SheetLayout, read_xlsx_drawing_parts,
     read_xlsx_layouts, read_xlsx_pivot_parts, read_xlsx_theme_part,
 };
+pub use sheet_names::{CellComment, WorkbookName, read_workbook_names};
 pub use sheet_rules::{
     ComparisonOperator, Condition, ConditionalFormat, ConditionalRule, DataValidation,
     DifferentialLook, ErrorStyle, ScalePoint, ScaleValue, TextOperator, ValidationKind,

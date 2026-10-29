@@ -1209,6 +1209,15 @@
   font-size: 10px;
 }
 
+.rely-sheet-commented::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  border-top: 6px solid var(--rely-accent);
+  border-left: 6px solid transparent;
+  content: '';
+}
+
 .rely-sheet-invalid::after {
   position: absolute;
   top: 0;

@@ -314,6 +314,28 @@ class SheetDocument {
     return JSON.parse(call(() => this.document.mergesJson(sheet)));
   }
 
+  definedNames() {
+    return JSON.parse(call(() => this.document.definedNamesJson())).map(({ sheet, ...name }) =>
+      sheet === null || sheet === undefined ? name : { ...name, sheet },
+    );
+  }
+
+  setDefinedName(name, formula, sheet) {
+    call(() => this.document.setDefinedName(name, sheet ?? undefined, formula));
+  }
+
+  removeDefinedName(name, sheet) {
+    return this.document.removeDefinedName(name, sheet ?? undefined);
+  }
+
+  comments(sheet) {
+    return JSON.parse(call(() => this.document.commentsJson(sheet)));
+  }
+
+  setComment(sheet, row, column, text, author = '') {
+    call(() => this.document.setComment(sheet, row, column, author, text));
+  }
+
   mergeCells(sheet, { top, left, bottom, right }) {
     call(() => this.document.mergeCells(sheet, top, left, bottom, right));
   }

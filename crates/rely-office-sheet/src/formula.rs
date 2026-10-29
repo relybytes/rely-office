@@ -127,6 +127,10 @@ pub enum Expr {
     Call(String, Vec<Expr>),
     /// An array constant, `{1,2;3,4}`: rows of constants, every row as long as the first.
     Array(Vec<Vec<Expr>>),
+    /// A name: a name the workbook defines, or one a `LET` or a `LAMBDA` binds, as typed.
+    Name(String),
+    /// A function a formula computes called with arguments, `LAMBDA(x, x*2)(3)`.
+    Invoke(Box<Expr>, Vec<Expr>),
 }
 
 /// Why a formula could not be parsed.
@@ -592,7 +596,7 @@ impl Parser {
                     return Err(self.error("a parenthesis is not closed"));
                 }
                 self.position += 1;
-                Ok(Expr::Group(Box::new(inner)))
+                self.invocations(Expr::Group(Box::new(inner)))
             }
             Token::Sheet(sheet) => {
                 let Some((Token::Word(word), _)) = self.tokens.get(self.position).cloned() else {
@@ -604,7 +608,8 @@ impl Parser {
             Token::Word(word) => {
                 if self.peek() == Some(&Token::Open) {
                     self.position += 1;
-                    return self.call(&word);
+                    let call = self.call(&word)?;
+                    return self.invocations(call);
                 }
                 match word.to_ascii_uppercase().as_str() {
                     "TRUE" | "VERO" => return Ok(Expr::Bool(true)),
@@ -654,6 +659,18 @@ impl Parser {
             return Err(self.error("the rows of an array differ in length"));
         }
         Ok(Expr::Array(rows))
+    }
+
+    /// A function a formula computed, called: `LAMBDA(x, x*2)(3)`, as many times as written.
+    fn invocations(&mut self, mut callee: Expr) -> Result<Expr, FormulaError> {
+        while self.peek() == Some(&Token::Open) {
+            self.position += 1;
+            let Expr::Call(_, arguments) = self.call("")? else {
+                return Err(self.error("expected arguments"));
+            };
+            callee = Expr::Invoke(Box::new(callee), arguments);
+        }
+        Ok(callee)
     }
 
     fn call(&mut self, name: &str) -> Result<Expr, FormulaError> {
@@ -722,13 +739,14 @@ impl Parser {
         }
         match start {
             Some(address) => Ok(Expr::Cell(address)),
-            // A name the grid does not know, such as an unknown function written without
-            // parentheses, is Excel's #NAME? rather than a refusal.
-            None if word
-                .chars()
-                .all(|character| character.is_alphanumeric() || matches!(character, '.' | '_')) =>
+            // A word that is no cell is a name: the workbook may define it, a `LET` or a
+            // `LAMBDA` may bind it, and otherwise it computes Excel's #NAME?.
+            None if sheet.is_none()
+                && word.chars().all(|character| {
+                    character.is_alphanumeric() || matches!(character, '.' | '_' | '\\')
+                }) =>
             {
-                Ok(Expr::Error(ErrorKind::Name))
+                Ok(Expr::Name(canonical_name(word)))
             }
             None => Err(self.error("not a cell")),
         }
@@ -1036,6 +1054,16 @@ const ITALIAN_FUNCTION_NAMES: &[(&str, &str)] = &[
 ];
 
 /// The English name of a function typed in Italian or English, in capitals.
+/// A name as a formula keeps it: as typed, without the `_xlpm.` files put before the names a
+/// `LET` or a `LAMBDA` binds.
+fn canonical_name(name: &str) -> String {
+    let lower = name.to_ascii_lowercase();
+    match lower.strip_prefix("_xlpm.") {
+        Some(_) => name["_xlpm.".len()..].to_owned(),
+        None => name.to_owned(),
+    }
+}
+
 fn canonical_function_name(name: &str) -> String {
     let upper = name.to_uppercase();
     // Files store the functions newer than Excel 2007 with a prefix.
@@ -1044,10 +1072,16 @@ fn canonical_function_name(name: &str) -> String {
         .or_else(|| upper.strip_prefix("_XLFN."))
         .or_else(|| upper.strip_prefix("_XLWS."))
         .map_or_else(|| upper.clone(), str::to_owned);
-    ITALIAN_FUNCTION_NAMES
+    let english = ITALIAN_FUNCTION_NAMES
         .iter()
         .find(|(italian, _)| *italian == upper)
-        .map_or(upper.clone(), |(_, english)| (*english).to_owned())
+        .map_or(upper.clone(), |(_, english)| (*english).to_owned());
+    if FUNCTION_NAMES.binary_search(&english.as_str()).is_ok() {
+        return english;
+    }
+    // A function the grid does not know is a name a formula defines: kept as typed.
+    let prefix = name.len() - upper.len();
+    name[prefix..].to_owned()
 }
 
 /// The Italian name of a function, for a formula shown in Italian; the English one when Excel
@@ -1059,12 +1093,21 @@ fn italian_function_name(english: &str) -> &str {
         .map_or(english, |(italian, _)| italian)
 }
 
-/// The functions an xlsx stores with the `_xlfn.` prefix, as Excel 2010 and later write them.
 /// The functions an xlsx stores with the `_xlfn._xlws.` prefix, the dynamic arrays Excel ships
 /// as worksheet functions.
 pub(crate) const WORKSHEET_PREFIXED_FUNCTIONS: &[&str] = &["FILTER", "SORT"];
 
+/// The functions an xlsx stores with the `_xlfn.` prefix, as Excel 2010 and later write them.
 pub(crate) const PREFIXED_FUNCTIONS: &[&str] = &[
+    "LET",
+    "LAMBDA",
+    "MAP",
+    "REDUCE",
+    "SCAN",
+    "BYROW",
+    "BYCOL",
+    "MAKEARRAY",
+    "ISOMITTED",
     "CEILING.MATH",
     "FLOOR.MATH",
     "STDEV.S",
@@ -1183,6 +1226,8 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "BITOR",
     "BITRSHIFT",
     "BITXOR",
+    "BYCOL",
+    "BYROW",
     "CEILING",
     "CEILING.MATH",
     "CEILING.PRECISE",
@@ -1296,20 +1341,25 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "ISNUMBER",
     "ISO.CEILING",
     "ISODD",
+    "ISOMITTED",
     "ISOWEEKNUM",
     "ISPMT",
     "ISREF",
     "ISTEXT",
     "KURT",
+    "LAMBDA",
     "LARGE",
     "LCM",
     "LEFT",
     "LEN",
+    "LET",
     "LN",
     "LOG",
     "LOG10",
     "LOOKUP",
     "LOWER",
+    "MAKEARRAY",
+    "MAP",
     "MATCH",
     "MAX",
     "MAXA",
@@ -1381,6 +1431,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "RANK.AVG",
     "RANK.EQ",
     "RATE",
+    "REDUCE",
     "REPLACE",
     "REPT",
     "RIGHT",
@@ -1392,6 +1443,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "ROWS",
     "RRI",
     "RSQ",
+    "SCAN",
     "SEARCH",
     "SEC",
     "SECH",
@@ -1597,18 +1649,28 @@ fn print(expression: &Expr, text: &mut String, parent_precedence: u8, locale: Lo
             } else {
                 name
             });
-            text.push('(');
-            for (index, argument) in arguments.iter().enumerate() {
-                if index > 0 {
-                    text.push(if italian { ';' } else { ',' });
-                }
-                if !matches!(argument, Expr::Text(value) if value.is_empty()) {
-                    print(argument, text, 0, locale);
-                }
-            }
-            text.push(')');
+            print_arguments(arguments, text, locale);
+        }
+        Expr::Name(name) => text.push_str(name),
+        Expr::Invoke(callee, arguments) => {
+            print(callee, text, u8::MAX, locale);
+            print_arguments(arguments, text, locale);
         }
     }
+}
+
+fn print_arguments(arguments: &[Expr], text: &mut String, locale: Locale) {
+    let italian = locale == Locale::Italian;
+    text.push('(');
+    for (index, argument) in arguments.iter().enumerate() {
+        if index > 0 {
+            text.push(if italian { ';' } else { ',' });
+        }
+        if !matches!(argument, Expr::Text(value) if value.is_empty()) {
+            print(argument, text, 0, locale);
+        }
+    }
+    text.push(')');
 }
 
 fn print_sheet(sheet: Option<&str>, text: &mut String) {

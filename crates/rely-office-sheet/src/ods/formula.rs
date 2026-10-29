@@ -159,18 +159,27 @@ fn print(expression: &Expr, text: &mut String, parent_precedence: u8) {
                 text.push_str("COM.MICROSOFT.");
             }
             text.push_str(name);
-            text.push('(');
-            for (index, argument) in arguments.iter().enumerate() {
-                if index > 0 {
-                    text.push(';');
-                }
-                if !matches!(argument, Expr::Text(value) if value.is_empty()) {
-                    print(argument, text, 0);
-                }
-            }
-            text.push(')');
+            print_arguments(arguments, text);
+        }
+        Expr::Name(name) => text.push_str(name),
+        Expr::Invoke(callee, arguments) => {
+            print(callee, text, u8::MAX);
+            print_arguments(arguments, text);
         }
     }
+}
+
+fn print_arguments(arguments: &[Expr], text: &mut String) {
+    text.push('(');
+    for (index, argument) in arguments.iter().enumerate() {
+        if index > 0 {
+            text.push(';');
+        }
+        if !matches!(argument, Expr::Text(value) if value.is_empty()) {
+            print(argument, text, 0);
+        }
+    }
+    text.push(')');
 }
 
 /// The sheet of a reference, `$Foglio2` or `$'Due fogli'`, then the dot every reference has.

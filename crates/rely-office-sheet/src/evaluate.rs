@@ -47,6 +47,8 @@ enum Operand {
     },
     /// Rows of values, every row as long as the first.
     Array(Vec<Vec<Value>>),
+    /// A function a `LAMBDA` made, which a call or a helper such as `MAP` runs.
+    Lambda(std::rc::Rc<lambda::Closure>),
 }
 
 /// What computing a workbook gives: the value of every formula cell and every spilled cell, and
@@ -91,6 +93,8 @@ fn evaluate_pass(workbook: &Workbook, prior: &[BTreeMap<CellRef, CellRange>]) ->
         prior_spills: prior.to_vec(),
         spills: vec![BTreeMap::new(); workbook.sheets.len()],
         spilled: vec![HashMap::new(); workbook.sheets.len()],
+        scopes: std::cell::RefCell::new(Vec::new()),
+        calls: std::cell::Cell::new(0),
     };
     for sheet in 0..workbook.sheets.len() {
         let cells: Vec<CellRef> = evaluator.formula_cells[sheet].iter().copied().collect();
@@ -123,6 +127,8 @@ impl<'a> FormulaContext<'a> {
                 prior_spills: vec![BTreeMap::new(); sheets],
                 spills: vec![BTreeMap::new(); sheets],
                 spilled: vec![HashMap::new(); sheets],
+                scopes: std::cell::RefCell::new(Vec::new()),
+                calls: std::cell::Cell::new(0),
             },
         }
     }
@@ -160,6 +166,10 @@ struct Evaluator<'a> {
     /// The spills of this pass, by anchor, and the anchor of every spilled cell.
     spills: Vec<BTreeMap<CellRef, CellRange>>,
     spilled: Vec<HashMap<CellRef, CellRef>>,
+    /// The names the `LET`s and functions around the expression being computed bind.
+    scopes: std::cell::RefCell<Vec<Vec<lambda::Binding>>>,
+    /// How deep functions and defined names are calling one another.
+    calls: std::cell::Cell<u32>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -327,6 +337,22 @@ impl<'a> Evaluator<'a> {
                     self.dependencies(sheet, argument, found);
                 }
             }
+            Expr::Invoke(callee, arguments) => {
+                self.dependencies(sheet, callee, found);
+                for argument in arguments {
+                    self.dependencies(sheet, argument, found);
+                }
+            }
+            Expr::Name(name) => {
+                // What a defined name refers to is read by every formula that names it.
+                if self.calls.get() < 16
+                    && let Some(expression) = self.workbook.defined_name(sheet, name)
+                {
+                    self.calls.set(self.calls.get() + 1);
+                    self.dependencies(sheet, expression, found);
+                    self.calls.set(self.calls.get() - 1);
+                }
+            }
             Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) | Expr::Array(_) => {}
         }
     }
@@ -407,11 +433,18 @@ impl<'a> Evaluator<'a> {
                     },
                 }
             }
-            Expr::Call(name, arguments) => match self.array_call(sheet, name, arguments) {
-                Some(Ok(grid)) => Operand::Array(grid),
-                Some(Err(kind)) => Operand::Value(Value::Error(kind)),
-                None => Operand::Value(finite(self.call(sheet, name, arguments))),
-            },
+            Expr::Call(name, arguments) => {
+                if let Some(operand) = self.lambda_call(sheet, name, arguments) {
+                    return operand;
+                }
+                match self.array_call(sheet, name, arguments) {
+                    Some(Ok(grid)) => Operand::Array(grid),
+                    Some(Err(kind)) => Operand::Value(Value::Error(kind)),
+                    None => Operand::Value(finite(self.call(sheet, name, arguments))),
+                }
+            }
+            Expr::Name(name) => self.name_value(sheet, name),
+            Expr::Invoke(callee, arguments) => self.invoke_expression(sheet, callee, arguments),
         }
     }
 
@@ -443,6 +476,7 @@ impl<'a> Evaluator<'a> {
             Operand::Value(value) => value,
             Operand::Array(grid) if grid.len() == 1 && grid[0].len() == 1 => grid[0][0].clone(),
             Operand::Range { .. } | Operand::Array(_) => Value::Error(ErrorKind::Value),
+            Operand::Lambda(_) => Value::Error(ErrorKind::Calc),
         }
     }
 
@@ -467,6 +501,7 @@ impl<'a> Evaluator<'a> {
         match operand {
             Operand::Value(value) => Ok(vec![vec![value]]),
             Operand::Array(grid) => Ok(grid),
+            Operand::Lambda(_) => Err(ErrorKind::Calc),
             Operand::Range { sheet, start, end } => {
                 let last = if end.row == MAX_ROWS - 1 {
                     self.last_row(sheet).max(start.row)
@@ -494,6 +529,7 @@ impl<'a> Evaluator<'a> {
     fn values_of(&self, sheet: usize, expression: &Expr, mut visit: impl FnMut(Value, bool)) {
         match self.evaluate(sheet, expression) {
             Operand::Value(value) => visit(value, false),
+            Operand::Lambda(_) => visit(Value::Error(ErrorKind::Calc), false),
             Operand::Array(grid) => {
                 for value in grid.into_iter().flatten() {
                     visit(value, true);
@@ -573,6 +609,7 @@ impl<'a> Evaluator<'a> {
             Operand::Value(Value::Error(kind)) => Err(kind),
             Operand::Value(value) => Ok(vec![vec![value]]),
             Operand::Array(grid) => Ok(grid),
+            Operand::Lambda(_) => Err(ErrorKind::Calc),
             Operand::Range {
                 sheet: target,
                 start,
@@ -1292,6 +1329,7 @@ fn wildcard(pattern: &[char], text: &[char]) -> bool {
 
 mod arrays;
 mod functions;
+mod lambda;
 mod more;
 
 #[cfg(test)]

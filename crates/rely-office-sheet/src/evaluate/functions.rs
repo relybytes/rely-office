@@ -732,6 +732,7 @@ impl Evaluator<'_> {
                     }
                     Operand::Value(Value::Error(kind)) => Err(kind),
                     Operand::Value(_) => Ok(Value::Number(1.0)),
+                    Operand::Lambda(_) => Err(ErrorKind::Calc),
                 })()
             }
             "ROW" | "COLUMN" => (|| {

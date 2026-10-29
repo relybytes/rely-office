@@ -76,9 +76,22 @@ pub struct Sheet {
     pub(crate) auto_filter: Option<AutoFilter>,
     /// The pictures and charts of the file, drawn as it was opened, for an editor to show.
     pub(crate) pictures: Vec<SheetDrawing>,
+    pub(crate) comments: BTreeMap<CellRef, Comment>,
 }
 
 impl Sheet {
+    /// The comments of the sheet's cells, by cell.
+    #[must_use]
+    pub fn comments(&self) -> &BTreeMap<CellRef, Comment> {
+        &self.comments
+    }
+
+    /// The comment on a cell, if it has one.
+    #[must_use]
+    pub fn comment(&self, cell: CellRef) -> Option<&Comment> {
+        self.comments.get(&cell)
+    }
+
     /// The conditional formats of the sheet, in the order the file lists them.
     #[must_use]
     pub fn conditional_formats(&self) -> &[ConditionalFormat] {
@@ -162,7 +175,30 @@ pub enum EditError {
     OutOfBounds,
     #[error("a style holds a value no cell can show")]
     InvalidStyle,
+    #[error("a name starts with a letter, _ or \\, holds letters, digits, . and _, and is no cell")]
+    InvalidName,
 }
+
+/// A name the workbook defines, `Aliquota` or `Vendite`: what it refers to, a range, a value
+/// or a formula, a `LAMBDA` included, and the sheet it belongs to, `None` for the whole workbook.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefinedName {
+    pub name: String,
+    pub sheet: Option<usize>,
+    pub expression: Expr,
+    /// Whether the file hid the name from its list, as add-ins hide theirs.
+    pub hidden: bool,
+}
+
+/// A comment on a cell: who wrote it and its text, lines separated by `\n`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Comment {
+    pub author: String,
+    pub text: String,
+}
+
+/// The longest comment a cell keeps, in characters, as Excel limits it.
+pub const MAX_COMMENT_CHARS: usize = 32_767;
 
 /// A workbook with its computed values; every edit recalculates.
 #[derive(Debug, Clone, PartialEq)]
@@ -183,6 +219,7 @@ pub struct Workbook {
     pub(crate) theme: Option<CarriedPart>,
     /// The separator of the delimited file the workbook was read from.
     pub(crate) delimiter: Option<char>,
+    pub(crate) names: Vec<DefinedName>,
 }
 
 impl Default for Workbook {
@@ -226,6 +263,7 @@ impl Workbook {
             style_index,
             theme: None,
             delimiter: None,
+            names: Vec::new(),
         };
         workbook.recalculate();
         workbook
@@ -447,7 +485,7 @@ impl Workbook {
         }
         self.check_new_name(name, Some(sheet))?;
         let old = self.sheets[sheet].name.clone();
-        crate::edit::rename_references(&mut self.sheets, &old, name);
+        crate::edit::rename_references(&mut self.sheets, &mut self.names, &old, name);
         name.clone_into(&mut self.sheets[sheet].name);
         self.recalculate();
         Ok(())
@@ -467,7 +505,16 @@ impl Workbook {
         }
         let removed = self.sheets.remove(sheet);
         self.values.remove(sheet);
-        crate::edit::break_references_to_sheet(&mut self.sheets, &removed.name);
+        crate::edit::break_references_to_sheet(&mut self.sheets, &mut self.names, &removed.name);
+        // The names of the removed sheet go with it; the later sheets move up by one.
+        self.names.retain(|defined| defined.sheet != Some(sheet));
+        for defined in &mut self.names {
+            if let Some(index) = &mut defined.sheet
+                && *index > sheet
+            {
+                *index -= 1;
+            }
+        }
         self.recalculate();
         Ok(())
     }
@@ -512,7 +559,7 @@ impl Workbook {
         if sheet >= self.sheets.len() {
             return Err(EditError::NoSuchSheet(sheet));
         }
-        crate::edit::shift(&mut self.sheets, sheet, shift)?;
+        crate::edit::shift(&mut self.sheets, &mut self.names, sheet, shift)?;
         self.recalculate();
         Ok(())
     }
@@ -691,6 +738,125 @@ impl Workbook {
         Ok(())
     }
 
+    /// The names the workbook defines, the workbook's first, then each sheet's own.
+    #[must_use]
+    pub fn defined_names(&self) -> &[DefinedName] {
+        &self.names
+    }
+
+    /// What a name a formula of `sheet` reads refers to: the sheet's own name before the
+    /// workbook's. Names are compared without case, as Excel compares them.
+    pub(crate) fn defined_name(&self, sheet: usize, name: &str) -> Option<&Expr> {
+        let named = |defined: &&DefinedName| defined.name.eq_ignore_ascii_case(name);
+        self.names
+            .iter()
+            .filter(named)
+            .find(|defined| defined.sheet == Some(sheet))
+            .or_else(|| {
+                self.names
+                    .iter()
+                    .filter(named)
+                    .find(|defined| defined.sheet.is_none())
+            })
+            .map(|defined| &defined.expression)
+    }
+
+    /// Define a name, or change what it refers to: `formula` is typed as in a cell, with or
+    /// without its `=`, in `locale`; `sheet` keeps the name to one sheet.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::InvalidName`] for a name Excel refuses, [`EditError::NoSuchSheet`],
+    /// [`EditError::Formula`] for a formula that cannot be parsed.
+    pub fn set_defined_name(
+        &mut self,
+        name: &str,
+        sheet: Option<usize>,
+        formula: &str,
+        locale: Locale,
+    ) -> Result<(), EditError> {
+        if !is_valid_name(name) {
+            return Err(EditError::InvalidName);
+        }
+        if let Some(sheet) = sheet
+            && sheet >= self.sheets.len()
+        {
+            return Err(EditError::NoSuchSheet(sheet));
+        }
+        let text = formula.trim();
+        let text = text.strip_prefix('=').unwrap_or(text);
+        let expression = crate::formula::parse_formula_in(text, locale)?;
+        // A file keeps the sheet of every reference a name makes, as Excel's name manager does.
+        let home = &self.sheets[sheet.unwrap_or(0)].name;
+        let expression = crate::edit::qualify_references(&expression, home);
+        let defined = DefinedName {
+            name: name.to_owned(),
+            sheet,
+            expression,
+            hidden: false,
+        };
+        match self
+            .names
+            .iter_mut()
+            .find(|known| known.sheet == sheet && known.name.eq_ignore_ascii_case(name))
+        {
+            Some(known) => *known = defined,
+            None => self.names.push(defined),
+        }
+        self.recalculate();
+        Ok(())
+    }
+
+    /// Write a comment on a cell, or remove it with an empty text.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NoSuchSheet`], [`EditError::OutOfBounds`] for a cell past the grid or a text
+    /// longer than [`MAX_COMMENT_CHARS`].
+    pub fn set_comment(
+        &mut self,
+        sheet: usize,
+        cell: CellRef,
+        author: &str,
+        text: &str,
+    ) -> Result<(), EditError> {
+        let Some(target) = self.sheets.get_mut(sheet) else {
+            return Err(EditError::NoSuchSheet(sheet));
+        };
+        if cell.row >= MAX_ROWS
+            || cell.column >= MAX_COLUMNS
+            || text.chars().count() > MAX_COMMENT_CHARS
+            || author.chars().count() > MAX_COMMENT_CHARS
+        {
+            return Err(EditError::OutOfBounds);
+        }
+        let text = text.replace("\r\n", "\n");
+        if text.trim().is_empty() {
+            target.comments.remove(&cell);
+        } else {
+            target.comments.insert(
+                cell,
+                Comment {
+                    author: author.trim().to_owned(),
+                    text,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    /// Remove a name; formulas that read it show `#NAME?`. False when the workbook has none.
+    pub fn remove_defined_name(&mut self, name: &str, sheet: Option<usize>) -> bool {
+        let before = self.names.len();
+        self.names
+            .retain(|known| !(known.sheet == sheet && known.name.eq_ignore_ascii_case(name)));
+        let removed = self.names.len() < before;
+        if removed {
+            self.recalculate();
+        }
+        removed
+    }
+
     /// The separator of the csv or tsv the workbook was read from, so a save writes the file
     /// back as it came; `None` for any other file.
     #[must_use]
@@ -823,3 +989,35 @@ impl Workbook {
 
 #[cfg(test)]
 mod tests;
+
+/// Whether Excel accepts a name: a letter, `_` or `\\` first, then letters, digits, `.` and `_`,
+/// at most 255 characters, neither a cell such as `A1` or `R1C1` nor `TRUE` or `FALSE`.
+pub(crate) fn is_valid_name(name: &str) -> bool {
+    let mut characters = name.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    if !(first.is_alphabetic() || first == '_' || first == '\\') || name.chars().count() > 255 {
+        return false;
+    }
+    if !characters
+        .all(|character| character.is_alphanumeric() || matches!(character, '.' | '_' | '\\'))
+    {
+        return false;
+    }
+    let upper = name.to_ascii_uppercase();
+    if matches!(
+        upper.as_str(),
+        "TRUE" | "FALSE" | "VERO" | "FALSO" | "R" | "C"
+    ) {
+        return false;
+    }
+    let looks_like_cell = CellRef::parse(&upper).is_some();
+    let looks_like_r1c1 = upper.strip_prefix('R').is_some_and(|rest| {
+        let digits = rest.chars().take_while(char::is_ascii_digit).count();
+        rest[digits..]
+            .strip_prefix('C')
+            .is_some_and(|columns| columns.chars().all(|character| character.is_ascii_digit()))
+    });
+    !looks_like_cell && !looks_like_r1c1
+}
