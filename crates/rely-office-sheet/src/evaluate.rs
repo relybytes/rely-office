@@ -95,6 +95,8 @@ fn evaluate_pass(workbook: &Workbook, prior: &[BTreeMap<CellRef, CellRange>]) ->
         spilled: vec![HashMap::new(); workbook.sheets.len()],
         scopes: std::cell::RefCell::new(Vec::new()),
         calls: std::cell::Cell::new(0),
+        discovered: std::cell::RefCell::new(Vec::new()),
+        draws: std::cell::Cell::new(0),
     };
     for sheet in 0..workbook.sheets.len() {
         let cells: Vec<CellRef> = evaluator.formula_cells[sheet].iter().copied().collect();
@@ -129,6 +131,8 @@ impl<'a> FormulaContext<'a> {
                 spilled: vec![HashMap::new(); sheets],
                 scopes: std::cell::RefCell::new(Vec::new()),
                 calls: std::cell::Cell::new(0),
+                discovered: std::cell::RefCell::new(Vec::new()),
+                draws: std::cell::Cell::new(0),
             },
         }
     }
@@ -170,6 +174,10 @@ struct Evaluator<'a> {
     scopes: std::cell::RefCell<Vec<Vec<lambda::Binding>>>,
     /// How deep functions and defined names are calling one another.
     calls: std::cell::Cell<u32>,
+    /// The formula cells a computed reference reached before they were computed.
+    discovered: std::cell::RefCell<Vec<(usize, CellRef)>>,
+    /// How many random numbers this recalculation drew.
+    draws: std::cell::Cell<u64>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -210,7 +218,23 @@ impl<'a> Evaluator<'a> {
                 stack.pop();
             } else if pending.is_empty() {
                 self.current.set(Some(current));
-                let value = match self.evaluate(current_sheet, expression) {
+                self.discovered.borrow_mut().clear();
+                let operand = self.evaluate(current_sheet, expression);
+                let discovered = std::mem::take(&mut *self.discovered.borrow_mut());
+                if !discovered.is_empty() {
+                    // A computed reference reached cells not yet computed: compute them first
+                    // and this formula again, unless one of them waits on it.
+                    if discovered.iter().any(|(sheet, cell)| {
+                        self.states[*sheet].get(cell) == Some(&State::Visiting)
+                    }) {
+                        self.finish(current_sheet, current, Value::Error(ErrorKind::Circular));
+                        stack.pop();
+                    } else {
+                        stack.extend(discovered);
+                    }
+                    continue;
+                }
+                let value = match operand {
                     Operand::Value(value) => finite(value),
                     operand => match self.operand_grid(operand) {
                         Ok(grid) => self.spill(current_sheet, current, grid),
@@ -332,8 +356,16 @@ impl<'a> Evaluator<'a> {
                 self.dependencies(sheet, left, found);
                 self.dependencies(sheet, right, found);
             }
-            Expr::Call(_, arguments) => {
-                for argument in arguments {
+            Expr::Call(name, arguments) => {
+                let describes_first =
+                    reference::REFERENCE_ARGUMENT_FUNCTIONS.contains(&name.as_str());
+                for (index, argument) in arguments.iter().enumerate() {
+                    if index == 0
+                        && describes_first
+                        && matches!(argument, Expr::Cell(_) | Expr::Range(_))
+                    {
+                        continue;
+                    }
                     self.dependencies(sheet, argument, found);
                 }
             }
@@ -437,7 +469,13 @@ impl<'a> Evaluator<'a> {
                 if let Some(operand) = self.lambda_call(sheet, name, arguments) {
                     return operand;
                 }
-                match self.array_call(sheet, name, arguments) {
+                if let Some(operand) = self.reference_call(sheet, name, arguments) {
+                    return operand;
+                }
+                match self
+                    .array_call(sheet, name, arguments)
+                    .or_else(|| self.matrix_call(sheet, name, arguments))
+                {
                     Some(Ok(grid)) => Operand::Array(grid),
                     Some(Err(kind)) => Operand::Value(Value::Error(kind)),
                     None => Operand::Value(finite(self.call(sheet, name, arguments))),
@@ -475,6 +513,7 @@ impl<'a> Evaluator<'a> {
         match self.evaluate(sheet, expression) {
             Operand::Value(value) => value,
             Operand::Array(grid) if grid.len() == 1 && grid[0].len() == 1 => grid[0][0].clone(),
+            Operand::Range { sheet, start, end } if start == end => self.cell_value(sheet, start),
             Operand::Range { .. } | Operand::Array(_) => Value::Error(ErrorKind::Value),
             Operand::Lambda(_) => Value::Error(ErrorKind::Calc),
         }
@@ -1328,9 +1367,16 @@ fn wildcard(pattern: &[char], text: &[char]) -> bool {
 }
 
 mod arrays;
+mod complex;
+mod database;
 mod functions;
 mod lambda;
+mod matrices;
 mod more;
+mod probability;
+mod reference;
+mod securities;
+mod strings;
 
 #[cfg(test)]
 mod tests;

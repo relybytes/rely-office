@@ -43,13 +43,13 @@ fn as_a_number(value: &Value) -> Option<Result<f64, ErrorKind>> {
     }
 }
 
-fn mean(values: &[f64]) -> f64 {
+pub(super) fn mean(values: &[f64]) -> f64 {
     #[expect(clippy::cast_precision_loss, reason = "counts stay far below 2^52")]
     let count = values.len() as f64;
     values.iter().sum::<f64>() / count
 }
 
-fn variance(values: &[f64], sample: bool) -> Result<f64, ErrorKind> {
+pub(super) fn variance(values: &[f64], sample: bool) -> Result<f64, ErrorKind> {
     let minimum = if sample { 2 } else { 1 };
     if values.len() < minimum {
         return Err(ErrorKind::Div0);
@@ -62,7 +62,7 @@ fn variance(values: &[f64], sample: bool) -> Result<f64, ErrorKind> {
 }
 
 /// The value at a fraction of sorted values, between neighbours, as PERCENTILE.INC reads it.
-fn percentile_inclusive(sorted: &[f64], fraction: f64) -> Result<f64, ErrorKind> {
+pub(super) fn percentile_inclusive(sorted: &[f64], fraction: f64) -> Result<f64, ErrorKind> {
     if sorted.is_empty() || !(0.0..=1.0).contains(&fraction) {
         return Err(ErrorKind::Num);
     }
@@ -72,7 +72,7 @@ fn percentile_inclusive(sorted: &[f64], fraction: f64) -> Result<f64, ErrorKind>
 }
 
 /// The value at a fraction of sorted values counted from outside the ends, as PERCENTILE.EXC.
-fn percentile_exclusive(sorted: &[f64], fraction: f64) -> Result<f64, ErrorKind> {
+pub(super) fn percentile_exclusive(sorted: &[f64], fraction: f64) -> Result<f64, ErrorKind> {
     #[expect(clippy::cast_precision_loss, reason = "counts stay far below 2^52")]
     let position = fraction * (sorted.len() + 1) as f64 - 1.0;
     #[expect(clippy::cast_precision_loss, reason = "counts stay far below 2^52")]
@@ -97,7 +97,7 @@ fn interpolate(sorted: &[f64], position: f64) -> f64 {
 
 /// The error function, by Abramowitz and Stegun 7.1.26 refined to double precision with W. J.
 /// Cody's rational approximations.
-fn erf(x: f64) -> f64 {
+pub(super) fn erf(x: f64) -> f64 {
     // erfc by the continued fraction of Numerical Recipes' erfccheb is overkill here: the
     // series below is accurate to 1e-15 for |x| < 6, past which erf is 1 within a double.
     if x.abs() >= 6.0 {
@@ -131,17 +131,17 @@ fn erf(x: f64) -> f64 {
     (1.0 - erfc) * x.signum()
 }
 
-fn normal_cdf(z: f64) -> f64 {
+pub(super) fn normal_cdf(z: f64) -> f64 {
     f64::midpoint(1.0, erf(z / std::f64::consts::SQRT_2))
 }
 
-fn normal_pdf(z: f64) -> f64 {
+pub(super) fn normal_pdf(z: f64) -> f64 {
     (-0.5 * z * z).exp() / (2.0 * std::f64::consts::PI).sqrt()
 }
 
 /// The quantile of the standard normal distribution, Acklam's approximation with one step of
 /// Halley's method, accurate to about 1e-15.
-fn normal_inverse(probability: f64) -> Result<f64, ErrorKind> {
+pub(super) fn normal_inverse(probability: f64) -> Result<f64, ErrorKind> {
     const A: [f64; 6] = [
         -3.969_683_028_665_376e1,
         2.209_460_984_245_205e2,
@@ -195,7 +195,7 @@ fn normal_inverse(probability: f64) -> Result<f64, ErrorKind> {
 }
 
 /// The natural logarithm of the gamma function, by Lanczos' approximation.
-fn gamma_ln(x: f64) -> Result<f64, ErrorKind> {
+pub(super) fn gamma_ln(x: f64) -> Result<f64, ErrorKind> {
     const G: [f64; 9] = [
         0.999_999_999_999_809_9,
         676.520_368_121_885_1,
@@ -225,7 +225,7 @@ fn gamma_ln(x: f64) -> Result<f64, ErrorKind> {
     Ok(0.5 * (2.0 * std::f64::consts::PI).ln() + (x + 0.5) * t.ln() - t + sum.ln())
 }
 
-fn combinations(n: f64, k: f64) -> Result<f64, ErrorKind> {
+pub(super) fn combinations(n: f64, k: f64) -> Result<f64, ErrorKind> {
     let (n, k) = (n.trunc(), k.trunc());
     if n < 0.0 || k < 0.0 || k > n {
         return Err(ErrorKind::Num);

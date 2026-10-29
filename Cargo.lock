@@ -1880,6 +1880,7 @@ version = "0.7.1"
 dependencies = [
  "calamine",
  "quick-xml 0.42.0",
+ "regex",
  "rely-office-core",
  "rust_xlsxwriter",
  "serde",

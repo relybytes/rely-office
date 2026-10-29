@@ -65,6 +65,12 @@ impl Evaluator<'_> {
             .or_else(|| self.calendar(sheet, name, arguments))
             .or_else(|| self.finance(sheet, name, arguments))
             .or_else(|| self.more(sheet, name, arguments))
+            .or_else(|| self.probability(sheet, name, arguments))
+            .or_else(|| self.complex(sheet, name, arguments))
+            .or_else(|| self.database(sheet, name, arguments))
+            .or_else(|| self.securities(sheet, name, arguments))
+            .or_else(|| self.reference_value(sheet, name, arguments))
+            .or_else(|| self.strings(sheet, name, arguments))
     }
 
     fn optional_number(
@@ -1013,47 +1019,9 @@ impl Evaluator<'_> {
                 .and_then(|shown| parse_time(shown.trim()).ok_or(ErrorKind::Value))
                 .map(Value::Number),
             "YEARFRAC" => (|| {
-                let mut start = number(0)?.floor();
-                let mut end = number(1)?.floor();
-                if start > end {
-                    std::mem::swap(&mut start, &mut end);
-                }
                 let basis = integer(self.optional_number(sheet, argument(2), 0.0)?)?;
-                let (start_year, start_month, start_day) =
-                    date_from_serial(start).ok_or(ErrorKind::Num)?;
-                let (end_year, end_month, end_day) = date_from_serial(end).ok_or(ErrorKind::Num)?;
-                #[expect(clippy::cast_precision_loss, reason = "date parts are small")]
-                let thirty = |european: bool| {
-                    let mut first = start_day.min(30);
-                    let mut last = end_day;
-                    if european {
-                        last = last.min(30);
-                    } else if first == 30 && last == 31 {
-                        last = 30;
-                    }
-                    if !european && start_day == 31 {
-                        first = 30;
-                    }
-                    ((end_year - start_year) * 360
-                        + (end_month - start_month) * 30
-                        + (last - first)) as f64
-                        / 360.0
-                };
-                Ok(Value::Number(match basis {
-                    0 => thirty(false),
-                    1 => {
-                        let years = (start_year..=end_year)
-                            .map(|year| if leap(year) { 366.0 } else { 365.0 })
-                            .collect::<Vec<f64>>();
-                        #[expect(clippy::cast_precision_loss, reason = "few years")]
-                        let average = years.iter().sum::<f64>() / years.len() as f64;
-                        (end - start) / average
-                    }
-                    2 => (end - start) / 360.0,
-                    3 => (end - start) / 365.0,
-                    4 => thirty(true),
-                    _ => return Err(ErrorKind::Num),
-                }))
+                super::securities::year_fraction(number(0)?.floor(), number(1)?.floor(), basis)
+                    .map(Value::Number)
             })(),
             _ => return None,
         })
@@ -1235,10 +1203,6 @@ fn gcd(mut first: u64, mut second: u64) -> u64 {
         (first, second) = (second, first % second);
     }
     first
-}
-
-fn leap(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 /// The week number of a date: type 1 counts weeks from Sunday, 2 from Monday, 11 to 17 from the
