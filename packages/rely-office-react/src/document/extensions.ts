@@ -16,7 +16,7 @@ import { RelyParagraphFormat } from './formatting.js';
 import { imageNodeView } from './image-view.js';
 import { RelyPagination } from './pagination.js';
 import { RelySearch } from './search.js';
-import { RelyTrackRecording, TRACK_SKIP } from './track-changes.js';
+import { RelyTrackRecording, TRACK_SKIP, restoreFormatting } from './track-changes.js';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -265,6 +265,32 @@ function trackedChange(name: 'insertion' | 'deletion', tag: 'ins' | 'del') {
 export const RelyInsertion = trackedChange('insertion', 'ins');
 export const RelyDeletion = trackedChange('deletion', 'del');
 
+/** Text whose formatting changed while changes were tracked, with the marks it had before. */
+export const RelyFormatChange = Mark.create({
+  name: 'formatChange',
+  inclusive: false,
+  addAttributes() {
+    return {
+      author: { default: '', parseHTML: (element: HTMLElement) => element.getAttribute('data-author') ?? '' },
+      date: { default: null, parseHTML: (element: HTMLElement) => element.getAttribute('data-date') },
+      previous: { default: [], rendered: false },
+    };
+  },
+  parseHTML: () => [{ tag: 'span[data-format-change]' }],
+  renderHTML: ({ mark, HTMLAttributes }) => [
+    'span',
+    mergeAttributes(HTMLAttributes, {
+      class: 'rely-format-change',
+      'data-format-change': '',
+      'data-author': String(mark.attrs.author ?? ''),
+      title: String(mark.attrs.author ?? ''),
+      ...(mark.attrs.date ? { 'data-date': String(mark.attrs.date) } : {}),
+    }),
+    0,
+  ],
+});
+
+
 /** Accept or reject every tracked change of the document at once. */
 export const RelyTrackedChanges = Extension.create({
   name: 'relyTrackedChanges',
@@ -278,12 +304,17 @@ export const RelyTrackedChanges = Extension.create({
         const dropType = state.schema.marks[drop];
         if (!keepType || !dropType) return false;
         const removals: [number, number][] = [];
+        const formatChange = state.schema.marks.formatChange;
         state.doc.descendants((node: ProseMirrorNode, position: number) => {
           if (!node.isText) return;
           if (dropType.isInSet(node.marks)) removals.push([position, position + node.nodeSize]);
+          if (keep === 'deletion' && formatChange?.isInSet(node.marks)) {
+            restoreFormatting(tr, node, position, position + node.nodeSize);
+          }
         });
         if (dispatch) {
           tr.removeMark(0, state.doc.content.size, keepType);
+          if (formatChange) tr.removeMark(0, state.doc.content.size, formatChange);
           for (const [from, to] of removals.reverse()) tr.delete(from, to);
           tr.setMeta(TRACK_SKIP, true);
           dispatch(tr);
@@ -497,6 +528,7 @@ export function createRelyDocumentExtensions(options: RelyDocumentExtensionOptio
     RelyComment,
     RelyInsertion,
     RelyDeletion,
+    RelyFormatChange,
     RelyTrackedChanges,
     RelyReferences,
     RelyNoteReference,

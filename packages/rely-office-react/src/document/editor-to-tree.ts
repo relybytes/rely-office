@@ -38,6 +38,7 @@ const MARK_ORDER = [
   'comment',
   'insertion',
   'deletion',
+  'formatChange',
 ];
 const SIMPLE_MARKS: ReadonlySet<string> = new Set([
   'bold',
@@ -343,6 +344,14 @@ function mapMarks(marks: JSONContent['marks']): Mark[] {
         type: mark.type,
         author: String(attrs.author ?? ''),
         ...(date === undefined ? {} : { date }),
+      });
+    } else if (mark.type === 'formatChange') {
+      const date = text(attrs.date);
+      mapped.push({
+        type: 'formatChange',
+        author: String(attrs.author ?? ''),
+        ...(date === undefined ? {} : { date }),
+        previous: mapMarks(Array.isArray(attrs.previous) ? (attrs.previous as JSONContent['marks']) : []),
       });
     }
   }

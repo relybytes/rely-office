@@ -112,10 +112,19 @@ export type Mark =
   /** A tracked insertion, read only with `{ trackedChanges: 'keep' }`; `date` is ISO 8601. */
   | { type: 'insertion'; author: string; date?: string }
   /** A tracked deletion, still in the text until accepted; read only with `keep`. */
-  | { type: 'deletion'; author: string; date?: string };
+  | { type: 'deletion'; author: string; date?: string }
+  /**
+   * A tracked formatting change, read only with `keep`: `previous` holds the marks the text had
+   * before it, which rejecting the change puts back.
+   */
+  | { type: 'formatChange'; author: string; date?: string; previous: Mark[] };
 
 export type Inline =
-  | { type: 'text'; text: string; marks?: Mark[] }
+  /**
+   * `field` marks the page number (`page`) or the page count (`pages`) a header or a footer shows:
+   * `text` is the value it showed last, and each page fills in its own.
+   */
+  | { type: 'text'; text: string; marks?: Mark[]; field?: 'page' | 'pages' }
   | { type: 'hardBreak' }
   /** `media` indexes `DocumentTree.media`; sizes are CSS pixels. */
   | { type: 'image'; media: number; alt?: string; width?: number; height?: number }

@@ -125,6 +125,8 @@ pub enum Expr {
     Group(Box<Expr>),
     /// A function by its English name in capitals.
     Call(String, Vec<Expr>),
+    /// An array constant, `{1,2;3,4}`: rows of constants, every row as long as the first.
+    Array(Vec<Vec<Expr>>),
 }
 
 /// Why a formula could not be parsed.
@@ -149,6 +151,10 @@ enum Token {
     Close,
     Separator,
     Colon,
+    /// `{` and `}` around an array constant, and what separates its rows.
+    BraceOpen,
+    BraceClose,
+    RowSeparator,
 }
 
 /// Parse a formula, with or without its leading `=`.
@@ -214,10 +220,15 @@ fn parse_with(formula: &str, comma: Comma) -> Result<Expr, FormulaError> {
     Ok(expression)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the characters reads every token of the grammar"
+)]
 fn tokenize(formula: &str, comma: Comma) -> Result<Vec<(Token, usize)>, FormulaError> {
     let characters: Vec<char> = formula.chars().collect();
     let mut tokens = Vec::new();
     let mut index = 0;
+    let mut in_array = false;
     let error = |position: usize, reason: &str| FormulaError {
         position,
         reason: reason.to_owned(),
@@ -227,6 +238,26 @@ fn tokenize(formula: &str, comma: Comma) -> Result<Vec<(Token, usize)>, FormulaE
         let start = index;
         match character {
             ' ' | '\t' | '\n' | '\r' => index += 1,
+            '{' if !in_array => {
+                in_array = true;
+                index += 1;
+                tokens.push((Token::BraceOpen, start));
+            }
+            '}' if in_array => {
+                in_array = false;
+                index += 1;
+                tokens.push((Token::BraceClose, start));
+            }
+            // In an array the rows are apart by `;`, or, with `;` between columns as Italian
+            // writes it, by `|` or `\`.
+            ';' if in_array && comma == Comma::Separator => {
+                index += 1;
+                tokens.push((Token::RowSeparator, start));
+            }
+            '|' | '\\' if in_array => {
+                index += 1;
+                tokens.push((Token::RowSeparator, start));
+            }
             '"' => {
                 let text = quoted(&characters, &mut index, '"')
                     .ok_or_else(|| error(start, "a text is not closed"))?;
@@ -393,11 +424,15 @@ fn quoted(characters: &[char], index: &mut usize, quote: char) -> Option<String>
 fn has_semicolon_outside_text(formula: &str) -> bool {
     let mut in_text = false;
     let mut in_sheet = false;
+    let mut in_array = false;
     for character in formula.chars() {
         match character {
             '"' if !in_sheet => in_text = !in_text,
             '\'' if !in_text => in_sheet = !in_sheet,
-            ';' if !in_text && !in_sheet => return true,
+            // Inside an array constant a `;` separates its rows, not arguments.
+            '{' if !in_text && !in_sheet => in_array = true,
+            '}' if !in_text && !in_sheet => in_array = false,
+            ';' if !in_text && !in_sheet && !in_array => return true,
             _ => {}
         }
     }
@@ -550,6 +585,7 @@ impl Parser {
             Token::Number(value) => Ok(Expr::Number(value)),
             Token::Text(text) => Ok(Expr::Text(text)),
             Token::Error(kind) => Ok(Expr::Error(kind)),
+            Token::BraceOpen => self.array(),
             Token::Open => {
                 let inner = self.comparison()?;
                 if self.peek() != Some(&Token::Close) {
@@ -582,6 +618,42 @@ impl Parser {
                 Err(self.error("expected a value"))
             }
         }
+    }
+
+    /// The rows of an array constant after its `{`: constants, a sign before a number included.
+    fn array(&mut self) -> Result<Expr, FormulaError> {
+        let mut rows: Vec<Vec<Expr>> = vec![Vec::new()];
+        loop {
+            let element = self.unary()?;
+            let constant = match &element {
+                Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) => true,
+                Expr::Unary(_, operand) => matches!(**operand, Expr::Number(_)),
+                _ => false,
+            };
+            if !constant {
+                return Err(self.error("an array holds only constants"));
+            }
+            if let Some(row) = rows.last_mut() {
+                row.push(element);
+            }
+            match self.peek() {
+                Some(Token::Separator) => self.position += 1,
+                Some(Token::RowSeparator) => {
+                    self.position += 1;
+                    rows.push(Vec::new());
+                }
+                Some(Token::BraceClose) => {
+                    self.position += 1;
+                    break;
+                }
+                _ => return Err(self.error("an array is not closed")),
+            }
+        }
+        let width = rows[0].len();
+        if rows.iter().any(|row| row.len() != width) {
+            return Err(self.error("the rows of an array differ in length"));
+        }
+        Ok(Expr::Array(rows))
     }
 
     fn call(&mut self, name: &str) -> Result<Expr, FormulaError> {
@@ -942,6 +1014,25 @@ const ITALIAN_FUNCTION_NAMES: &[(&str, &str)] = &[
     ("TIPO", "TYPE"),
     ("ERRORE.TIPO", "ERROR.TYPE"),
     ("INDIRIZZO", "ADDRESS"),
+    ("FILTRO", "FILTER"),
+    ("DATI.ORDINA", "SORT"),
+    ("DATI.ORDINA.PER", "SORTBY"),
+    ("UNICI", "UNIQUE"),
+    ("SEQUENZA", "SEQUENCE"),
+    ("MATR.TRASPOSTA", "TRANSPOSE"),
+    ("MATR.PRODOTTO", "MMULT"),
+    ("MATR.UNIT", "MUNIT"),
+    ("FREQUENZA", "FREQUENCY"),
+    ("PRENDI", "TAKE"),
+    ("ESCLUDI", "DROP"),
+    ("SCEGLI.RIGA", "CHOOSEROWS"),
+    ("SCEGLI.COL", "CHOOSECOLS"),
+    ("STACK.VERT", "VSTACK"),
+    ("STACK.ORIZ", "HSTACK"),
+    ("A.COL", "TOCOL"),
+    ("A.RIGA", "TOROW"),
+    ("ESPANDI", "EXPAND"),
+    ("DIVIDI.TESTO", "TEXTSPLIT"),
 ];
 
 /// The English name of a function typed in Italian or English, in capitals.
@@ -969,6 +1060,10 @@ fn italian_function_name(english: &str) -> &str {
 }
 
 /// The functions an xlsx stores with the `_xlfn.` prefix, as Excel 2010 and later write them.
+/// The functions an xlsx stores with the `_xlfn._xlws.` prefix, the dynamic arrays Excel ships
+/// as worksheet functions.
+pub(crate) const WORKSHEET_PREFIXED_FUNCTIONS: &[&str] = &["FILTER", "SORT"];
+
 pub(crate) const PREFIXED_FUNCTIONS: &[&str] = &[
     "CEILING.MATH",
     "FLOOR.MATH",
@@ -1039,6 +1134,22 @@ pub(crate) const PREFIXED_FUNCTIONS: &[&str] = &[
     "NUMBERVALUE",
     "TEXTBEFORE",
     "TEXTAFTER",
+    "SORTBY",
+    "UNIQUE",
+    "SEQUENCE",
+    "TAKE",
+    "DROP",
+    "CHOOSEROWS",
+    "CHOOSECOLS",
+    "VSTACK",
+    "HSTACK",
+    "TOCOL",
+    "TOROW",
+    "WRAPROWS",
+    "WRAPCOLS",
+    "EXPAND",
+    "TEXTSPLIT",
+    "MUNIT",
 ];
 
 /// Every function the evaluator computes, by its English name.
@@ -1077,6 +1188,8 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "CEILING.PRECISE",
     "CHAR",
     "CHOOSE",
+    "CHOOSECOLS",
+    "CHOOSEROWS",
     "CLEAN",
     "CODE",
     "COLUMN",
@@ -1123,6 +1236,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "DOLLAR",
     "DOLLARDE",
     "DOLLARFR",
+    "DROP",
     "EDATE",
     "EFFECT",
     "EOMONTH",
@@ -1130,11 +1244,13 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "EVEN",
     "EXACT",
     "EXP",
+    "EXPAND",
     "EXPON.DIST",
     "EXPONDIST",
     "FACT",
     "FACTDOUBLE",
     "FALSE",
+    "FILTER",
     "FIND",
     "FISHER",
     "FISHERINV",
@@ -1144,6 +1260,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "FLOOR.PRECISE",
     "FORECAST",
     "FORECAST.LINEAR",
+    "FREQUENCY",
     "FV",
     "FVSCHEDULE",
     "GAMMA",
@@ -1158,6 +1275,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "HEX2OCT",
     "HLOOKUP",
     "HOUR",
+    "HSTACK",
     "HYPERLINK",
     "IF",
     "IFERROR",
@@ -1203,12 +1321,14 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "MINIFS",
     "MINUTE",
     "MIRR",
+    "MMULT",
     "MOD",
     "MODE",
     "MODE.SNGL",
     "MONTH",
     "MROUND",
     "MULTINOMIAL",
+    "MUNIT",
     "N",
     "NA",
     "NETWORKDAYS",
@@ -1276,6 +1396,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "SEC",
     "SECH",
     "SECOND",
+    "SEQUENCE",
     "SIGN",
     "SIN",
     "SINH",
@@ -1283,6 +1404,8 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "SLN",
     "SLOPE",
     "SMALL",
+    "SORT",
+    "SORTBY",
     "SQRT",
     "SQRTPI",
     "STANDARDIZE",
@@ -1306,15 +1429,20 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "SWITCH",
     "SYD",
     "T",
+    "TAKE",
     "TAN",
     "TANH",
     "TEXT",
     "TEXTAFTER",
     "TEXTBEFORE",
     "TEXTJOIN",
+    "TEXTSPLIT",
     "TIME",
     "TIMEVALUE",
+    "TOCOL",
     "TODAY",
+    "TOROW",
+    "TRANSPOSE",
     "TRIM",
     "TRIMMEAN",
     "TRUE",
@@ -1322,6 +1450,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "TYPE",
     "UNICHAR",
     "UNICODE",
+    "UNIQUE",
     "UPPER",
     "VALUE",
     "VAR",
@@ -1331,10 +1460,13 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "VARP",
     "VARPA",
     "VLOOKUP",
+    "VSTACK",
     "WEEKDAY",
     "WEEKNUM",
     "WORKDAY",
     "WORKDAY.INTL",
+    "WRAPCOLS",
+    "WRAPROWS",
     "XIRR",
     "XLOOKUP",
     "XNPV",
@@ -1428,6 +1560,22 @@ fn print(expression: &Expr, text: &mut String, parent_precedence: u8, locale: Lo
             text.push('(');
             print(inner, text, 0, locale);
             text.push(')');
+        }
+        Expr::Array(rows) => {
+            let (column, row) = if italian { (';', '|') } else { (',', ';') };
+            text.push('{');
+            for (index, line) in rows.iter().enumerate() {
+                if index > 0 {
+                    text.push(row);
+                }
+                for (position, element) in line.iter().enumerate() {
+                    if position > 0 {
+                        text.push(column);
+                    }
+                    print(element, text, 0, locale);
+                }
+            }
+            text.push('}');
         }
         Expr::Binary(operator, left, right) => {
             let precedence = operator.precedence();

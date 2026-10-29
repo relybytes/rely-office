@@ -69,7 +69,10 @@ pub use number_format::{
 };
 pub use opendocument::excel_formula_from_odf;
 pub use sheet::{Sheet, Workbook, read_ods_sheet_layouts, read_workbook, read_workbook_in};
-pub use sheet_drawings::{CarriedDrawing, CarriedPart, CarriedPivot, SheetDrawing};
+pub use sheet_drawings::{
+    CarriedDrawing, CarriedPart, CarriedPivot, ChartValue, SheetDrawing, chart_formula_range,
+    redraw_carried_drawing,
+};
 pub use sheet_layout::{
     AutoFilterLayout, CellRange, MergePlace, SheetLayout, read_xlsx_drawing_parts,
     read_xlsx_layouts, read_xlsx_pivot_parts, read_xlsx_theme_part,

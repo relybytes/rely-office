@@ -10,8 +10,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use rely_office_core::{
-    CarriedDrawing, CarriedPart, CarriedPivot, CellRange, CellStyle, ConditionalFormat,
-    DataValidation, SheetDrawing,
+    CarriedDrawing, CarriedPart, CarriedPivot, CellRange, CellStyle, ChartValue, ConditionalFormat,
+    DataValidation, Limits, SheetDrawing, SheetLayout, chart_formula_range, redraw_carried_drawing,
 };
 
 use crate::arrange::AutoFilter;
@@ -168,8 +168,12 @@ pub enum EditError {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workbook {
     pub(crate) sheets: Vec<Sheet>,
-    /// The computed value of every formula cell, per sheet.
+    /// The computed value of every formula cell and every spilled cell, per sheet.
     pub(crate) values: Vec<HashMap<CellRef, Value>>,
+    /// The range each formula that computes an array fills, by the formula's cell, per sheet.
+    pub(crate) spills: Vec<BTreeMap<CellRef, CellRange>>,
+    /// Which computation the values are from, unique across every workbook of the process.
+    pub(crate) revision: u64,
     /// Today's serial date for `TODAY` and `NOW`, which a host sets: WebAssembly has no clock.
     pub(crate) today: Option<f64>,
     /// Every style the cells use, each once; the first is the default look.
@@ -212,6 +216,8 @@ impl Workbook {
             .collect();
         let mut workbook = Self {
             values: vec![HashMap::new(); sheets.len()],
+            spills: vec![BTreeMap::new(); sheets.len()],
+            revision: 0,
             sheets,
             today: None,
             styles,
@@ -241,7 +247,8 @@ impl Workbook {
         self.recalculate();
     }
 
-    /// What a cell shows: its computed value for a formula, its input otherwise.
+    /// What a cell shows: its computed value for a formula, its input otherwise, and for an
+    /// empty cell an array spills into, the value spilled there.
     #[must_use]
     pub fn value(&self, sheet: usize, cell: CellRef) -> Value {
         let Some(content) = self
@@ -249,7 +256,12 @@ impl Workbook {
             .get(sheet)
             .and_then(|sheet| sheet.cells.get(&cell))
         else {
-            return Value::Empty;
+            return self
+                .values
+                .get(sheet)
+                .and_then(|values| values.get(&cell))
+                .cloned()
+                .unwrap_or(Value::Empty);
         };
         match &content.input {
             Input::Number(number) => Value::Number(*number),
@@ -648,7 +660,11 @@ impl Workbook {
 
     /// Recompute every formula.
     pub(crate) fn recalculate(&mut self) {
-        self.values = evaluate::evaluate_workbook(self);
+        static NEXT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let computed = evaluate::evaluate_workbook(self);
+        self.values = computed.values;
+        self.spills = computed.spills;
+        self.revision = NEXT_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn check_new_name(&self, name: &str, except: Option<usize>) -> Result<(), EditError> {
@@ -670,6 +686,119 @@ impl Workbook {
             return Err(EditError::DuplicateSheetName(name.to_owned()));
         }
         Ok(())
+    }
+
+    /// The pictures and charts of a sheet, the charts drawn again from the values the cells hold
+    /// now, so a chart follows an edit; a sheet whose drawing is not carried gives what it was
+    /// read with.
+    #[must_use]
+    pub fn pictures(&self, sheet: usize) -> Vec<SheetDrawing> {
+        let Some(content) = self.sheets.get(sheet) else {
+            return Vec::new();
+        };
+        let Some(drawing) = &content.drawing else {
+            return content.pictures.clone();
+        };
+        let last_column = content
+            .column_widths
+            .keys()
+            .next_back()
+            .map_or(0, |last| last + 1);
+        let layout = SheetLayout {
+            column_widths: (0..last_column)
+                .map(|column| {
+                    content.column_widths.get(&column).map(|width| {
+                        #[expect(
+                            clippy::cast_possible_truncation,
+                            clippy::cast_sign_loss,
+                            reason = "widths are clamped to 255"
+                        )]
+                        let units = (width * 256.0).round() as u32;
+                        units
+                    })
+                })
+                .collect(),
+            row_heights: content
+                .row_heights
+                .iter()
+                .map(|(row, height)| {
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "heights are clamped to 409 points"
+                    )]
+                    let twips = (height * 20.0).round() as u32;
+                    (*row, twips)
+                })
+                .collect(),
+            ..SheetLayout::default()
+        };
+        let values = |formula: &str| {
+            let (name, range) = chart_formula_range(formula)?;
+            let index = self.sheet_index(&name)?;
+            let area = u64::from(range.last_row - range.first_row + 1)
+                * u64::from(range.last_column - range.first_column + 1);
+            if area > 100_000 {
+                return None;
+            }
+            let mut found = Vec::new();
+            for row in range.first_row..=range.last_row {
+                for column in range.first_column..=range.last_column {
+                    found.push(match self.value(index, CellRef::new(row, column)) {
+                        Value::Number(number) => ChartValue::Number(number),
+                        Value::Empty => ChartValue::Empty,
+                        Value::Text(text) => ChartValue::Text(text),
+                        Value::Bool(flag) => {
+                            ChartValue::Text(if flag { "TRUE" } else { "FALSE" }.to_owned())
+                        }
+                        Value::Error(kind) => ChartValue::Text(kind.code().to_owned()),
+                    });
+                }
+            }
+            Some(found)
+        };
+        let drawn = redraw_carried_drawing(
+            drawing,
+            self.theme.as_ref(),
+            &layout,
+            &Limits::default(),
+            &values,
+        );
+        if drawn.is_empty() {
+            content.pictures.clone()
+        } else {
+            drawn
+        }
+    }
+
+    /// Which computation the workbook's values are from: it changes with every edit, and a copy
+    /// keeps its own, so a host can keep what it drew from the values until it changes.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// The ranges the arrays of a sheet's formulas fill, each by the formula's cell.
+    #[must_use]
+    pub fn spills(&self, sheet: usize) -> Vec<(CellRef, CellRange)> {
+        self.spills
+            .get(sheet)
+            .map(|spills| {
+                spills
+                    .iter()
+                    .map(|(anchor, range)| (*anchor, *range))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The cell of the formula whose array reaches a cell, the formula's own cell included.
+    #[must_use]
+    pub fn spill_anchor(&self, sheet: usize, cell: CellRef) -> Option<CellRef> {
+        self.spills
+            .get(sheet)?
+            .iter()
+            .find_map(|(anchor, range)| range.contains(cell.row, cell.column).then_some(*anchor))
     }
 
     /// The formula of a cell, parsed, if it holds one.

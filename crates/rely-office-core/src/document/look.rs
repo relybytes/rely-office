@@ -53,6 +53,11 @@ pub struct RunLook {
 
 /// A field whose result depends on the page it is drawn on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub enum PageField {
     /// `PAGE`: the number of the page.
     Page,

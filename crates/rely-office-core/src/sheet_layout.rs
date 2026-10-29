@@ -138,6 +138,9 @@ pub struct SheetLayout {
     pub frozen_rows: u32,
     pub frozen_columns: u32,
     pub auto_filter: Option<AutoFilterLayout>,
+    /// The array formulas of the sheet: the cell of each and the range its array fills, where
+    /// the file caches the values of every cell but the formula's own.
+    pub array_formulas: Vec<((u32, u32), CellRange)>,
 }
 
 /// The filter buttons of a sheet: the range they head and the values each filtered column
@@ -442,6 +445,7 @@ fn sheet_layout(sheet: &str, theme: &ThemeColours) -> Result<ReadLayout, OfficeE
     let mut layout = SheetLayout::default();
     let mut looks = Vec::new();
     let mut reading: Option<bool> = None;
+    let mut current_cell: Option<(u32, u32)> = None;
     // Inside the extensions only the validations Excel 2010 moved there are read: the rest
     // repeat, with additions, the formats already read.
     let mut extension_depth = 0_usize;
@@ -496,7 +500,22 @@ fn sheet_layout(sheet: &str, theme: &ThemeColours) -> Result<ReadLayout, OfficeE
                 }
                 "col" => apply_column(&mut layout, &element),
                 "row" => apply_row(&mut layout, &element),
-                "c" => apply_cell(&mut layout, &element),
+                "c" => {
+                    current_cell =
+                        attribute(&element, "r").and_then(|reference| parse_cell(&reference));
+                    apply_cell(&mut layout, &element);
+                }
+                "f" if attribute(&element, "t").as_deref() == Some("array")
+                    && layout.array_formulas.len() < MAX_MERGES =>
+                {
+                    if let (Some(cell), Some(range)) = (
+                        current_cell,
+                        attribute(&element, "ref")
+                            .and_then(|reference| CellRange::parse(&reference)),
+                    ) {
+                        layout.array_formulas.push((cell, range));
+                    }
+                }
                 "mergeCell" if layout.merges.len() < MAX_MERGES => {
                     if let Some(range) = attribute(&element, "ref")
                         .and_then(|reference| CellRange::parse(&reference))

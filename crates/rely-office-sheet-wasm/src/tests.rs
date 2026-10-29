@@ -393,3 +393,21 @@ fn lists_the_pictures_and_the_functions() {
     assert!(names.contains(&"SOMMA"));
     assert!(names.contains(&"CERCA.VERT"));
 }
+
+#[test]
+fn shows_the_cells_an_array_spills_into() {
+    let mut document = SheetDocument::create("it").unwrap();
+    document
+        .set_inputs_json(0, r#"[[0,0,"=SEQUENZA(3;1;10;5)"]]"#)
+        .unwrap();
+    let cells = parse(&document.window(0, 0, 0, 3, 0).unwrap());
+    let shown: Vec<&str> = cells
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|cell| cell["display"].as_str().unwrap())
+        .collect();
+    assert_eq!(shown, ["10", "15", "20"]);
+    assert_eq!(document.input(0, 1, 0), "");
+    assert_eq!(document.input(0, 0, 0), "=SEQUENZA(3;1;10;5)");
+}

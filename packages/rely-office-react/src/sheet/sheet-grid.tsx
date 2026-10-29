@@ -295,7 +295,8 @@ export const SheetGrid = forwardRef(function SheetGrid(
     [cells, sheet, workbook.index],
   );
 
-  const pictures = useMemo(() => sheet.pictures(workbook.index), [sheet, workbook.index]);
+  // A new `workbook` follows every edit, and a chart is drawn again from the values it changed.
+  const pictures = useMemo(() => sheet.pictures(workbook.index), [sheet, workbook]);
   const pictureUrls = useMemo(() => {
     if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return pictures.map(() => '');
     return pictures.map((picture, position) =>

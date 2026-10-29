@@ -105,23 +105,25 @@ The style chain (`w:basedOn`) is followed for up to 16 steps.
 
 Adjacent runs with the same marks are merged. Tabs are `\t` in the text. A page number or a page
 count field is text whose look says which (`PAGE`, `NUMPAGES`, `text:page-number`), so a
-renderer can draw the page it lands on.
+renderer can draw the page it lands on; in JSON the run carries it as `field`, `page` or `pages`,
+and `writeDocx` writes it back as the field.
 
 Marks, in this order: `bold`, `italic`, `underline`, `strike` (single or double), `code` (a
 monospace font or a character style named like code or verbatim), `superscript`, `subscript`,
 `textStyle` with the `fontFamily`, `fontSize` (`"14pt"`) and `color` (`"#1F3864"`) the run sets
 itself (the paragraph's own font is not repeated), `highlight` with its `color`, `link` with
 `href`, `comment` with the index of the comment the text is under, and, only when changes are
-kept, `insertion` and `deletion` with the `author` and `date` of the change. A run's character
-style applies first and its own properties over it; the old formatting a tracked change keeps is
-ignored. A link's underline is not repeated as a mark, nor is the underline of a link that was
+kept, `insertion` and `deletion` with the `author` and `date` of the change, and `formatChange`
+with its `author`, `date` and the marks the run had before it, `previous` (from `w:rPrChange`). A
+run's character style applies first and its own properties over it. A link's underline is not repeated as a mark, nor is the underline of a link that was
 dropped.
 
 Tracked changes are accepted by default: inserted text is in the tree, deleted text is not.
 `read_document_tree_with(bytes, limits, &TreeOptions { tracked_changes: TrackedChanges::Keep })`,
 or `readDocumentTree(bytes, limits, { trackedChanges: 'keep' })`, keeps both, each run marked with
 its change, from `w:ins` and `w:del`, the tracked-changes regions of an odt and the revision marks
-and reviewer table of a doc; `writeDocx` writes them back as `w:ins` and `w:del`.
+and reviewer table of a doc; `writeDocx` writes them back as `w:ins`, `w:del` and `w:rPrChange`.
+Accepted, a formatting change keeps the new formatting.
 
 Equations are read as LaTeX, the language an editor's formula field takes: from the Office Math
 of a docx and from the MathML of an odt formula object, read before the picture that stands in for

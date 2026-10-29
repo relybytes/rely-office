@@ -384,7 +384,17 @@ pub enum Inline {
             serde(default, skip_serializing_if = "Vec::is_empty")
         )]
         marks: Vec<Mark>,
-        #[cfg_attr(feature = "serde", serde(skip))]
+        /// In JSON the look gives only `field`: the page number or the page count a run of a
+        /// header shows, which an editor fills in on each page.
+        #[cfg_attr(
+            feature = "serde",
+            serde(
+                rename = "field",
+                default,
+                skip_serializing_if = "format::look_field::is_empty",
+                with = "format::look_field"
+            )
+        )]
         look: RunLook,
     },
     /// A line break inside the block.
@@ -484,6 +494,18 @@ pub enum Mark {
             serde(default, skip_serializing_if = "Option::is_none")
         )]
         date: Option<String>,
+    },
+    /// Text whose formatting changed while changes were tracked: `previous` holds the marks it
+    /// had before, which rejecting the change puts back; read only with [`TrackedChanges::Keep`].
+    FormatChange {
+        author: String,
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
+        date: Option<String>,
+        #[cfg_attr(feature = "serde", serde(default))]
+        previous: Vec<Mark>,
     },
 }
 

@@ -192,6 +192,35 @@ pub(crate) mod look_as_format {
     }
 }
 
+/// The page field of a run's look in the JSON tree.
+#[cfg(feature = "serde")]
+pub(crate) mod look_field {
+    use super::super::look::{PageField, RunLook};
+
+    #[allow(clippy::ref_option, reason = "the signature serde asks for")]
+    pub fn serialize<S: serde::Serializer>(
+        look: &RunLook,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(&look.field, serializer)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<RunLook, D::Error> {
+        let field: Option<PageField> = serde::Deserialize::deserialize(deserializer)?;
+        Ok(RunLook {
+            field,
+            ..RunLook::default()
+        })
+    }
+
+    #[must_use]
+    pub fn is_empty(look: &RunLook) -> bool {
+        look.field.is_none()
+    }
+}
+
 /// The column widths of a table's look in the JSON tree.
 #[cfg(feature = "serde")]
 pub(crate) mod table_widths {

@@ -1791,7 +1791,9 @@ mod tests;
 /// The value of a `config:config-item` of a settings part, anywhere under `element`.
 fn config_item(element: &Element, name: &str) -> Option<String> {
     for child in element.elements() {
-        if child.name == "config-item" && child.attribute(Namespace::Other, "name") == Some(name) {
+        if child.name == "config-item"
+            && child.attribute(Namespace::OdfConfig, "name") == Some(name)
+        {
             return Some(child.text().trim().to_owned());
         }
         if let Some(found) = config_item(child, name) {

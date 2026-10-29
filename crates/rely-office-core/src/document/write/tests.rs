@@ -842,3 +842,67 @@ fn writes_and_reads_back_the_column_widths_of_a_table() {
     };
     assert_eq!(look.column_widths_twips, vec![1_500, 4_500]);
 }
+
+#[cfg(feature = "serde")]
+#[test]
+fn writes_and_reads_back_the_page_fields_of_a_footer_from_json() {
+    let footer: Vec<Block> = serde_json::from_str(
+        r#"[{"type":"paragraph","content":[
+            {"type":"text","text":"Pagina "},{"type":"text","text":"1","field":"page"},
+            {"type":"text","text":" di "},{"type":"text","text":"3","field":"pages"}]}]"#,
+    )
+    .unwrap();
+    let mut original = tree(
+        vec![paragraph(vec![text("Corpo", Vec::new())], None)],
+        Vec::new(),
+    );
+    original.headers_footers.footer = footer;
+    let read = round_trip(&original);
+    let written = serde_json::to_string(&read.headers_footers.footer).unwrap();
+    assert!(written.contains(r#""field":"page""#), "{written}");
+    assert!(written.contains(r#""field":"pages""#), "{written}");
+}
+
+#[test]
+fn writes_and_reads_back_a_tracked_formatting_change() {
+    use crate::document::{TrackedChanges, TreeOptions, read_document_tree_with};
+    let change = Mark::FormatChange {
+        author: "Revisore".to_owned(),
+        date: Some("2026-10-28T09:00:00Z".to_owned()),
+        previous: vec![Mark::Italic],
+    };
+    let original = tree(
+        vec![paragraph(
+            vec![
+                text("Prima ", Vec::new()),
+                text("in grassetto", vec![Mark::Bold, change.clone()]),
+            ],
+            None,
+        )],
+        Vec::new(),
+    );
+    let written = write_docx(&original).unwrap();
+    let keep = TreeOptions {
+        tracked_changes: TrackedChanges::Keep,
+    };
+    let read = read_document_tree_with(&written, &Limits::default(), &keep).unwrap();
+    let Block::Paragraph { content, .. } = &read.blocks[0] else {
+        panic!("a paragraph");
+    };
+    let Some(Inline::Text { marks, .. }) = content.last() else {
+        panic!("{content:?}");
+    };
+    assert_eq!(marks, &vec![Mark::Bold, change]);
+    let accepted = read_document_tree(&written, &Limits::default()).unwrap();
+    let Block::Paragraph { content, .. } = &accepted.blocks[0] else {
+        panic!("a paragraph");
+    };
+    let Some(Inline::Text { marks, .. }) = content.last() else {
+        panic!("{content:?}");
+    };
+    assert_eq!(
+        marks,
+        &vec![Mark::Bold],
+        "accepted, the new formatting stays"
+    );
+}

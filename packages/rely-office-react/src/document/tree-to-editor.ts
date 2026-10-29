@@ -287,6 +287,11 @@ function mapMarks(marks: Mark[], context: MappingContext): NonNullable<JSONConte
       case 'insertion':
       case 'deletion':
         return { type: mark.type, attrs: { author: mark.author, date: mark.date ?? null } };
+      case 'formatChange':
+        return {
+          type: 'formatChange',
+          attrs: { author: mark.author, date: mark.date ?? null, previous: mapMarks(mark.previous, context) },
+        };
       default:
         return { type: mark.type };
     }

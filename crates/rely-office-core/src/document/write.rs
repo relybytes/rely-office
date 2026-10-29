@@ -715,7 +715,34 @@ impl DocxWriter<'_> {
         paragraph_font: &RunLook,
         xml: &mut String,
     ) {
-        let (run_properties, link) = run_properties(marks, look, paragraph_font);
+        let (mut properties, link) = run_properties(marks, look, paragraph_font);
+        if let Some(Mark::FormatChange {
+            author,
+            date,
+            previous,
+        }) = marks
+            .iter()
+            .find(|mark| matches!(mark, Mark::FormatChange { .. }))
+        {
+            let id = self.next_revision;
+            self.next_revision += 1;
+            let (before, _) = run_properties(previous, &RunLook::default(), paragraph_font);
+            let mut attributes = format!(r#" w:id="{id}" w:author="{}""#, escape(author));
+            if let Some(date) = date.as_deref().filter(|date| is_date(date)) {
+                let _ = write!(attributes, r#" w:date="{date}""#);
+            }
+            let before = if before.is_empty() {
+                "<w:rPr/>".to_owned()
+            } else {
+                before
+            };
+            let change = format!("<w:rPrChange{attributes}>{before}</w:rPrChange>");
+            properties = match properties.strip_suffix("</w:rPr>") {
+                Some(open) => format!("{open}{change}</w:rPr>"),
+                None => format!("<w:rPr>{change}</w:rPr>"),
+            };
+        }
+        let run_properties = properties;
         let revision = marks.iter().find_map(|mark| match mark {
             Mark::Insertion { author, date } => Some(("ins", author, date)),
             Mark::Deletion { author, date } => Some(("del", author, date)),

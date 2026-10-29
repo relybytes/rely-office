@@ -56,6 +56,8 @@ pub(crate) enum Namespace {
     LoExt,
     /// `LibreOffice`'s spreadsheet extensions: conditional formats among them.
     OdfCalcExt,
+    /// The settings of an `OpenDocument` file, `config:config-item`.
+    OdfConfig,
     /// The timing attributes of ODF animations and transitions.
     OdfSmil,
     OdfAnimation,
@@ -104,6 +106,7 @@ impl Namespace {
             "urn:oasis:names:tc:opendocument:xmlns:office:1.0" => Self::OdfOffice,
             "urn:oasis:names:tc:opendocument:xmlns:text:1.0" => Self::OdfText,
             "urn:oasis:names:tc:opendocument:xmlns:table:1.0" => Self::OdfTable,
+            "urn:oasis:names:tc:opendocument:xmlns:config:1.0" => Self::OdfConfig,
             "urn:oasis:names:tc:opendocument:xmlns:style:1.0" => Self::OdfStyle,
             "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" => Self::OdfFo,
             "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" => Self::OdfDraw,

@@ -11,7 +11,7 @@
 //! [`SheetDocument::cells_json`] and sends edits as calls. Results answer as JSON, a saved file
 //! as bytes, and a failure throws an `Error` whose message starts with its stable code.
 
-use rely_office_core::{Limits, OfficeError};
+use rely_office_core::{Limits, OfficeError, SheetDrawing};
 use rely_office_sheet::{
     Border, BorderPlacement, CellLook, CellRef, ConditionalFormat, DataValidation, EditError,
     EditHistory, Input, Locale, MAX_COLUMNS, MAX_ROWS, NumberFormat, SortKey, StylePatch, Value,
@@ -219,6 +219,8 @@ pub struct SheetDocument {
     workbook: Workbook,
     locale: Locale,
     history: EditHistory,
+    /// The pictures last drawn, by sheet and revision: a chart is drawn once per change.
+    pictures: std::cell::RefCell<Option<(usize, u64, Vec<SheetDrawing>)>>,
 }
 
 impl SheetDocument {
@@ -232,6 +234,7 @@ impl SheetDocument {
             workbook: Workbook::new(),
             locale: parse_locale(locale)?,
             history: EditHistory::new(),
+            pictures: std::cell::RefCell::new(None),
         })
     }
 
@@ -246,6 +249,7 @@ impl SheetDocument {
             workbook: read_spreadsheet(bytes, file_name, &Limits::default(), locale)?,
             locale,
             history: EditHistory::new(),
+            pictures: std::cell::RefCell::new(None),
         })
     }
 
@@ -384,19 +388,33 @@ impl SheetDocument {
         to_json(&choices)
     }
 
+    /// The pictures and charts of a sheet, the charts drawn from the current values, kept until
+    /// the workbook changes.
+    fn current_pictures(&self, sheet: usize) -> Vec<SheetDrawing> {
+        let revision = self.workbook.revision();
+        let mut cached = self.pictures.borrow_mut();
+        if let Some((known_sheet, known_revision, pictures)) = cached.as_ref()
+            && *known_sheet == sheet
+            && *known_revision == revision
+        {
+            return pictures.clone();
+        }
+        let pictures = self.workbook.pictures(sheet);
+        *cached = Some((sheet, revision, pictures.clone()));
+        pictures
+    }
+
     /// The pictures and charts of a sheet, as JSON, in the order `picture_bytes` takes them.
     ///
     /// # Errors
     ///
     /// `NO_SUCH_SHEET`.
     pub fn pictures_summary(&self, sheet: usize) -> Result<String, Failure> {
-        let content = self
-            .workbook
-            .sheets()
-            .get(sheet)
-            .ok_or(EditError::NoSuchSheet(sheet))?;
-        let pictures: Vec<PictureSummary<'_>> = content
-            .pictures()
+        if sheet >= self.workbook.sheets().len() {
+            return Err(EditError::NoSuchSheet(sheet).into());
+        }
+        let drawn = self.current_pictures(sheet);
+        let pictures: Vec<PictureSummary<'_>> = drawn
             .iter()
             .map(|picture| PictureSummary {
                 row: picture.row,
@@ -450,6 +468,14 @@ impl SheetDocument {
                 .map(|(position, _)| position)
                 .filter(|position| inside(*position)),
         );
+        // The cells an array spills into show its values though nothing is typed there.
+        for (_, spill) in self.workbook.spills(sheet) {
+            for row in spill.first_row.max(top)..=spill.last_row.min(bottom) {
+                for column in spill.first_column.max(left)..=spill.last_column.min(right) {
+                    positions.insert(CellRef::new(row, column));
+                }
+            }
+        }
         let mut cells = Vec::with_capacity(positions.len());
         for position in positions {
             let value = self.workbook.value(sheet, position);
@@ -1504,10 +1530,11 @@ impl SheetDocument {
     #[wasm_bindgen(js_name = pictureBytes)]
     #[must_use]
     pub fn picture_bytes(&self, sheet: usize, index: usize) -> Vec<u8> {
-        self.workbook
-            .sheets()
-            .get(sheet)
-            .and_then(|content| content.pictures().get(index))
+        if sheet >= self.workbook.sheets().len() {
+            return Vec::new();
+        }
+        self.current_pictures(sheet)
+            .get(index)
             .map(|picture| picture.bytes.clone())
             .unwrap_or_default()
     }

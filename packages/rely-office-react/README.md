@@ -69,9 +69,12 @@ The toolbar sets the font, the size and the line spacing, and the style list hol
 named styles (title, subtitle, intense quote, caption, no spacing) beside the headings: they are
 written to the docx as Word's own styles. `pageView` (or its toolbar button) lays the text on pages
 of the document's size, with its margins, its header and its footer and the pages numbered; a
-page break goes in at the caret. Ctrl+F opens find and replace. With tracked changes on
-(`trackChanges`, or the toolbar), what is typed is marked inserted and what is deleted stays,
-marked deleted, both by `author`, until it is accepted or rejected, one change or all of them.
+paragraph that does not fit is split between its lines and a table between its rows, and the page
+number and page count a header or a footer shows are filled in on each page. A page break goes in
+at the caret. Ctrl+F opens find and replace. With tracked changes on (`trackChanges`, or the
+toolbar), what is typed is marked inserted, what is deleted stays, marked deleted, and a change of
+formatting keeps the formatting it replaced, all by `author`, until it is accepted or rejected,
+one change or all of them; rejecting a formatting change puts the old formatting back.
 An image is resized by dragging its corner, its proportions kept, and a table column by dragging
 its edge; both sizes are saved.
 

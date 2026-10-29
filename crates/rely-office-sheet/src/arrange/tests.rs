@@ -367,3 +367,68 @@ fn writes_no_view_or_filter_a_sheet_does_not_have() {
     assert!(sheet.auto_filter().is_none());
     assert_eq!(sheet.pictures(), &[]);
 }
+
+#[test]
+fn writes_and_reads_back_frozen_panes_and_the_filter_in_ods() {
+    let mut workbook = people();
+    workbook.set_frozen(0, 1, 2).unwrap();
+    workbook
+        .set_auto_filter(0, Some((cell("A1"), cell("D6"))))
+        .unwrap();
+    workbook
+        .set_filter_column(0, 1, Some(vec!["Nord".to_owned(), String::new()]))
+        .unwrap();
+
+    let bytes = crate::ods::write_ods(&workbook).unwrap();
+    let read =
+        read_spreadsheet(&bytes, Some("a.ods"), &Limits::default(), Locale::English).unwrap();
+
+    let sheet = &read.sheets()[0];
+    assert_eq!((sheet.frozen_rows, sheet.frozen_columns), (1, 2));
+    let filter = sheet.auto_filter().unwrap();
+    assert_eq!(
+        filter.range,
+        workbook.sheets()[0].auto_filter().unwrap().range
+    );
+    assert_eq!(
+        filter.shown(1),
+        Some(&BTreeSet::from(["Nord".to_owned(), String::new()]))
+    );
+    let hidden: Vec<u32> = filter.hidden_rows().collect();
+    assert_eq!(hidden, [2, 4, 5]);
+}
+
+#[test]
+fn draws_a_chart_again_from_the_values_the_cells_hold_now() {
+    use rust_xlsxwriter::{Chart, ChartType, Workbook as Writer};
+    let mut writer = Writer::new();
+    let sheet = writer.add_worksheet().set_name("Vendite").unwrap();
+    for (row, (label, value)) in [("Gennaio", 10), ("Febbraio", 20)].into_iter().enumerate() {
+        let row = u32::try_from(row).unwrap();
+        sheet.write(row, 0, label).unwrap();
+        sheet.write(row, 1, value).unwrap();
+    }
+    let mut chart = Chart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Vendite!$A$1:$A$2")
+        .set_values("Vendite!$B$1:$B$2");
+    sheet.insert_chart(4, 2, &chart).unwrap();
+    let bytes = writer.save_to_buffer().unwrap();
+
+    let mut workbook =
+        read_spreadsheet(&bytes, Some("a.xlsx"), &Limits::default(), Locale::English).unwrap();
+    let svg = |workbook: &Workbook| {
+        let pictures = workbook.pictures(0);
+        assert_eq!(pictures.len(), 1);
+        assert_eq!(pictures[0].content_type, "image/svg+xml");
+        String::from_utf8(pictures[0].bytes.clone()).unwrap()
+    };
+    assert!(svg(&workbook).contains(">Gennaio</text>"));
+    workbook
+        .set_input(0, cell("A1"), "Marzo", Locale::English)
+        .unwrap();
+    let redrawn = svg(&workbook);
+    assert!(redrawn.contains(">Marzo</text>"), "{redrawn}");
+    assert!(!redrawn.contains(">Gennaio</text>"));
+}

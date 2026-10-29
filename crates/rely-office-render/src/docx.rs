@@ -1468,8 +1468,11 @@ fn marked(text: &str, marks: &[Mark], look: &RunLook, paragraph_font: &RunLook) 
                 format!("text(fill: rgb(\"{REVISION_COLOUR}\"), strike({expression}))")
             }
             // The look already draws the run's own font, size and colour; a comment is not
-            // printed.
-            Mark::TextStyle { .. } | Mark::Highlight { .. } | Mark::Comment { .. } => expression,
+            // printed, and a changed format prints as it is now.
+            Mark::TextStyle { .. }
+            | Mark::Highlight { .. }
+            | Mark::Comment { .. }
+            | Mark::FormatChange { .. } => expression,
         };
     }
     if let Some(highlight) = look

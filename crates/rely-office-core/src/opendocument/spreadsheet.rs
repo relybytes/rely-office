@@ -20,13 +20,18 @@ use super::styles::{FO, STYLE, Scope, Styles, TEXT, border, colour, points, vert
 use crate::archive::{ZipPackage, open_package, read_member_bytes, read_text_member};
 use crate::chart::{odf_chart_picture, odf_object_part};
 use crate::document::{Border, sniff_image_type};
-use crate::sheet_layout::{CellRange, SheetLayout};
+use crate::sheet_layout::{AutoFilterLayout, CellRange, SheetLayout};
 use crate::sheet_rules::{DataValidation, DifferentialLook};
 use crate::sheet_styles::{CellBorders, CellFont, CellStyle, HorizontalAlignment};
 use crate::xml_tree::{Element, Namespace, Node, parse_tree};
 use crate::{Limits, OfficeError, SheetDrawing};
 
 const OFFICE: Namespace = Namespace::OdfOffice;
+const CONFIG: Namespace = Namespace::OdfConfig;
+/// The filtered columns of a sheet and the values of each read from a file, as from an xlsx.
+const MAX_FILTER_COLUMNS: usize = 1_024;
+const MAX_FILTER_VALUES: usize = 10_000;
+const MAX_ARRAY_FORMULAS: usize = 100_000;
 const TABLE: Namespace = Namespace::OdfTable;
 const DRAW: Namespace = Namespace::OdfDraw;
 const SVG: Namespace = Namespace::OdfSvg;
@@ -101,7 +106,159 @@ fn read_layouts(
             layouts.insert(name.to_owned(), layout);
         }
     }
+    if let Some(ranges) = spreadsheet.child(TABLE, "database-ranges") {
+        for range in ranges
+            .elements()
+            .filter(|range| range.is(TABLE, "database-range"))
+        {
+            if let Some((sheet, filter)) = database_filter(range)
+                && let Some(layout) = layouts.get_mut(&sheet)
+                && layout.auto_filter.is_none()
+            {
+                layout.auto_filter = Some(filter);
+            }
+        }
+    }
+    if let Some(settings) = read_text_member(reader.package, "settings.xml", limits)?
+        && let Ok(settings) = parse_tree(&settings, keeps_whitespace)
+    {
+        for (sheet, rows, columns) in frozen_panes(&settings) {
+            if let Some(layout) = layouts.get_mut(&sheet) {
+                layout.frozen_rows = rows;
+                layout.frozen_columns = columns;
+            }
+        }
+    }
     Ok(layouts)
+}
+
+/// The sheet and the range of an address `'Sheet 1'.A1:'Sheet 1'.D9`, or `Sheet1.A1:.D9`.
+fn sheet_range(address: &str) -> Option<(String, CellRange)> {
+    let (start, end) = address.split_once(':').unwrap_or((address, address));
+    let split = |part: &str| -> Option<(String, String)> {
+        let dot = part.rfind('.')?;
+        let sheet = part[..dot].trim_start_matches('$');
+        let sheet = sheet
+            .strip_prefix('\'')
+            .and_then(|name| name.strip_suffix('\''))
+            .map_or_else(|| sheet.to_owned(), |name| name.replace("''", "'"));
+        Some((sheet, part[dot + 1..].replace('$', "")))
+    };
+    let (sheet, first) = split(start)?;
+    let (_, last) = split(end)?;
+    let range = CellRange::parse(&format!("{first}:{last}"))?;
+    Some((sheet, range))
+}
+
+/// The filter a database range of a sheet puts on its first row: the values each filtered
+/// column shows, as `LibreOffice` writes them, a test for blanks as the empty text.
+fn database_filter(range: &Element) -> Option<(String, AutoFilterLayout)> {
+    if range.attribute(TABLE, "display-filter-buttons") != Some("true") {
+        return None;
+    }
+    let (sheet, cells) = sheet_range(range.attribute(TABLE, "target-range-address")?)?;
+    let mut columns: Vec<(u32, Vec<String>)> = Vec::new();
+    if let Some(filter) = range.child(TABLE, "filter") {
+        let mut conditions = Vec::new();
+        collect_conditions(filter, &mut conditions);
+        for condition in conditions {
+            let Some(column) = condition
+                .attribute(TABLE, "field-number")
+                .and_then(|field| field.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let value = match condition.attribute(TABLE, "operator") {
+                Some("=") => condition
+                    .attribute(TABLE, "value")
+                    .unwrap_or_default()
+                    .to_owned(),
+                Some("empty") => String::new(),
+                _ => continue,
+            };
+            let count = columns.len();
+            match columns.iter_mut().find(|(known, _)| *known == column) {
+                Some((_, shown)) if shown.len() < MAX_FILTER_VALUES => shown.push(value),
+                None if count < MAX_FILTER_COLUMNS => columns.push((column, vec![value])),
+                Some(_) | None => {}
+            }
+        }
+    }
+    Some((
+        sheet,
+        AutoFilterLayout {
+            range: cells,
+            columns,
+        },
+    ))
+}
+
+fn collect_conditions<'a>(element: &'a Element, found: &mut Vec<&'a Element>) {
+    for child in element.elements() {
+        if child.is(TABLE, "filter-condition") {
+            found.push(child);
+        } else {
+            collect_conditions(child, found);
+        }
+    }
+}
+
+/// The rows and columns each sheet freezes, from the view settings `LibreOffice` writes: a split
+/// mode of 2 is frozen, and its position the count of rows or columns kept in view.
+fn frozen_panes(settings: &Element) -> Vec<(String, u32, u32)> {
+    let mut found = Vec::new();
+    let mut tables = Vec::new();
+    find_named_maps(settings, "Tables", &mut tables);
+    for table in tables.into_iter().take(1) {
+        for entry in table
+            .elements()
+            .filter(|entry| entry.is(CONFIG, "config-item-map-entry"))
+        {
+            let Some(sheet) = entry.attribute(CONFIG, "name") else {
+                continue;
+            };
+            let item = |name: &str| {
+                entry
+                    .elements()
+                    .find(|item| {
+                        item.is(CONFIG, "config-item")
+                            && item.attribute(CONFIG, "name") == Some(name)
+                    })
+                    .and_then(|item| item.text().trim().parse::<u32>().ok())
+                    .unwrap_or(0)
+            };
+            let rows = if item("VerticalSplitMode") == 2 {
+                item("VerticalSplitPosition")
+            } else {
+                0
+            };
+            let columns = if item("HorizontalSplitMode") == 2 {
+                item("HorizontalSplitPosition")
+            } else {
+                0
+            };
+            if rows > 0 || columns > 0 {
+                found.push((
+                    sheet.to_owned(),
+                    rows.min(MAX_ROWS - 1),
+                    columns.min(MAX_COLUMNS - 1),
+                ));
+            }
+        }
+    }
+    found
+}
+
+fn find_named_maps<'a>(element: &'a Element, name: &str, found: &mut Vec<&'a Element>) {
+    for child in element.elements() {
+        if child.is(CONFIG, "config-item-map-named")
+            && child.attribute(CONFIG, "name") == Some(name)
+        {
+            found.push(child);
+        } else {
+            find_named_maps(child, name, found);
+        }
+    }
 }
 
 struct LayoutReader<'a, 'p, 'b> {
@@ -407,6 +564,24 @@ impl LayoutReader<'_, '_, '_> {
             let span = |name: &str| repeat(cell, name);
             let (columns_spanned, rows_spanned) =
                 (span("number-columns-spanned"), span("number-rows-spanned"));
+            let (matrix_columns, matrix_rows) = (
+                span("number-matrix-columns-spanned"),
+                span("number-matrix-rows-spanned"),
+            );
+            if !covered
+                && (matrix_columns > 1 || matrix_rows > 1)
+                && build.layout.array_formulas.len() < MAX_ARRAY_FORMULAS
+            {
+                build.layout.array_formulas.push((
+                    (index, column),
+                    CellRange {
+                        first_row: index,
+                        first_column: column,
+                        last_row: (index + matrix_rows - 1).min(MAX_ROWS - 1),
+                        last_column: (column + matrix_columns - 1).min(MAX_COLUMNS - 1),
+                    },
+                ));
+            }
             if !covered && (columns_spanned > 1 || rows_spanned > 1) {
                 build.layout.merges.push(CellRange {
                     first_row: index,

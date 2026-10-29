@@ -18,7 +18,7 @@ import {
   type ReactElement,
   type Ref,
 } from 'react';
-import type { Block, DocumentTree, MediaItem } from '../model.js';
+import type { Block, DocumentTree, Inline, MediaItem } from '../model.js';
 import { saveDocument } from './document-files.js';
 import { DocumentSidePanel } from './document-side-panel.js';
 import { DocumentToolbar } from './document-toolbar.js';
@@ -33,16 +33,24 @@ import { contentReferences, type ContentReferences } from './references.js';
 /** Twentieths of a point as CSS pixels. */
 const TWIPS_PER_PIXEL = 15;
 
-/** The text of header or footer blocks, a line per paragraph, for the page view to draw. */
-export function blocksText(blocks: Block[]): string {
+/**
+ * The text of header or footer blocks, a line per paragraph, for the page view to draw; with
+ * `page`, the page number and the page count they show are those of that page.
+ */
+export function blocksText(blocks: Block[], page?: { page: number; pages: number }): string {
+  const text = (part: Inline): string => {
+    if (part.type === 'hardBreak') return ' ';
+    if (part.type !== 'text') return '';
+    if (page && part.field === 'page') return String(page.page);
+    if (page && part.field === 'pages') return String(page.pages);
+    return part.text;
+  };
   const inline = (block: Block): string => {
     switch (block.type) {
       case 'paragraph':
       case 'heading':
       case 'listItem':
-        return block.content
-          .map((part) => (part.type === 'text' ? part.text : part.type === 'hardBreak' ? ' ' : ''))
-          .join('');
+        return block.content.map(text).join('');
       case 'blockquote':
         return block.blocks.map(inline).join(' ');
       case 'table':
@@ -54,6 +62,24 @@ export function blocksText(blocks: Block[]): string {
     }
   };
   return blocks.map(inline).filter((line) => line.trim().length > 0).join('  ');
+}
+
+/** Whether a header or a footer shows the page number or the page count itself. */
+function hasPageField(blocks: Block[]): boolean {
+  return blocks.some((block) => {
+    switch (block.type) {
+      case 'paragraph':
+      case 'heading':
+      case 'listItem':
+        return block.content.some((part) => part.type === 'text' && part.field !== undefined);
+      case 'blockquote':
+        return hasPageField(block.blocks);
+      case 'table':
+        return block.rows.some((row) => row.cells.some((cell) => hasPageField(cell.blocks)));
+      default:
+        return false;
+    }
+  });
 }
 
 /** What a host can ask of a mounted document editor. */
@@ -185,8 +211,11 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
     left: page.marginsTwips[3] / TWIPS_PER_PIXEL,
   };
   const pageHeight = page.heightTwips / TWIPS_PER_PIXEL;
-  const header = blocksText(aside.headersFooters.header);
-  const footer = blocksText(aside.headersFooters.footer);
+  const headerBlocks = aside.headersFooters.header;
+  const footerBlocks = aside.headersFooters.footer;
+  const header = useCallback((page: number, count: number) => blocksText(headerBlocks, { page, pages: count }), [headerBlocks]);
+  const footer = useCallback((page: number, count: number) => blocksText(footerBlocks, { page, pages: count }), [footerBlocks]);
+  const showsPageNumber = useMemo(() => hasPageField([...headerBlocks, ...footerBlocks]), [headerBlocks, footerBlocks]);
 
   useEffect(() => {
     if (!editor) return;
@@ -199,7 +228,7 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
       marginBottom: margins.bottom,
       header,
       footer,
-      pageLabel: words.pageNumber,
+      pageLabel: showsPageNumber ? null : words.pageNumber,
     };
     editor.view.dispatch(editor.state.tr.setMeta('relyTrackSkip', true).setMeta('addToHistory', false));
     const update = () => setPages(storage.pages);
@@ -207,7 +236,7 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
     return () => {
       editor.off('transaction', update);
     };
-  }, [editor, pageView, pageHeight, margins.top, margins.bottom, header, footer, words.pageNumber]);
+  }, [editor, pageView, pageHeight, margins.top, margins.bottom, header, footer, showsPageNumber, words.pageNumber]);
 
   useEffect(() => {
     editor?.commands.setTrackChanges(trackChanges);
@@ -322,14 +351,14 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
         <div className="rely-document-page">
           {pageView ? (
             <div className="rely-page-header rely-page-header-first" aria-hidden="true">
-              {header}
+              {header(1, pages)}
             </div>
           ) : null}
           <EditorContent editor={editor} />
           {pageView ? (
             <div className="rely-page-footer rely-page-footer-last" aria-hidden="true">
-              {footer}
-              <span className="rely-page-number">{words.pageNumber(pages)}</span>
+              {footer(pages, pages)}
+              {showsPageNumber ? null : <span className="rely-page-number">{words.pageNumber(pages)}</span>}
             </div>
           ) : null}
         </div>

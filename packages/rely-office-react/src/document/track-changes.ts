@@ -7,7 +7,7 @@
 import { Extension } from '@tiptap/core';
 import { Fragment, Slice, type Mark, type Node as ProseMirrorNode, type Schema } from '@tiptap/pm/model';
 import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from '@tiptap/pm/state';
-import { ReplaceStep } from '@tiptap/pm/transform';
+import { AddMarkStep, RemoveMarkStep, ReplaceStep } from '@tiptap/pm/transform';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -34,6 +34,50 @@ export interface TrackRecordingStorage {
 export const TRACK_SKIP = 'relyTrackSkip';
 
 const trackKey = new PluginKey('relyTrackRecording');
+
+/** Put back the marks a tracked formatting change replaced, over `from` to `to`. */
+export function restoreFormatting(tr: Transaction, node: ProseMirrorNode, from: number, to: number): void {
+  const change = node.marks.find((mark) => mark.type.name === 'formatChange');
+  if (!change) return;
+  for (const mark of node.marks) {
+    if (FORMATTING_MARKS.has(mark.type.name)) tr.removeMark(from, to, mark.type);
+  }
+  const previous = Array.isArray(change.attrs.previous) ? change.attrs.previous : [];
+  for (const json of previous as { type: string; attrs?: Record<string, unknown> }[]) {
+    const type = tr.doc.type.schema.marks[json.type];
+    if (type && FORMATTING_MARKS.has(json.type)) tr.addMark(from, to, type.create(json.attrs ?? {}));
+  }
+  tr.removeMark(from, to, change.type);
+}
+
+/** The marks that are formatting, which a tracked formatting change records. */
+export const FORMATTING_MARKS: ReadonlySet<string> = new Set([
+  'bold',
+  'italic',
+  'underline',
+  'strike',
+  'code',
+  'superscript',
+  'subscript',
+  'textStyle',
+  'highlight',
+]);
+
+/** The formatting marks of a text node as JSON, in a stable order, to compare and to keep. */
+function formattingOf(node: ProseMirrorNode): { type: string; attrs?: Record<string, unknown> }[] {
+  const change = node.marks.find((mark) => mark.type.name === 'formatChange');
+  if (change && Array.isArray(change.attrs.previous)) {
+    return change.attrs.previous as { type: string; attrs?: Record<string, unknown> }[];
+  }
+  return currentFormatting(node);
+}
+
+function currentFormatting(node: ProseMirrorNode): { type: string; attrs?: Record<string, unknown> }[] {
+  return node.marks
+    .filter((mark) => FORMATTING_MARKS.has(mark.type.name))
+    .map((mark) => mark.toJSON() as { type: string; attrs?: Record<string, unknown> })
+    .sort((a, b) => a.type.localeCompare(b.type));
+}
 
 /**
  * A deleted stretch as it goes back into the text, marked deleted: what was only a tracked
@@ -84,7 +128,7 @@ export const RelyTrackRecording = Extension.create<TrackRecordingOptions, TrackR
         key: trackKey,
         appendTransaction(transactions, oldState, newState) {
           if (!extension.storage.enabled) return null;
-          const { insertion, deletion } = newState.schema.marks;
+          const { insertion, deletion, formatChange } = newState.schema.marks;
           if (!insertion || !deletion) return null;
           const recorded = transactions.filter(
             (transaction) =>
@@ -103,6 +147,28 @@ export const RelyTrackRecording = Extension.create<TrackRecordingOptions, TrackR
           let base = oldState.doc;
           for (const transaction of recorded) {
             transaction.steps.forEach((step, index) => {
+              if (step instanceof AddMarkStep || step instanceof RemoveMarkStep) {
+                const { from, to, mark } = step as (AddMarkStep | RemoveMarkStep) & { from: number; to: number; mark: Mark };
+                if (!FORMATTING_MARKS.has(mark.type.name) || !formatChange) return;
+                const before = transaction.docs[index] ?? base;
+                const later = transaction.mapping.slice(index + 1);
+                before.nodesBetween(from, to, (node, position) => {
+                  if (!node.isText || insertion.isInSet(node.marks) || deletion.isInSet(node.marks)) return true;
+                  const previous = formattingOf(node);
+                  const start = tr.mapping.map(later.map(Math.max(from, position), 1), 1);
+                  const end = tr.mapping.map(later.map(Math.min(to, position + node.nodeSize), -1), -1);
+                  if (end <= start) return false;
+                  const now = tr.doc.nodeAt(start);
+                  if (now && JSON.stringify(currentFormatting(now)) === JSON.stringify(previous)) {
+                    tr.removeMark(start, end, formatChange);
+                  } else {
+                    tr.addMark(start, end, formatChange.create({ ...attrs, previous }));
+                  }
+                  changed = true;
+                  return false;
+                });
+                return;
+              }
               if (!(step instanceof ReplaceStep)) return;
               const before = transaction.docs[index] ?? base;
               const { from, to, slice } = step as ReplaceStep & { from: number; to: number; slice: Slice };
@@ -163,6 +229,12 @@ export const RelyTrackRecording = Extension.create<TrackRecordingOptions, TrackR
           }
           if (dropType.isInSet(node.marks)) {
             removals.push([nodeFrom, nodeTo]);
+            found = true;
+          }
+          const formatChange = state.schema.marks.formatChange;
+          if (formatChange?.isInSet(node.marks)) {
+            if (keep === 'deletion') restoreFormatting(tr, node, nodeFrom, nodeTo);
+            else tr.removeMark(nodeFrom, nodeTo, formatChange);
             found = true;
           }
           return false;

@@ -146,6 +146,41 @@ describe('tracked changes recorded while typing', () => {
     expect(accepted.type === 'paragraph' && accepted.content[0]).toEqual({ type: 'text', text: 'IlX gatto' });
   });
 
+  it('records a formatting change with the marks it replaced, and rejecting it puts them back', async () => {
+    const { ref, editor } = await mount(TEXT, { trackChanges: true });
+    act(() => {
+      editor.chain().focus().setTextSelection({ from: 4, to: 9 }).toggleBold().run();
+    });
+    const changed = ref.current!.getTree().blocks[0];
+    expect(changed.type === 'paragraph' && changed.content[1]).toEqual({
+      type: 'text',
+      text: 'gatto',
+      marks: [{ type: 'bold' }, { type: 'formatChange', author: 'Anna', date: expect.any(String), previous: [] }],
+    });
+
+    act(() => {
+      editor.chain().setTextSelection({ from: 4, to: 9 }).toggleBold().run();
+    });
+    expect(ref.current!.getTree().blocks[0]).toEqual(TEXT[0]);
+
+    act(() => {
+      editor.chain().setTextSelection({ from: 4, to: 9 }).toggleItalic().run();
+    });
+    act(() => {
+      editor.chain().setTextSelection(6).rejectChangesInSelection().run();
+    });
+    expect(ref.current!.getTree().blocks[0]).toEqual(TEXT[0]);
+
+    act(() => {
+      editor.chain().setTextSelection({ from: 4, to: 9 }).toggleItalic().run();
+    });
+    act(() => {
+      editor.chain().setTextSelection(6).acceptChangesInSelection().run();
+    });
+    const accepted = ref.current!.getTree().blocks[0];
+    expect(accepted.type === 'paragraph' && accepted.content[1]).toEqual({ type: 'text', text: 'gatto', marks: [{ type: 'italic' }] });
+  });
+
   it('records nothing once tracking is switched off', async () => {
     const { ref, editor } = await mount(TEXT, { trackChanges: true });
     fireEvent.click(screen.getByRole('button', { name: 'Track changes' }));
@@ -205,6 +240,37 @@ describe('page view', () => {
     editor.state.doc.forEach((_, offset) => offsets.push(offset));
     expect(pageBreaks(editor.state.doc, () => 60, 100)).toEqual([offsets[1], offsets[2], offsets[3]]);
     expect(pageBreaks(editor.state.doc, () => 10, 100)).toEqual([offsets[2]]);
+  });
+
+  it('splits a block taller than what is left of a page at a line, keeping two lines together', () => {
+    const schema = getSchema(createRelyDocumentExtensions());
+    const doc = schema.node('doc', null, [
+      schema.node('paragraph', null, [schema.text('breve')]),
+      schema.node('paragraph', null, [schema.text('lungo paragrafo')]),
+    ]);
+    const second = doc.firstChild!.nodeSize;
+    const lines = (offset: number) =>
+      offset === second ? [0, 1, 2, 3, 4, 5].map((line) => ({ position: offset + 1 + line * 2, height: 30 })) : null;
+    expect(pageBreaks(doc, (offset) => (offset === 0 ? 40 : 180), 100, lines)).toEqual([second + 5, second + 9]);
+    expect(pageBreaks(doc, (offset) => (offset === 0 ? 40 : 180), 100)).toEqual([second]);
+    // A first line alone at the end of a page goes on with the rest.
+    expect(pageBreaks(doc, (offset) => (offset === 0 ? 65 : 180), 100, lines)).toEqual([second, second + 7]);
+  });
+
+  it('fills the page number and the page count a header or a footer shows', () => {
+    const footer: Block[] = [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Pagina ' },
+          { type: 'text', text: '1', field: 'page' },
+          { type: 'text', text: ' di ' },
+          { type: 'text', text: '1', field: 'pages' },
+        ],
+      },
+    ];
+    expect(blocksText(footer, { page: 2, pages: 5 })).toBe('Pagina 2 di 5');
+    expect(blocksText(footer)).toBe('Pagina 1 di 1');
   });
 
   it('draws the header of the document on the page', async () => {

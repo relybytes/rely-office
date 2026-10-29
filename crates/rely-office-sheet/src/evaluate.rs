@@ -8,11 +8,18 @@
 //! reads. The walk keeps its own stack rather than recursing, so a chain of a hundred thousand
 //! formulas cannot exhaust the WebAssembly stack, and a formula that reaches itself computes to
 //! [`ErrorKind::Circular`].
+//!
+//! A formula that computes to an array spills it, as Excel 365 does: its cell shows the first
+//! value and the cells right and below it the rest, as long as nothing is typed there, else it
+//! is `#SPILL!`. A formula that reads a spilled cell is computed after the formula that spills
+//! it; the spills are found by a first pass and the workbook computed again while they change.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::address::{CellRef, MAX_ROWS};
+use rely_office_core::CellRange;
+
+use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS};
 use crate::dates::{date_from_serial, serial_from_date};
 use crate::formula::{BinaryOperator, CellAddress, Expr, RangeAddress, UnaryOperator};
 use crate::model::Workbook;
@@ -24,7 +31,12 @@ enum State {
     Done,
 }
 
-/// A value, or a rectangle of cells a function reads one by one.
+/// The most cells one formula spills; a larger array is `#SPILL!`.
+pub const MAX_SPILL_CELLS: usize = 200_000;
+/// The passes a workbook is computed again in while its spills change.
+const MAX_SPILL_PASSES: usize = 4;
+
+/// A value, a rectangle of cells a function reads one by one, or an array a function computed.
 #[derive(Debug, Clone, PartialEq)]
 enum Operand {
     Value(Value),
@@ -33,9 +45,31 @@ enum Operand {
         start: CellRef,
         end: CellRef,
     },
+    /// Rows of values, every row as long as the first.
+    Array(Vec<Vec<Value>>),
 }
 
-pub(crate) fn evaluate_workbook(workbook: &Workbook) -> Vec<HashMap<CellRef, Value>> {
+/// What computing a workbook gives: the value of every formula cell and every spilled cell, and
+/// the range each spilling formula fills, by its cell.
+pub(crate) struct Computed {
+    pub(crate) values: Vec<HashMap<CellRef, Value>>,
+    pub(crate) spills: Vec<BTreeMap<CellRef, CellRange>>,
+}
+
+pub(crate) fn evaluate_workbook(workbook: &Workbook) -> Computed {
+    let mut prior: Vec<BTreeMap<CellRef, CellRange>> = vec![BTreeMap::new(); workbook.sheets.len()];
+    let mut computed = evaluate_pass(workbook, &prior);
+    for _ in 1..MAX_SPILL_PASSES {
+        if computed.spills.iter().all(BTreeMap::is_empty) || computed.spills == prior {
+            break;
+        }
+        prior = computed.spills;
+        computed = evaluate_pass(workbook, &prior);
+    }
+    computed
+}
+
+fn evaluate_pass(workbook: &Workbook, prior: &[BTreeMap<CellRef, CellRange>]) -> Computed {
     let formula_cells: Vec<BTreeSet<CellRef>> = workbook
         .sheets
         .iter()
@@ -54,6 +88,9 @@ pub(crate) fn evaluate_workbook(workbook: &Workbook) -> Vec<HashMap<CellRef, Val
         states: vec![HashMap::new(); workbook.sheets.len()],
         formula_cells,
         current: std::cell::Cell::new(None),
+        prior_spills: prior.to_vec(),
+        spills: vec![BTreeMap::new(); workbook.sheets.len()],
+        spilled: vec![HashMap::new(); workbook.sheets.len()],
     };
     for sheet in 0..workbook.sheets.len() {
         let cells: Vec<CellRef> = evaluator.formula_cells[sheet].iter().copied().collect();
@@ -61,7 +98,10 @@ pub(crate) fn evaluate_workbook(workbook: &Workbook) -> Vec<HashMap<CellRef, Val
             evaluator.resolve(sheet, cell);
         }
     }
-    evaluator.values
+    Computed {
+        values: evaluator.values,
+        spills: evaluator.spills,
+    }
 }
 
 /// The workbook as computed, for formulas that belong to no cell: the conditions of conditional
@@ -80,6 +120,9 @@ impl<'a> FormulaContext<'a> {
                 states: vec![HashMap::new(); sheets],
                 formula_cells: vec![BTreeSet::new(); sheets],
                 current: std::cell::Cell::new(None),
+                prior_spills: vec![BTreeMap::new(); sheets],
+                spills: vec![BTreeMap::new(); sheets],
+                spilled: vec![HashMap::new(); sheets],
             },
         }
     }
@@ -112,6 +155,11 @@ struct Evaluator<'a> {
     formula_cells: Vec<BTreeSet<CellRef>>,
     /// The cell whose formula is being computed, for `ROW()` and `COLUMN()`.
     current: std::cell::Cell<Option<CellRef>>,
+    /// The spills an earlier pass found, so a formula reading a spilled cell waits for its anchor.
+    prior_spills: Vec<BTreeMap<CellRef, CellRange>>,
+    /// The spills of this pass, by anchor, and the anchor of every spilled cell.
+    spills: Vec<BTreeMap<CellRef, CellRange>>,
+    spilled: Vec<HashMap<CellRef, CellRef>>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -154,8 +202,10 @@ impl<'a> Evaluator<'a> {
                 self.current.set(Some(current));
                 let value = match self.evaluate(current_sheet, expression) {
                     Operand::Value(value) => finite(value),
-                    // A formula that is a whole range, such as `=A1:B2`, shows no single value.
-                    Operand::Range { .. } => Value::Error(ErrorKind::Value),
+                    operand => match self.operand_grid(operand) {
+                        Ok(grid) => self.spill(current_sheet, current, grid),
+                        Err(kind) => Value::Error(kind),
+                    },
                 };
                 self.finish(current_sheet, current, value);
                 stack.pop();
@@ -170,19 +220,92 @@ impl<'a> Evaluator<'a> {
         self.states[sheet].insert(cell, State::Done);
     }
 
+    /// Spill an array from its formula's cell: the cell's own value, the rest written to the
+    /// cells right and below, or `#SPILL!` when one of them holds something or is spilled into.
+    fn spill(&mut self, sheet: usize, anchor: CellRef, grid: Vec<Vec<Value>>) -> Value {
+        let rows = grid.len();
+        let columns = grid.first().map_or(0, Vec::len);
+        if rows == 0 || columns == 0 {
+            return Value::Error(ErrorKind::Value);
+        }
+        if rows == 1 && columns == 1 {
+            return finite(grid[0][0].clone());
+        }
+        let (Ok(height), Ok(width)) = (u32::try_from(rows), u32::try_from(columns)) else {
+            return Value::Error(ErrorKind::Spill);
+        };
+        let last_row = anchor.row.checked_add(height - 1);
+        let last_column = anchor.column.checked_add(width - 1);
+        let (Some(last_row), Some(last_column)) = (last_row, last_column) else {
+            return Value::Error(ErrorKind::Spill);
+        };
+        if rows * columns > MAX_SPILL_CELLS || last_row >= MAX_ROWS || last_column >= MAX_COLUMNS {
+            return Value::Error(ErrorKind::Spill);
+        }
+        let cells = &self.workbook.sheets[sheet].cells;
+        for row in anchor.row..=last_row {
+            for column in anchor.column..=last_column {
+                let cell = CellRef::new(row, column);
+                if cell != anchor
+                    && (cells.contains_key(&cell) || self.spilled[sheet].contains_key(&cell))
+                {
+                    return Value::Error(ErrorKind::Spill);
+                }
+            }
+        }
+        let first = finite(grid[0][0].clone());
+        for (row_offset, line) in grid.into_iter().enumerate() {
+            for (column_offset, value) in line.into_iter().enumerate() {
+                if row_offset == 0 && column_offset == 0 {
+                    continue;
+                }
+                let cell = CellRef::new(
+                    anchor.row + u32::try_from(row_offset).unwrap_or(0),
+                    anchor.column + u32::try_from(column_offset).unwrap_or(0),
+                );
+                self.spilled[sheet].insert(cell, anchor);
+                self.values[sheet].insert(cell, finite(value));
+            }
+        }
+        self.spills[sheet].insert(
+            anchor,
+            CellRange {
+                first_row: anchor.row,
+                first_column: anchor.column,
+                last_row,
+                last_column,
+            },
+        );
+        first
+    }
+
     /// The formula cells an expression reads, by sheet.
     fn dependencies(&self, sheet: usize, expression: &Expr, found: &mut Vec<(usize, CellRef)>) {
         match expression {
             Expr::Cell(address) => {
-                if let Some(target) = self.sheet_of(sheet, address.sheet.as_deref())
-                    && self.formula_cells[target].contains(&address.cell)
-                {
-                    found.push((target, address.cell));
+                if let Some(target) = self.sheet_of(sheet, address.sheet.as_deref()) {
+                    if self.formula_cells[target].contains(&address.cell) {
+                        found.push((target, address.cell));
+                    }
+                    for (anchor, range) in &self.prior_spills[target] {
+                        if range.contains(address.cell.row, address.cell.column) {
+                            found.push((target, *anchor));
+                        }
+                    }
                 }
             }
             Expr::Range(range) => {
                 if let Some(target) = self.sheet_of(sheet, range.sheet.as_deref()) {
                     let (start, end) = range.bounds();
+                    for (anchor, spill) in &self.prior_spills[target] {
+                        let overlaps = spill.first_row <= end.row
+                            && spill.last_row >= start.row
+                            && spill.first_column <= end.column
+                            && spill.last_column >= start.column;
+                        if overlaps {
+                            found.push((target, *anchor));
+                        }
+                    }
                     for cell in
                         self.formula_cells[target].range(start..=CellRef::new(end.row, end.column))
                     {
@@ -204,7 +327,7 @@ impl<'a> Evaluator<'a> {
                     self.dependencies(sheet, argument, found);
                 }
             }
-            Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) => {}
+            Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) | Expr::Array(_) => {}
         }
     }
 
@@ -222,11 +345,11 @@ impl<'a> Evaluator<'a> {
             .get(&cell)
             .map(|content| &content.input)
         {
-            None => Value::Empty,
             Some(Input::Number(number)) => Value::Number(*number),
             Some(Input::Text(text)) => Value::Text(text.clone()),
             Some(Input::Bool(value)) => Value::Bool(*value),
-            Some(Input::Formula(_)) => self.values[sheet]
+            // A spilled cell has no input and a value; a formula cell has both.
+            None | Some(Input::Formula(_)) => self.values[sheet]
                 .get(&cell)
                 .cloned()
                 .unwrap_or(Value::Empty),
@@ -242,29 +365,53 @@ impl<'a> Evaluator<'a> {
             Expr::Cell(address) => Operand::Value(self.address_value(sheet, address)),
             Expr::Range(range) => self.range(sheet, range),
             Expr::Group(inner) => self.evaluate(sheet, inner),
+            Expr::Array(rows) => Operand::Array(
+                rows.iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|element| finite(self.scalar(sheet, element)))
+                            .collect()
+                    })
+                    .collect(),
+            ),
             Expr::Unary(operator, operand) => {
-                Operand::Value(match self.scalar(sheet, operand).as_number() {
+                let negate = |value: &Value| match value.as_number() {
                     Ok(number) => Value::Number(match operator {
                         UnaryOperator::Plus => number,
                         UnaryOperator::Minus => -number,
                     }),
                     Err(kind) => Value::Error(kind),
-                })
+                };
+                self.lift_one(sheet, operand, negate)
             }
             Expr::Percent(operand) => {
-                Operand::Value(match self.scalar(sheet, operand).as_number() {
+                self.lift_one(sheet, operand, |value| match value.as_number() {
                     Ok(number) => Value::Number(number / 100.0),
                     Err(kind) => Value::Error(kind),
                 })
             }
             Expr::Binary(operator, left, right) => {
-                let left = self.scalar(sheet, left);
-                let right = self.scalar(sheet, right);
-                Operand::Value(binary(*operator, &left, &right))
+                let left = self.evaluate(sheet, left);
+                let right = self.evaluate(sheet, right);
+                match (left, right) {
+                    (Operand::Value(left), Operand::Value(right)) => {
+                        Operand::Value(binary(*operator, &left, &right))
+                    }
+                    (left, right) => match (self.operand_grid(left), self.operand_grid(right)) {
+                        (Ok(left), Ok(right)) => {
+                            Operand::Array(broadcast(&left, &right, |first, second| {
+                                binary(*operator, first, second)
+                            }))
+                        }
+                        (Err(kind), _) | (_, Err(kind)) => Operand::Value(Value::Error(kind)),
+                    },
+                }
             }
-            Expr::Call(name, arguments) => {
-                Operand::Value(finite(self.call(sheet, name, arguments)))
-            }
+            Expr::Call(name, arguments) => match self.array_call(sheet, name, arguments) {
+                Some(Ok(grid)) => Operand::Array(grid),
+                Some(Err(kind)) => Operand::Value(Value::Error(kind)),
+                None => Operand::Value(finite(self.call(sheet, name, arguments))),
+            },
         }
     }
 
@@ -289,11 +436,56 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// An expression where one value is expected: a range there is `#VALUE!`.
+    /// An expression where one value is expected: a range there is `#VALUE!`, and so is an
+    /// array of more than one value.
     fn scalar(&self, sheet: usize, expression: &Expr) -> Value {
         match self.evaluate(sheet, expression) {
             Operand::Value(value) => value,
-            Operand::Range { .. } => Value::Error(ErrorKind::Value),
+            Operand::Array(grid) if grid.len() == 1 && grid[0].len() == 1 => grid[0][0].clone(),
+            Operand::Range { .. } | Operand::Array(_) => Value::Error(ErrorKind::Value),
+        }
+    }
+
+    /// A one-operand operator over a value, or over each value of a range or an array.
+    fn lift_one(&self, sheet: usize, operand: &Expr, apply: impl Fn(&Value) -> Value) -> Operand {
+        match self.evaluate(sheet, operand) {
+            Operand::Value(value) => Operand::Value(apply(&value)),
+            other => match self.operand_grid(other) {
+                Ok(grid) => Operand::Array(
+                    grid.iter()
+                        .map(|row| row.iter().map(&apply).collect())
+                        .collect(),
+                ),
+                Err(kind) => Operand::Value(Value::Error(kind)),
+            },
+        }
+    }
+
+    /// The values of an operand as rows: a value is one row of one, a whole-column range stops
+    /// after the sheet's last row with content.
+    fn operand_grid(&self, operand: Operand) -> Result<Vec<Vec<Value>>, ErrorKind> {
+        match operand {
+            Operand::Value(value) => Ok(vec![vec![value]]),
+            Operand::Array(grid) => Ok(grid),
+            Operand::Range { sheet, start, end } => {
+                let last = if end.row == MAX_ROWS - 1 {
+                    self.last_row(sheet).max(start.row)
+                } else {
+                    end.row
+                };
+                let rows = u64::from(end.row.min(last) - start.row + 1);
+                let columns = u64::from(end.column - start.column + 1);
+                if rows * columns > MAX_SPILL_CELLS as u64 {
+                    return Err(ErrorKind::Spill);
+                }
+                Ok((start.row..=end.row.min(last))
+                    .map(|row| {
+                        (start.column..=end.column)
+                            .map(|column| self.cell_value(sheet, CellRef::new(row, column)))
+                            .collect()
+                    })
+                    .collect())
+            }
         }
     }
 
@@ -302,6 +494,11 @@ impl<'a> Evaluator<'a> {
     fn values_of(&self, sheet: usize, expression: &Expr, mut visit: impl FnMut(Value, bool)) {
         match self.evaluate(sheet, expression) {
             Operand::Value(value) => visit(value, false),
+            Operand::Array(grid) => {
+                for value in grid.into_iter().flatten() {
+                    visit(value, true);
+                }
+            }
             Operand::Range {
                 sheet: target,
                 start,
@@ -375,6 +572,7 @@ impl<'a> Evaluator<'a> {
         match self.evaluate(sheet, argument) {
             Operand::Value(Value::Error(kind)) => Err(kind),
             Operand::Value(value) => Ok(vec![vec![value]]),
+            Operand::Array(grid) => Ok(grid),
             Operand::Range {
                 sheet: target,
                 start,
@@ -812,6 +1010,40 @@ fn empty_as_zero(value: Value) -> Value {
 }
 
 /// A value Excel can show: an infinite or undefined number is `#NUM!`.
+/// Two grids combined value by value, as Excel's array arithmetic does: a single row or column
+/// stretches to the other's size, and a place one of them does not reach is `#N/A`.
+fn broadcast(
+    left: &[Vec<Value>],
+    right: &[Vec<Value>],
+    apply: impl Fn(&Value, &Value) -> Value,
+) -> Vec<Vec<Value>> {
+    let size = |grid: &[Vec<Value>]| (grid.len(), grid.first().map_or(0, Vec::len));
+    let (left_rows, left_columns) = size(left);
+    let (right_rows, right_columns) = size(right);
+    let rows = left_rows.max(right_rows);
+    let columns = left_columns.max(right_columns);
+    let at = |grid: &[Vec<Value>], height: usize, width: usize, row: usize, column: usize| {
+        let row = if height == 1 { 0 } else { row };
+        let column = if width == 1 { 0 } else { column };
+        grid.get(row).and_then(|line| line.get(column)).cloned()
+    };
+    (0..rows)
+        .map(|row| {
+            (0..columns)
+                .map(|column| {
+                    match (
+                        at(left, left_rows, left_columns, row, column),
+                        at(right, right_rows, right_columns, row, column),
+                    ) {
+                        (Some(first), Some(second)) => apply(&first, &second),
+                        _ => Value::Error(ErrorKind::NotAvailable),
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
 fn finite(value: Value) -> Value {
     match value {
         Value::Number(number) if !number.is_finite() => Value::Error(ErrorKind::Num),
@@ -1058,6 +1290,7 @@ fn wildcard(pattern: &[char], text: &[char]) -> bool {
         .all(|character| *character == '*')
 }
 
+mod arrays;
 mod functions;
 mod more;
 

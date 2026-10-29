@@ -24,11 +24,17 @@ pub enum ErrorKind {
     Null,
     /// A formula that depends on itself, which Excel stops at with a warning.
     Circular,
+    /// An array a formula cannot spill: a cell it would fill holds something.
+    Spill,
+    /// A function that computes an array found nothing to put in it.
+    Calc,
 }
 
 impl ErrorKind {
     /// Every kind, the longer codes first so a reader matches `#N/A` before nothing shorter.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
+        Self::Spill,
+        Self::Calc,
         Self::Div0,
         Self::Value,
         Self::Ref,
@@ -51,6 +57,8 @@ impl ErrorKind {
             Self::Num => "#NUM!",
             Self::Null => "#NULL!",
             Self::Circular => "#CIRC!",
+            Self::Spill => "#SPILL!",
+            Self::Calc => "#CALC!",
         }
     }
 }

@@ -174,6 +174,8 @@ pub(super) struct Converter<'a, 'p> {
     tracked_changes: TrackedChanges,
     /// The insertion or deletion the text being read is in, when changes are kept.
     revisions: Vec<Mark>,
+    /// The formatting change of the run being read, when changes are kept.
+    format_change: Option<Mark>,
     objects: Vec<EmbeddedObject>,
 }
 
@@ -230,6 +232,7 @@ impl<'a, 'p> Converter<'a, 'p> {
             reading_comment: false,
             tracked_changes,
             revisions: Vec::new(),
+            format_change: None,
             objects: Vec::new(),
         }
     }
@@ -695,7 +698,34 @@ impl<'a, 'p> Converter<'a, 'p> {
             return;
         }
         let look = self.run_look(run.child(W, "rPr"));
+        self.format_change = run
+            .child(W, "rPr")
+            .and_then(|properties| properties.child(W, "rPrChange"))
+            .and_then(|change| self.format_revision(change, link));
         self.append_run_content(run, format, &look, link, content, scan);
+        self.format_change = None;
+    }
+
+    /// The change a `w:rPrChange` tracks, with the marks the run had before it.
+    fn format_revision(&self, change: &Element, link: Option<&str>) -> Option<Mark> {
+        if self.tracked_changes != TrackedChanges::Keep || self.reading_comment {
+            return None;
+        }
+        let before = change.child(W, "rPr");
+        let previous = marks_of(
+            self.run_format(before),
+            &self.run_look(before),
+            link,
+            self.hyperlink_depth > 0,
+        )
+        .into_iter()
+        .filter(|mark| !matches!(mark, Mark::Link { .. }))
+        .collect();
+        Some(Mark::FormatChange {
+            author: change.attribute(W, "author").unwrap_or_default().to_owned(),
+            date: change.attribute(W, "date").map(str::to_owned),
+            previous,
+        })
     }
 
     fn append_run_content(
@@ -842,6 +872,7 @@ impl<'a, 'p> Converter<'a, 'p> {
         let link = link.or_else(|| self.current_field_link());
         let mut marks = marks_of(format, look, link, self.hyperlink_depth > 0);
         marks.extend(self.revisions.iter().cloned());
+        marks.extend(self.format_change.iter().cloned());
         for comment in &self.open_comments {
             marks.push(Mark::Comment { comment: *comment });
             self.marked_comments.insert(*comment);

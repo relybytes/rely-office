@@ -116,17 +116,13 @@ frontend one, and both declare the same model from `packages/rely-office-node/mo
 | 7.8 | The document editor a Word user expects first: font, size and line spacing, Word's named styles, the page view with headers and footers, find and replace, tracked changes recorded while typing, images and table columns resized by the mouse | done (0.7.0) |
 | 7.9 | The grid a spreadsheet user expects first: resizing by drag, the fill handle and its series, frozen panes, sort and filter, borders, the conditional format and validation editors, charts over the grid, formula suggestions, and 298 functions | done (0.7.0) |
 | 7.10 | The slide editor a presenter expects first: the show with transitions and animations, their editor, rotation, several shapes at once, the clipboard, preset shapes, tables edited cell by cell, alignment guides | done (0.7.0) |
+| 7.11 | Dynamic arrays and the functions that return them, charts drawn from the current cells, the frozen panes and the filter of an ods, the page view splitting a block over pages and filling the page fields, tracked formatting changes | done (0.7.0) |
 
 The host application keeps what is its own: where a file is stored, who may open it, locking and
 autosave, and where an inserted image goes, all through the components' props.
 
 ## Next
 
-- The functions that return an array (`FILTER`, `SORT`, `UNIQUE`, `SEQUENCE`) and the dynamic
-  arrays they spill into; charts drawn again as their cells change; the frozen panes and the
-  filter in ods.
-- In the page view, a block taller than a page split across pages, and the fields of a header
-  (page number, total pages) filled in; tracked changes of formatting, not only of text.
 - The adjust values of the bent, curved, circular and U-turn arrows, the quad arrow callout, the
   elliptical ribbons and the action buttons of ppt and doc.
 - A real Word 6 or 95 sample in the tests, beside the synthetic ones.

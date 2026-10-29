@@ -720,6 +720,16 @@ impl Evaluator<'_> {
                             end.column - start.column + 1
                         })))
                     }
+                    Operand::Array(grid) => {
+                        let size = if name == "ROWS" {
+                            grid.len()
+                        } else {
+                            grid.first().map_or(0, Vec::len)
+                        };
+                        Ok(Value::Number(f64::from(
+                            u32::try_from(size).unwrap_or(u32::MAX),
+                        )))
+                    }
                     Operand::Value(Value::Error(kind)) => Err(kind),
                     Operand::Value(_) => Ok(Value::Number(1.0)),
                 })()

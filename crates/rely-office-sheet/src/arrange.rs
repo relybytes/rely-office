@@ -85,7 +85,7 @@ impl AutoFilter {
 
 /// The order of two values as a sort puts them in ascending order: numbers, then text without
 /// regard to case, then booleans, then errors.
-fn compare_values(first: &Value, second: &Value) -> Ordering {
+pub(crate) fn compare_values(first: &Value, second: &Value) -> Ordering {
     let class = |value: &Value| match value {
         Value::Number(_) => 0,
         Value::Text(_) => 1,

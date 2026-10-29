@@ -124,6 +124,22 @@ fn print(expression: &Expr, text: &mut String, parent_precedence: u8) {
             print(inner, text, 0);
             text.push(')');
         }
+        // OpenFormula separates the columns of an inline array with `;` and its rows with `|`.
+        Expr::Array(rows) => {
+            text.push('{');
+            for (index, line) in rows.iter().enumerate() {
+                if index > 0 {
+                    text.push('|');
+                }
+                for (position, element) in line.iter().enumerate() {
+                    if position > 0 {
+                        text.push(';');
+                    }
+                    print(element, text, 0);
+                }
+            }
+            text.push('}');
+        }
         Expr::Binary(operator, left, right) => {
             let own = precedence(*operator);
             let parenthesize = own < parent_precedence;

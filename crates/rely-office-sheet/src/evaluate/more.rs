@@ -1927,6 +1927,8 @@ impl Evaluator<'_> {
                     ErrorKind::Num => 6.0,
                     ErrorKind::NotAvailable => 7.0,
                     ErrorKind::Circular => 8.0,
+                    ErrorKind::Spill => 9.0,
+                    ErrorKind::Calc => 14.0,
                 }))
             })(),
             "ADDRESS" => (|| {

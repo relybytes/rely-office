@@ -51,7 +51,6 @@ below 1.0, a minor version may change the API.
 - Sorting by several keys, the autofilter, frozen panes and the fill handle's series in the
   spreadsheet engine (`sort_range`, `set_auto_filter`, `set_filter_column`, `filter_choices`,
   `set_frozen`, `fill_range`); the filter and the frozen panes are read from and written to xlsx.
-  The pictures and charts of an xlsx are given as drawn when it was opened (`Sheet::pictures`).
 - The grid: rows and columns resized by dragging their header edge and fitted by a double click,
   the fill handle and Ctrl+D or Ctrl+R, frozen panes, sort and filter buttons with a menu of the
   values to show, a borders menu, panels that create and remove conditional formats and
@@ -63,6 +62,23 @@ below 1.0, a minor version may change the API.
   number, copy, cut, paste (shapes, text and images from elsewhere) and duplicate, twenty preset
   shapes drawn as outlines that stretch with their frame, tables inserted and edited cell by cell
   with rows, columns and colours, and guides that a moved shape snaps to.
+
+- Dynamic arrays: a formula whose result is an array spills it into the cells beside its own,
+  with `#SPILL!` where they are taken and `#CALC!` for an empty `FILTER`. `FILTER`, `SORT`,
+  `SORTBY`, `UNIQUE`, `SEQUENCE`, `TRANSPOSE`, `TAKE`, `DROP`, `CHOOSEROWS`, `CHOOSECOLS`,
+  `VSTACK`, `HSTACK`, `TOCOL`, `TOROW`, `WRAPROWS`, `WRAPCOLS`, `EXPAND`, `MMULT`, `MUNIT`,
+  `FREQUENCY` and `TEXTSPLIT`, with their Italian names; operators over ranges computed value by
+  value; array constants. Written to xlsx as Excel's dynamic arrays and to ods as matrix
+  formulas, and read back from both (`Workbook::spills`, `Workbook::spill_anchor`).
+- Charts drawn again from the values the cells hold now (`Workbook::pictures`,
+  `redraw_carried_drawing`), so the grid's charts follow an edit.
+- The frozen panes and the filter of an ods, read and written.
+- The page view splits a paragraph that does not fit between its lines and a table between its
+  rows, and fills in the page number and page count of headers and footers; a page field is the
+  `field` of a text run in JSON.
+- Tracked formatting changes: the `formatChange` mark with the marks a run had before, read from
+  and written to `w:rPrChange`, recorded by the editor while changes are tracked and accepted or
+  rejected like the others.
 
 ### Changed
 

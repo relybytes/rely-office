@@ -65,7 +65,8 @@ fn computes_arithmetic_and_text() {
         value(&[("A1", "x")], "=A1+1"),
         Value::Error(ErrorKind::Value)
     );
-    assert_eq!(value(&[], "=A1:A2"), Value::Error(ErrorKind::Value));
+    // A formula that is a whole range spills it, as Excel 365 does.
+    assert_eq!(value(&[("A1", "4")], "=A1:A2"), Value::Number(4.0));
     assert_eq!(value(&[], "=Altro!A1"), Value::Error(ErrorKind::Ref));
     assert_eq!(value(&[], "=MISTERO(1)"), Value::Error(ErrorKind::Name));
     assert_eq!(value(&[], "=10^400"), Value::Error(ErrorKind::Num));

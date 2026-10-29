@@ -38,6 +38,7 @@ this crate read the file the same way:
 | `math` | Office Math, `m:oMath` in the line or `m:oMathPara` on a line of its own |
 | `comment` marks, `commentAnchor` and `comments` | `w:commentRangeStart`, `w:commentRangeEnd` and `w:commentReference`, the comments in `comments.xml` and their replies and done states in `commentsExtended.xml` |
 | `insertion` and `deletion` marks | `w:ins` and `w:del` with their author and date, a deleted run as `w:delText` |
+| `formatChange` marks | `w:rPrChange` inside the run's `w:rPr`, with its author, date and the `previous` marks as the old `w:rPr` |
 | `noteReference` and `notes` | `w:footnoteReference` and `w:endnoteReference`, the notes in `footnotes.xml` and `endnotes.xml` with their separators |
 | `headersFooters` | header and footer parts with their own relationships, `w:titlePg` for a first page, `w:evenAndOddHeaders` in `settings.xml` for even pages |
 | the looks (Rust) | paragraph borders, shading, tabs, spacing and indents; table widths, borders and cell margins; cell fills, borders and vertical alignment; a numbered heading keeps its label as text |
@@ -211,9 +212,22 @@ does not rename (`XOR`, `INT`) keeps its name.
   the eleven other base conversions, the `BIT` functions, `CONVERT` over length, mass, volume,
   time, speed, area, energy, power, pressure, information and temperature); text (`FIXED`,
   `DOLLAR`, `NUMBERVALUE`, `TEXTBEFORE`, `TEXTAFTER`, `UNICHAR`); information (`TYPE`,
-  `ERROR.TYPE`, `ISREF`, `ADDRESS`). Every one has its Italian name. Functions that return an
-  array (`FILTER`, `SORT`, `UNIQUE`, `SEQUENCE`) are not computed. `TEXT` reads its format code in Italian notation too. The `_xlfn.` prefix
-  files store before the newer functions is read and written back.
+  `ERROR.TYPE`, `ISREF`, `ADDRESS`). Every one has its Italian name. `TEXT` reads its format code
+  in Italian notation too. The `_xlfn.` prefix files store before the newer functions is read and
+  written back, and `_xlfn._xlws.` before `FILTER` and `SORT`.
+- **Arrays**: a formula whose result is an array spills it into the cells below and to the right
+  of its own (`=FILTER(A2:C9;B2:B9="Nord")`). `FILTER`, `SORT`, `SORTBY`, `UNIQUE`, `SEQUENCE`,
+  `TRANSPOSE`, `TAKE`, `DROP`, `CHOOSEROWS`, `CHOOSECOLS`, `VSTACK`, `HSTACK`, `TOCOL`, `TOROW`,
+  `WRAPROWS`, `WRAPCOLS`, `EXPAND`, `MMULT`, `MUNIT`, `FREQUENCY` and `TEXTSPLIT` return one, and so
+  does a range or an operator over ranges (`=C2:C9*2`), computed value by value with a single value
+  stretched over the other side; the aggregates read an array as they read a range
+  (`=SUM(C2:C9*2)`). Array constants are typed `{1,2;3,4}` in English and `{1;2|3;4}` in Italian.
+  The spilled cells hold no input, and a formula reads them like any other cell; a spill that
+  would cover a cell with content, another spill or the grid's edge gives `#SPILL!` in the
+  formula's cell, and a `FILTER` that keeps nothing gives `#CALC!`. `spills(sheet)` lists the
+  ranges and `spill_anchor(sheet, cell)` the formula a cell is filled by. An xlsx stores the
+  formula as Excel's dynamic array (`t="array"`, `cm="1"` and `xl/metadata.xml`) and an ods as a
+  matrix formula; both read back to the same spill.
 - **Values and errors** follow Excel: numbers before text before booleans in comparisons, text
   without case; `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?` (an unknown function or name), `#N/A`,
   `#NUM!` (an infinite result), and `#CIRC!` for a formula that reaches itself, which Excel stops
@@ -292,9 +306,15 @@ OpenFormula, styles with data styles built from the number formats, merges, colu
 heights, conditional formats and validations as LibreOffice writes them. Pictures, charts and
 pivot tables are kept by `write_xlsx` only. An xls is always saved as xlsx.
 
+An ods keeps the frozen panes in `settings.xml` and the filter as a `table:database-range` with its
+conditions, the rows it hides marked as filtered.
+
+`Workbook::pictures(sheet)`, and `pictures` with `pictureBytes` from JavaScript, give the pictures
+and charts of a sheet with each chart drawn again from the values its cells hold now, so a chart
+follows an edit; the drawing is kept until the workbook changes.
+
 Not kept: comments, defined names other than the filter's, and formulas with functions outside
-the list, which show `#NAME?` after an edit recalculates them. An ods keeps neither the frozen
-panes nor the filter.
+the list, which show `#NAME?` after an edit recalculates them.
 
 ## From JavaScript
 

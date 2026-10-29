@@ -15,7 +15,7 @@ use std::io::{Cursor, Write};
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use rely_office_core::{
-    Border, BorderStyle, CarriedPart, CellBorders, CellFont, CellStyle, DocumentFormat,
+    Border, BorderStyle, CarriedPart, CellBorders, CellFont, CellRange, CellStyle, DocumentFormat,
     HorizontalAlignment, Limits, OfficeError, SheetLayout, VerticalAlignment, detect_format,
     excel_formula_from_odf, read_ods_sheet_layouts, read_workbook, read_xlsx_drawing_parts,
     read_xlsx_layouts, read_xlsx_pivot_parts, read_xlsx_theme_part,
@@ -25,7 +25,10 @@ use zip::write::SimpleFileOptions;
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS, column_name};
 use crate::arrange::AutoFilter;
 use crate::dates::serial_from_date;
-use crate::formula::{Expr, PREFIXED_FUNCTIONS, number_text, parse_formula, print_formula};
+use crate::formula::{
+    Expr, PREFIXED_FUNCTIONS, WORKSHEET_PREFIXED_FUNCTIONS, number_text, parse_formula,
+    print_formula,
+};
 use crate::model::{Cell, MAX_CELLS, MAX_SHEETS, NumberFormat, Sheet, Workbook};
 use crate::value::{ErrorKind, Input, Locale, Value};
 
@@ -63,6 +66,7 @@ pub fn read_spreadsheet(
                 for sheet in &mut sheets {
                     if let Some(layout) = layouts.remove(&sheet.name) {
                         apply_layout(sheet, &layout, &mut styles);
+                        apply_view(sheet, &layout);
                     }
                 }
             }
@@ -79,12 +83,7 @@ pub fn read_spreadsheet(
                     }
                     sheet.drawing = drawings.remove(&sheet.name);
                     if let Some(layout) = layouts_for_view.remove(&sheet.name) {
-                        sheet.frozen_rows = layout.frozen_rows;
-                        sheet.frozen_columns = layout.frozen_columns;
-                        sheet.auto_filter = layout
-                            .auto_filter
-                            .as_ref()
-                            .map(|filter| AutoFilter::from_layout(filter, &sheet.row_heights));
+                        apply_view(sheet, &layout);
                         sheet.pictures = layout.drawings;
                     }
                     sheet.pivots = pivots.remove(&sheet.name).unwrap_or_default();
@@ -115,6 +114,36 @@ pub fn read_spreadsheet(
         workbook.theme = read_xlsx_theme_part(bytes, limits);
     }
     Ok(workbook)
+}
+
+/// What a file says of how a sheet is viewed: its frozen panes and its filter, and the arrays
+/// its formulas spill.
+fn apply_view(sheet: &mut Sheet, layout: &SheetLayout) {
+    drop_spilled_values(sheet, &layout.array_formulas);
+    sheet.frozen_rows = layout.frozen_rows;
+    sheet.frozen_columns = layout.frozen_columns;
+    sheet.auto_filter = layout
+        .auto_filter
+        .as_ref()
+        .map(|filter| AutoFilter::from_layout(filter, &sheet.row_heights));
+}
+
+/// Forget the values a file cached in the cells an array formula fills: the formula computes
+/// them again, and kept as typed values they would block its spill.
+fn drop_spilled_values(sheet: &mut Sheet, arrays: &[((u32, u32), CellRange)]) {
+    for ((row, column), range) in arrays {
+        let anchor = CellRef::new(*row, *column);
+        let is_formula = sheet
+            .cells
+            .get(&anchor)
+            .is_some_and(|cell| matches!(cell.input, Input::Formula(_)));
+        if !is_formula {
+            continue;
+        }
+        sheet
+            .cells
+            .retain(|cell, _| *cell == anchor || !range.contains(cell.row, cell.column));
+    }
 }
 
 /// The styles of the cells of a file, each kept once.
@@ -451,22 +480,38 @@ pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
     };
     let count = workbook.sheets.len();
     let carried = carried_parts(workbook);
+    let spills = workbook.spills.iter().any(|spills| !spills.is_empty());
     add(
         "[Content_Types].xml",
-        content_types(count, &carried, workbook.theme.is_some()).as_bytes(),
+        content_types(count, &carried, workbook.theme.is_some(), spills).as_bytes(),
     )?;
     add("_rels/.rels", PACKAGE_RELATIONSHIPS.as_bytes())?;
     add("xl/workbook.xml", workbook_part(workbook).as_bytes())?;
     add(
         "xl/_rels/workbook.xml.rels",
-        workbook_relationships(count, workbook.theme.is_some(), &pivot_caches(workbook)).as_bytes(),
+        workbook_relationships(
+            count,
+            workbook.theme.is_some(),
+            &pivot_caches(workbook),
+            spills,
+        )
+        .as_bytes(),
     )?;
     if let Some(theme) = &workbook.theme {
         add(THEME_PART, &theme.bytes)?;
     }
+    if spills {
+        add(METADATA_PART, DYNAMIC_ARRAY_METADATA.as_bytes())?;
+    }
     add("xl/styles.xml", styles.xml.as_bytes())?;
     for (index, sheet) in workbook.sheets.iter().enumerate() {
-        let xml = sheet_part(sheet, &workbook.values[index], &styles, &differentials);
+        let xml = sheet_part(
+            sheet,
+            &workbook.values[index],
+            &workbook.spills[index],
+            &styles,
+            &differentials,
+        );
         add(
             &format!("xl/worksheets/sheet{}.xml", index + 1),
             xml.as_bytes(),
@@ -763,6 +808,7 @@ fn alignment_xml(style: &CellStyle) -> String {
 fn sheet_part(
     sheet: &Sheet,
     values: &HashMap<CellRef, Value>,
+    spills: &BTreeMap<CellRef, CellRange>,
     styles: &Styles,
     differentials: &Differentials,
 ) -> String {
@@ -788,6 +834,8 @@ fn sheet_part(
     xml.push_str("<sheetData>");
     let mut positions: BTreeSet<CellRef> = sheet.cells.keys().copied().collect();
     positions.extend(sheet.styles.keys().copied());
+    // The cells an array spills into hold its values, which Excel caches as plain values.
+    positions.extend(values.keys().filter(|cell| !sheet.cells.contains_key(cell)));
     let mut rows: BTreeSet<u32> = positions.iter().map(|cell| cell.row).collect();
     rows.extend(sheet.row_heights.keys().copied());
     let mut cells = positions.into_iter().peekable();
@@ -812,10 +860,20 @@ fn sheet_part(
             };
             let reference = format!("{}{}", column_name(cell.column), cell.row + 1);
             match sheet.cells.get(&cell).map(|content| &content.input) {
-                None => {
-                    let _ = write!(xml, r#"<c r="{reference}"{style}/>"#);
-                }
-                Some(input) => write_cell(&mut xml, &reference, &style, input, values.get(&cell)),
+                None => match values.get(&cell) {
+                    Some(value) => write_spilled(&mut xml, &reference, &style, value),
+                    None => {
+                        let _ = write!(xml, r#"<c r="{reference}"{style}/>"#);
+                    }
+                },
+                Some(input) => write_cell(
+                    &mut xml,
+                    &reference,
+                    &style,
+                    input,
+                    values.get(&cell),
+                    spills.get(&cell),
+                ),
             }
         }
         xml.push_str("</row>");
@@ -939,7 +997,9 @@ fn file_names(expression: &Expr) -> Expr {
     let boxed = |inner: &Expr| Box::new(file_names(inner));
     match expression {
         Expr::Call(name, arguments) => Expr::Call(
-            if PREFIXED_FUNCTIONS.contains(&name.as_str()) {
+            if WORKSHEET_PREFIXED_FUNCTIONS.contains(&name.as_str()) {
+                format!("_xlfn._xlws.{name}")
+            } else if PREFIXED_FUNCTIONS.contains(&name.as_str()) {
                 format!("_xlfn.{name}")
             } else {
                 name.clone()
@@ -954,12 +1014,40 @@ fn file_names(expression: &Expr) -> Expr {
     }
 }
 
+/// A cell an array spills into, its value cached as Excel caches it.
+fn write_spilled(xml: &mut String, reference: &str, style: &str, value: &Value) {
+    let _ = match value {
+        Value::Empty => write!(xml, r#"<c r="{reference}"{style}/>"#),
+        Value::Number(number) => write!(
+            xml,
+            r#"<c r="{reference}"{style}><v>{}</v></c>"#,
+            number_text(*number)
+        ),
+        Value::Text(text) => write!(
+            xml,
+            r#"<c r="{reference}"{style} t="inlineStr"><is><t xml:space="preserve">{}</t></is></c>"#,
+            escape(text)
+        ),
+        Value::Bool(value) => write!(
+            xml,
+            r#"<c r="{reference}"{style} t="b"><v>{}</v></c>"#,
+            u8::from(*value)
+        ),
+        Value::Error(error) => write!(
+            xml,
+            r#"<c r="{reference}"{style} t="e"><v>{}</v></c>"#,
+            error.code()
+        ),
+    };
+}
+
 fn write_cell(
     xml: &mut String,
     reference: &str,
     style: &str,
     input: &Input,
     value: Option<&Value>,
+    spill: Option<&CellRange>,
 ) {
     match input {
         Input::Number(number) => {
@@ -994,10 +1082,21 @@ fn write_cell(
                 Value::Error(ErrorKind::Circular) => (r#" t="e""#, "<v>#REF!</v>".to_owned()),
                 Value::Error(error) => (r#" t="e""#, format!("<v>{}</v>", error.code())),
             };
-            let _ = write!(
-                xml,
-                r#"<c r="{reference}"{style}{kind}><f>{formula}</f>{cached}</c>"#
-            );
+            // A formula that spills is a dynamic array: Excel finds it by the cell's metadata.
+            let _ = match spill {
+                Some(range) => write!(
+                    xml,
+                    r#"<c r="{reference}"{style}{kind} cm="1"><f t="array" ref="{}{}:{}{}">{formula}</f>{cached}</c>"#,
+                    column_name(range.first_column),
+                    range.first_row + 1,
+                    column_name(range.last_column),
+                    range.last_row + 1
+                ),
+                None => write!(
+                    xml,
+                    r#"<c r="{reference}"{style}{kind}><f>{formula}</f>{cached}</c>"#
+                ),
+            };
         }
     }
 }
@@ -1058,7 +1157,12 @@ fn target_from(depth: usize, part: &str) -> String {
 /// Where the carried theme is written, whatever its name in the file it came from.
 const THEME_PART: &str = "xl/theme/theme1.xml";
 
-fn workbook_relationships(sheets: usize, theme: bool, caches: &[(&str, u32)]) -> String {
+fn workbook_relationships(
+    sheets: usize,
+    theme: bool,
+    caches: &[(&str, u32)],
+    metadata: bool,
+) -> String {
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
     );
@@ -1087,6 +1191,9 @@ fn workbook_relationships(sheets: usize, theme: bool, caches: &[(&str, u32)]) ->
             index + 1,
             escape(&target_from(0, part))
         );
+    }
+    if metadata {
+        xml.push_str(r#"<Relationship Id="rIdMetadata" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata" Target="metadata.xml"/>"#);
     }
     xml.push_str("</Relationships>");
     xml
@@ -1148,7 +1255,7 @@ fn sheet_relationships(sheet: &Sheet) -> String {
 /// The relationship a worksheet names its drawing by.
 const DRAWING_RELATIONSHIP: &str = "rIdDrawing1";
 
-fn content_types(sheets: usize, carried: &[&CarriedPart], theme: bool) -> String {
+fn content_types(sheets: usize, carried: &[&CarriedPart], theme: bool, metadata: bool) -> String {
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">"#,
@@ -1169,6 +1276,12 @@ fn content_types(sheets: usize, carried: &[&CarriedPart], theme: bool) -> String
             r#"<Override PartName="/{THEME_PART}" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>"#
         );
     }
+    if metadata {
+        let _ = write!(
+            xml,
+            r#"<Override PartName="/{METADATA_PART}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"/>"#
+        );
+    }
     for part in carried.iter().filter(|part| {
         part.content_type != "application/vnd.openxmlformats-package.relationships+xml"
     }) {
@@ -1182,6 +1295,22 @@ fn content_types(sheets: usize, carried: &[&CarriedPart], theme: bool) -> String
     xml.push_str("</Types>");
     xml
 }
+
+const METADATA_PART: &str = "xl/metadata.xml";
+
+/// The cell metadata that marks a formula as a dynamic array, as Excel 365 writes it; every
+/// spilling formula names its one record with `cm="1"`.
+const DYNAMIC_ARRAY_METADATA: &str = concat!(
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+    r#"<metadata xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" "#,
+    r#"xmlns:xda="http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray">"#,
+    r#"<metadataTypes count="1"><metadataType name="XLDAPR" minSupportedVersion="120000" copy="1" "#,
+    r#"pasteAll="1" pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1" "#,
+    r#"clearComments="1" assign="1" coerce="1" cellMeta="1"/></metadataTypes>"#,
+    r#"<futureMetadata name="XLDAPR" count="1"><bk><extLst><ext uri="{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}">"#,
+    r#"<xda:dynamicArrayProperties fDynamic="1" fCollapsed="0"/></ext></extLst></bk></futureMetadata>"#,
+    r#"<cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata></metadata>"#
+);
 
 const PACKAGE_RELATIONSHIPS: &str = concat!(
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,

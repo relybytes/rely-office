@@ -335,6 +335,20 @@
   background: var(--rely-surface);
 }
 
+.rely-page-separator-inline {
+  display: block;
+  text-indent: 0;
+}
+
+.rely-page-separator-inline .rely-page-gap {
+  display: block;
+}
+
+.rely-page-break-row > td,
+.rely-page-break-row > th {
+  border-top: var(--rely-page-break) solid var(--rely-canvas);
+}
+
 .rely-page-gap {
   height: 24px;
   background: var(--rely-canvas);
@@ -423,6 +437,10 @@
 .rely-deletion {
   color: var(--rely-danger);
   text-decoration: line-through;
+}
+
+.rely-format-change {
+  border-bottom: 2px dotted var(--rely-accent);
 }
 
 .rely-note-reference {

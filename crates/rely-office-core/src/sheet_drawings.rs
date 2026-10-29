@@ -378,6 +378,149 @@ fn split_formula(formula: &str) -> Option<(String, String)> {
     Some((sheet, range.to_owned()))
 }
 
+/// A value a chart plots, as an editor gives it from the workbook's current values.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChartValue {
+    Number(f64),
+    Text(String),
+    Empty,
+}
+
+/// The pictures and charts of a drawing carried from a file, drawn again: each chart from the
+/// values `values` gives for its formulas (`'Vendite'!$B$2:$B$7`), so it follows what an editor
+/// changed in the cells. `layout` gives the sizes of the rows and columns the drawings anchor to.
+#[must_use]
+pub fn redraw_carried_drawing(
+    drawing: &CarriedDrawing,
+    theme: Option<&CarriedPart>,
+    layout: &SheetLayout,
+    limits: &Limits,
+    values: &dyn Fn(&str) -> Option<Vec<ChartValue>>,
+) -> Vec<SheetDrawing> {
+    use std::io::Write as _;
+    const SHEET: &str = "sheet.xml";
+    let mut package = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let relationships = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="{}"/></Relationships>"#,
+        drawing
+            .drawing_part
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+    );
+    let mut written = || -> zip::result::ZipResult<()> {
+        package.start_file(format!("_rels/{SHEET}.rels"), options)?;
+        package.write_all(relationships.as_bytes())?;
+        for part in &drawing.parts {
+            package.start_file(part.name.as_str(), options)?;
+            // A chart reads the values it cached before the cells; the cache of a formula the
+            // editor answers goes, so the chart is drawn from the cells as they are now.
+            match std::str::from_utf8(&part.bytes) {
+                Ok(xml) if part.name.contains("/charts/") && xml.contains("chartSpace") => {
+                    package.write_all(without_answered_caches(xml, values).as_bytes())?;
+                }
+                _ => package.write_all(&part.bytes)?,
+            }
+        }
+        Ok(())
+    };
+    if written().is_err() {
+        return Vec::new();
+    }
+    let Ok(cursor) = package.finish() else {
+        return Vec::new();
+    };
+    let bytes = cursor.into_inner();
+    let Ok(mut opened) = crate::archive::open_package(&bytes) else {
+        return Vec::new();
+    };
+    let chart_theme = theme
+        .and_then(|part| std::str::from_utf8(&part.bytes).ok())
+        .map(Theme::parse)
+        .unwrap_or_default();
+    let cells = |formula: &str| {
+        values(formula).map(|found| {
+            found
+                .into_iter()
+                .map(|value| match value {
+                    ChartValue::Number(number) => ChartCell::Number(number),
+                    ChartValue::Text(text) => ChartCell::Text(text),
+                    ChartValue::Empty => ChartCell::Empty,
+                })
+                .collect()
+        })
+    };
+    let mut budget = ImageBudget::of(limits);
+    sheet_drawings(
+        &mut opened,
+        SHEET,
+        layout,
+        &chart_theme,
+        limits,
+        &mut budget,
+        &cells,
+    )
+    .unwrap_or_default()
+}
+
+/// A chart part without the cached values of the references whose formula `values` answers.
+fn without_answered_caches(xml: &str, values: &dyn Fn(&str) -> Option<Vec<ChartValue>>) -> String {
+    let prefix = xml
+        .find("chartSpace")
+        .and_then(|at| {
+            let start = xml[..at].rfind('<')? + 1;
+            Some(xml[start..at].to_owned())
+        })
+        .unwrap_or_default();
+    let mut text = xml.to_owned();
+    for reference in ["numRef", "strRef"] {
+        let cache = if reference == "numRef" {
+            "numCache"
+        } else {
+            "strCache"
+        };
+        let open = format!("<{prefix}{reference}>");
+        let close = format!("</{prefix}{reference}>");
+        let mut output = String::with_capacity(text.len());
+        let mut rest = text.as_str();
+        while let Some(start) = rest.find(&open) {
+            let Some(length) = rest[start..].find(&close) else {
+                break;
+            };
+            let end = start + length + close.len();
+            let block = &rest[start..end];
+            output.push_str(&rest[..start]);
+            let formula = block
+                .split_once(&format!("<{prefix}f>"))
+                .and_then(|(_, after)| after.split_once(&format!("</{prefix}f>")))
+                .map(|(formula, _)| formula.replace("&apos;", "'").replace("&amp;", "&"));
+            let answered = formula.is_some_and(|formula| values(formula.trim()).is_some());
+            let cache_open = format!("<{prefix}{cache}>");
+            let cache_close = format!("</{prefix}{cache}>");
+            match (answered, block.find(&cache_open), block.find(&cache_close)) {
+                (true, Some(from), Some(to)) if from < to => {
+                    output.push_str(&block[..from]);
+                    output.push_str(&block[to + cache_close.len()..]);
+                }
+                _ => output.push_str(block),
+            }
+            rest = &rest[end..];
+        }
+        output.push_str(rest);
+        text = output;
+    }
+    text
+}
+
+/// The sheet and the range a chart formula names, `'Vendite'!$B$2:$B$7`; `None` for a formula
+/// that is not one range of one sheet.
+#[must_use]
+pub fn chart_formula_range(formula: &str) -> Option<(String, CellRange)> {
+    let (sheet, range) = split_formula(formula)?;
+    Some((sheet, CellRange::parse(&range)?))
+}
+
 /// The drawings of a worksheet part; a drawing that cannot be read is left out.
 pub(crate) fn sheet_drawings(
     package: &mut ZipPackage<'_>,

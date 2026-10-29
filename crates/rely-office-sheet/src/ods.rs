@@ -26,7 +26,7 @@ use self::rules::{
     ConditionalStyles, conditional_formats_xml, content_validations_xml, validation_name,
 };
 use self::styles::OdsStyles;
-use crate::address::CellRef;
+use crate::address::{CellRef, column_name};
 use crate::dates::date_from_serial;
 use crate::formula::number_text;
 use crate::model::{NumberFormat, Sheet, Workbook};
@@ -77,6 +77,7 @@ pub fn write_ods(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
     for (name, content) in [
         ("META-INF/manifest.xml", MANIFEST.to_owned()),
         ("meta.xml", META.to_owned()),
+        ("settings.xml", settings_part(workbook)),
         ("styles.xml", styles_part(&conditional)),
         ("content.xml", content_part(workbook, &conditional)),
     ] {
@@ -93,6 +94,116 @@ pub fn write_ods(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
         .map_err(|error| damaged(&error))
 }
 
+/// A sheet name as an `OpenDocument` address names it, quoted.
+fn quoted_sheet(name: &str) -> String {
+    format!("'{}'", name.replace('\'', "''"))
+}
+
+/// The filter of each sheet, as `LibreOffice` keeps it: a database range with filter buttons,
+/// every filtered column an "or" of the values it shows.
+fn database_ranges_xml(workbook: &Workbook) -> String {
+    let mut xml = String::new();
+    for (index, sheet) in workbook.sheets.iter().enumerate() {
+        let Some(filter) = sheet.auto_filter() else {
+            continue;
+        };
+        let range = filter.range;
+        let sheet_name = quoted_sheet(&sheet.name);
+        let _ = write!(
+            xml,
+            r#"<table:database-range table:name="__Anonymous_Sheet_DB__{index}" table:target-range-address="{}.{}{}:{}.{}{}" table:display-filter-buttons="true">"#,
+            escape(&sheet_name),
+            column_name(range.first_column),
+            range.first_row + 1,
+            escape(&sheet_name),
+            column_name(range.last_column),
+            range.last_row + 1
+        );
+        let columns: Vec<u32> = filter.filtered_columns().collect();
+        if !columns.is_empty() {
+            xml.push_str("<table:filter><table:filter-and>");
+            for column in columns {
+                xml.push_str("<table:filter-or>");
+                for value in filter.shown(column).into_iter().flatten() {
+                    if value.is_empty() {
+                        let _ = write!(
+                            xml,
+                            r#"<table:filter-condition table:field-number="{column}" table:value="" table:operator="empty"/>"#
+                        );
+                    } else {
+                        let _ = write!(
+                            xml,
+                            r#"<table:filter-condition table:field-number="{column}" table:value="{}" table:operator="="/>"#,
+                            escape(value)
+                        );
+                    }
+                }
+                xml.push_str("</table:filter-or>");
+            }
+            xml.push_str("</table:filter-and></table:filter>");
+        }
+        xml.push_str("</table:database-range>");
+    }
+    if xml.is_empty() {
+        xml
+    } else {
+        format!("<table:database-ranges>{xml}</table:database-ranges>")
+    }
+}
+
+/// The view settings `LibreOffice` reads the frozen rows and columns of each sheet from.
+fn settings_part(workbook: &Workbook) -> String {
+    let mut tables = String::new();
+    for sheet in &workbook.sheets {
+        if sheet.frozen_rows == 0 && sheet.frozen_columns == 0 {
+            continue;
+        }
+        let item = |name: &str, kind: &str, value: u32| {
+            format!(
+                r#"<config:config-item config:name="{name}" config:type="{kind}">{value}</config:config-item>"#
+            )
+        };
+        let horizontal = if sheet.frozen_columns > 0 { 2 } else { 0 };
+        let vertical = if sheet.frozen_rows > 0 { 2 } else { 0 };
+        let _ = write!(
+            tables,
+            r#"<config:config-item-map-entry config:name="{}">{}{}{}{}{}{}{}{}{}</config:config-item-map-entry>"#,
+            escape(&sheet.name),
+            item("HorizontalSplitMode", "short", horizontal),
+            item("VerticalSplitMode", "short", vertical),
+            item("HorizontalSplitPosition", "int", sheet.frozen_columns),
+            item("VerticalSplitPosition", "int", sheet.frozen_rows),
+            item("ActiveSplitRange", "short", 2),
+            item("PositionLeft", "int", 0),
+            item("PositionRight", "int", sheet.frozen_columns),
+            item("PositionTop", "int", 0),
+            item("PositionBottom", "int", sheet.frozen_rows),
+        );
+    }
+    let views = if tables.is_empty() {
+        String::new()
+    } else {
+        format!(
+            concat!(
+                r#"<config:config-item-set config:name="ooo:view-settings"><config:config-item-map-indexed config:name="Views">"#,
+                r#"<config:config-item-map-entry><config:config-item config:name="ViewId" config:type="string">view1</config:config-item>"#,
+                r#"<config:config-item-map-named config:name="Tables">{}</config:config-item-map-named>"#,
+                "</config:config-item-map-entry></config:config-item-map-indexed></config:config-item-set>"
+            ),
+            tables
+        )
+    };
+    format!(
+        concat!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>"#,
+            r#"<office:document-settings xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" "#,
+            r#"xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0" office:version="1.3">"#,
+            "<office:settings>{}</office:settings></office:document-settings>"
+        ),
+        views
+    )
+}
+
 const MANIFEST: &str = concat!(
     r#"<?xml version="1.0" encoding="UTF-8"?>"#,
     r#"<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.3">"#,
@@ -100,6 +211,7 @@ const MANIFEST: &str = concat!(
     r#"<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>"#,
     r#"<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>"#,
     r#"<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>"#,
+    r#"<manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="text/xml"/>"#,
     "</manifest:manifest>"
 );
 
@@ -175,13 +287,14 @@ fn content_part(workbook: &Workbook, conditional: &ConditionalStyles) -> String 
         concat!(
             r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content {}>"#,
             "<office:automatic-styles>{}</office:automatic-styles>",
-            "<office:body><office:spreadsheet>{}{}</office:spreadsheet></office:body>",
+            "<office:body><office:spreadsheet>{}{}{}</office:spreadsheet></office:body>",
             "</office:document-content>"
         ),
         NAMESPACES,
         automatic,
         content_validations_xml(workbook),
-        tables
+        tables,
+        database_ranges_xml(workbook)
     )
 }
 
@@ -230,6 +343,10 @@ fn table_xml(
     for merge in &sheet.merges {
         rows = rows.max(merge.last_row + 1);
         columns = columns.max(merge.last_column + 1);
+    }
+    for (_, spill) in workbook.spills(index) {
+        rows = rows.max(spill.last_row + 1);
+        columns = columns.max(spill.last_column + 1);
     }
     for range in sheet
         .validations
@@ -310,7 +427,12 @@ fn table_xml(
             ));
         }
         let mut line = format!(r#"<table:table-row table:style-name="ro{style}""#);
-        if height == Some(0.0) {
+        let filtered = sheet
+            .auto_filter()
+            .is_some_and(|filter| filter.hidden_rows().any(|hidden| hidden == row));
+        if filtered {
+            line.push_str(r#" table:visibility="filter""#);
+        } else if height == Some(0.0) {
             line.push_str(r#" table:visibility="collapse""#);
         }
         line.push('>');
@@ -382,17 +504,31 @@ fn cell_xml(
             r#" table:number-columns-spanned="{columns}" table:number-rows-spanned="{rows}""#
         );
     }
-    let Some(content) = content else {
+    // A cell an array spills into has no content of its own but shows the array's value.
+    let spilled = content.is_none() && workbook.spill_anchor(index, cell).is_some();
+    if content.is_none() && !spilled {
         xml.push_str("/>");
         return xml;
-    };
+    }
     let value = workbook.value(index, cell);
-    if let Input::Formula(expression) = &content.input {
+    if let Some(Input::Formula(expression)) = content.map(|content| &content.input) {
         let _ = write!(
             xml,
             r#" table:formula="of:={}""#,
             escape(&odf_formula(expression))
         );
+        if let Some((_, spill)) = workbook
+            .spills(index)
+            .into_iter()
+            .find(|(anchor, _)| *anchor == cell)
+        {
+            let _ = write!(
+                xml,
+                r#" table:number-matrix-columns-spanned="{}" table:number-matrix-rows-spanned="{}""#,
+                spill.last_column - spill.first_column + 1,
+                spill.last_row - spill.first_row + 1
+            );
+        }
     }
     let shown = workbook.display(index, cell, Locale::default());
     match &value {
