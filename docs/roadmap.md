@@ -156,6 +156,8 @@ autosave, and where an inserted image goes, all through the components' props.
 | 10.4 | Every argument of `GROUPBY` and `PIVOTBY`, with `PERCENTOF` | done (0.10.0) |
 | 10.5 | The fonts a Word 97-2003 document embeds, read into the document tree | done (0.10.0) |
 | 10.6 | A README that shows the library at work, and a demo of two people on one document | done (0.10.0) |
+| 10.7 | Charts and pictures moved and sized with their rows and columns; several pivot values along the rows; empty pivot cells for blank records | done (0.10.1) |
+| 10.8 | Undo of a shared deletion puts back the formulas it broke; a structural edit follows a concurrent rename | done (0.10.1) |
 
 ## Next
 
