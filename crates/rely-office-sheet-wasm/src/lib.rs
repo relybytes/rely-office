@@ -58,6 +58,8 @@ impl From<EditError> for Failure {
             EditError::InvalidStyle => "INVALID_STYLE",
             EditError::InvalidName => "INVALID_NAME",
             EditError::InvalidChart => "INVALID_CHART",
+            EditError::InvalidComment => "INVALID_COMMENT",
+            EditError::InvalidPivot => "INVALID_PIVOT",
         };
         Self::new(code, error.to_string())
     }
@@ -155,7 +157,7 @@ fn parse_json<T: for<'de> Deserialize<'de>>(json: &str, what: &str) -> Result<T,
         .map_err(|error| Failure::new("INVALID_INPUT", format!("invalid {what}: {error}")))
 }
 
-/// The comment on a cell.
+/// The comment on a cell, with the replies of a thread.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CommentSummary<'a> {
@@ -163,6 +165,21 @@ struct CommentSummary<'a> {
     column: u32,
     author: &'a str,
     text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    date: Option<&'a str>,
+    threaded: bool,
+    resolved: bool,
+    replies: Vec<ReplySummary<'a>>,
+}
+
+/// A reply of a comment thread.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReplySummary<'a> {
+    author: &'a str,
+    text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    date: Option<&'a str>,
 }
 
 /// The filter buttons of a sheet.
@@ -713,7 +730,8 @@ impl SheetDocument {
         to_json(&names)
     }
 
-    /// The comments of a sheet's cells: `[{ row, column, author, text }]`, row by row.
+    /// The comments of a sheet's cells: `[{ row, column, author, text, date?, threaded,
+    /// resolved, replies: [{ author, text, date? }] }]`, row by row.
     ///
     /// # Errors
     ///
@@ -732,6 +750,18 @@ impl SheetDocument {
                 column: cell.column,
                 author: &comment.author,
                 text: &comment.text,
+                date: comment.date.as_deref(),
+                threaded: comment.threaded,
+                resolved: comment.resolved,
+                replies: comment
+                    .replies
+                    .iter()
+                    .map(|reply| ReplySummary {
+                        author: &reply.author,
+                        text: &reply.text,
+                        date: reply.date.as_deref(),
+                    })
+                    .collect(),
             })
             .collect();
         to_json(&comments)
@@ -1070,6 +1100,18 @@ impl SheetDocument {
     #[must_use]
     pub fn delimiter(&self) -> Option<String> {
         self.workbook.delimiter().map(String::from)
+    }
+
+    /// The macros of the file read, never run: `kept` for an xlsm, which `save` writes back as
+    /// an xlsm, `dropped` for an xls, `none` otherwise.
+    #[must_use]
+    pub fn macros(&self) -> String {
+        match (self.workbook.holds_macros(), self.workbook.macro_project()) {
+            (_, Some(_)) => "kept",
+            (true, None) => "dropped",
+            (false, None) => "none",
+        }
+        .to_owned()
     }
 
     /// `[{ name, rows, columns, columnWidths: [[column, width]] }]`.
@@ -1644,6 +1686,106 @@ impl SheetDocument {
         })
     }
 
+    /// Open a thread on a cell in place of any comment it had; `date` is ISO 8601, or empty.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = startCommentThread)]
+    pub fn start_comment_thread(
+        &mut self,
+        sheet: usize,
+        row: u32,
+        column: u32,
+        author: &str,
+        text: &str,
+        date: &str,
+    ) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .workbook
+                .start_comment_thread(
+                    sheet,
+                    CellRef::new(row, column),
+                    author,
+                    text,
+                    Some(date).filter(|date| !date.is_empty()),
+                )
+                .map_err(|error| throw(&error.into()))
+        })
+    }
+
+    /// Answer the comment of a cell; `date` is ISO 8601, or empty.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = replyToComment)]
+    pub fn reply_to_comment(
+        &mut self,
+        sheet: usize,
+        row: u32,
+        column: u32,
+        author: &str,
+        text: &str,
+        date: &str,
+    ) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .workbook
+                .reply_to_comment(
+                    sheet,
+                    CellRef::new(row, column),
+                    author,
+                    text,
+                    Some(date).filter(|date| !date.is_empty()),
+                )
+                .map_err(|error| throw(&error.into()))
+        })
+    }
+
+    /// Mark the thread of a cell resolved, or open again.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = setCommentResolved)]
+    pub fn set_comment_resolved(
+        &mut self,
+        sheet: usize,
+        row: u32,
+        column: u32,
+        resolved: bool,
+    ) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .workbook
+                .set_comment_resolved(sheet, CellRef::new(row, column), resolved)
+                .map_err(|error| throw(&error.into()))
+        })
+    }
+
+    /// Remove a reply of the thread of a cell, by its position.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = removeCommentReply)]
+    pub fn remove_comment_reply(
+        &mut self,
+        sheet: usize,
+        row: u32,
+        column: u32,
+        reply: usize,
+    ) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .workbook
+                .remove_comment_reply(sheet, CellRef::new(row, column), reply)
+                .map_err(|error| throw(&error.into()))
+        })
+    }
+
     /// Set a row's height in points, 0 hiding it; a negative height lets it fit its content.
     ///
     /// # Errors
@@ -2110,6 +2252,8 @@ impl SheetDocument {
         kind.to_owned()
     }
 }
+
+mod pivots;
 
 #[cfg(test)]
 mod tests;

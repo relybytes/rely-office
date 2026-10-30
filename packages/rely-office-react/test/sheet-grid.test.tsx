@@ -395,9 +395,22 @@ describe('SheetGrid', () => {
     fireEvent.change(within(panel).getByRole('textbox', { name: 'Comments' }), { target: { value: 'Da rivedere' } });
     fireEvent.click(within(panel).getByRole('button', { name: 'Save comment' }));
 
-    expect(sheet.comments(0)).toEqual([{ row: 0, column: 1, author: 'Anna', text: 'Da rivedere' }]);
+    expect(sheet.comments(0)).toMatchObject([
+      { row: 0, column: 1, author: 'Anna', text: 'Da rivedere', threaded: true, resolved: false, replies: [] },
+    ]);
+    expect(sheet.comments(0)[0].date).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(cell('B1').className).toContain('rely-sheet-commented');
     expect(cell('B1').getAttribute('title')).toBe('Anna: Da rivedere');
+
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Reply' }), { target: { value: 'Fatto' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Reply' }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'Resolve' }));
+    expect(sheet.comments(0)[0]).toMatchObject({ resolved: true, replies: [{ author: 'Anna', text: 'Fatto' }] });
+    expect(cell('B1').getAttribute('title')).toBe('Anna: Da rivedere\nAnna: Fatto');
+    expect(within(panel).getByText('Resolved')).toBeTruthy();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Reopen' }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'Remove reply' }));
+    expect(sheet.comments(0)[0]).toMatchObject({ resolved: false, replies: [] });
 
     fireEvent.mouseDown(cell('A1'));
     expect((within(panel).getByRole('textbox', { name: 'Comments' }) as HTMLTextAreaElement).value).toBe('');
@@ -407,6 +420,50 @@ describe('SheetGrid', () => {
     fireEvent.click(within(panel).getByRole('button', { name: 'Remove' }));
     expect(sheet.comments(0)).toEqual([]);
     expect(cell('B1').className).not.toContain('rely-sheet-commented');
+  });
+
+  test('the pivot panel makes a table of the selection, refreshes it and removes it', () => {
+    sheet.setInputs(0, [
+      [0, 0, 'Regione'],
+      [0, 1, 'Importo'],
+      [1, 0, 'Nord'],
+      [1, 1, '10'],
+      [2, 0, 'Sud'],
+      [2, 1, '5'],
+      [3, 0, 'Nord'],
+      [3, 1, '2'],
+    ]);
+    const { cell } = mount();
+    fireEvent.mouseDown(cell('A1'));
+    fireEvent.mouseDown(cell('B4'), { shiftKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Pivot tables' }));
+    const panel = screen.getByRole('complementary', { name: 'Pivot tables' });
+    expect(within(panel).getByText('No pivot tables on this sheet')).toBeTruthy();
+    expect((within(panel).getByRole('textbox', { name: 'Starts at cell' }) as HTMLInputElement).value).toBe('D1');
+
+    fireEvent.change(within(panel).getByRole('combobox', { name: 'Place Regione' }), { target: { value: 'rows' } });
+    fireEvent.change(within(panel).getByRole('combobox', { name: 'Place Importo' }), { target: { value: 'values' } });
+    fireEvent.change(within(panel).getByRole('combobox', { name: 'Summarise by Importo' }), { target: { value: 'max' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Create pivot table' }));
+
+    const tables = sheet.pivotTables(0);
+    expect(tables).toHaveLength(1);
+    expect(tables[0]).toMatchObject({ rows: [{ field: 0 }], values: [{ field: 1, function: 'max' }], fields: ['Regione', 'Importo'] });
+    expect(cell('D1').textContent).toBe('Regione');
+    expect(cell('E2').textContent).toBe('10');
+
+    sheet.setInputs(0, [[1, 1, '30']]);
+    fireEvent.click(within(panel).getByRole('button', { name: 'Refresh' }));
+    expect(cell('E2').textContent).toBe('30');
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Tabella pivot 1' }));
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Starts at cell' }), { target: { value: 'zz' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Apply' }));
+    expect(within(panel).getByRole('alert').textContent).toBe('Write the starting cell as A1');
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Remove' }));
+    expect(sheet.pivotTables(0)).toHaveLength(0);
+    expect(cell('D1').textContent).toBe('');
   });
 
   test('the names panel defines a name formulas read, and shows a refused one', () => {

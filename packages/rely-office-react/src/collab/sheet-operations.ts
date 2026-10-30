@@ -8,7 +8,7 @@
 // and every client applies the same ones in the same order to the same file; `transformSheetOperation`
 // is what makes an operation made before another apply where its author meant it to.
 
-import type { CellRange, CellWindow, ChartPlacement, SheetRegion } from '../model.js';
+import type { CellRange, CellWindow, ChartPlacement, PivotTableDefinition, SheetRegion } from '../model.js';
 
 /** The calls of a `SheetDocument` that change it, and so travel between clients. */
 export const SHEET_MUTATORS = [
@@ -45,6 +45,15 @@ export const SHEET_MUTATORS = [
   'setAutoFilter',
   'setFilterColumn',
   'restoreRegion',
+  'startCommentThread',
+  'replyToComment',
+  'setCommentResolved',
+  'removeCommentReply',
+  'addPivotTable',
+  'setPivotTable',
+  'refreshPivotTable',
+  'refreshPivotTables',
+  'removePivotTable',
 ] as const;
 
 export type SheetMutator = (typeof SHEET_MUTATORS)[number];
@@ -178,7 +187,11 @@ function pastShift(operation: SheetOperation, shift: Shift): SheetOperation | nu
   switch (operation.method) {
     case 'setInput':
     case 'setFormat':
-    case 'setComment': {
+    case 'setComment':
+    case 'startCommentThread':
+    case 'replyToComment':
+    case 'setCommentResolved':
+    case 'removeCommentReply': {
       if (!same(sheet)) return operation;
       const point = shiftPoint(args[1] as number, args[2] as number, shift);
       if (!point) return null;
@@ -257,6 +270,12 @@ function pastShift(operation: SheetOperation, shift: Shift): SheetOperation | nu
       const moved = shiftRegion(args[1] as SheetRegion, shift);
       return moved ? replace(1, moved) : null;
     }
+    case 'addPivotTable':
+    case 'setPivotTable': {
+      const position = operation.method === 'addPivotTable' ? 1 : 2;
+      const moved = pivotPastShift(args[position] as PivotTableDefinition, sheet, shift);
+      return moved ? replace(position, moved) : null;
+    }
     case 'insertRows':
     case 'deleteRows':
     case 'insertColumns':
@@ -282,13 +301,41 @@ function pastShift(operation: SheetOperation, shift: Shift): SheetOperation | nu
   }
 }
 
+/** A pivot table definition moved past rows or columns: its anchor on its sheet, its source on the source's. */
+function pivotPastShift(definition: PivotTableDefinition, sheet: number, shift: Shift): PivotTableDefinition | null {
+  let next = definition;
+  if (sheet === shift.sheet) {
+    const anchor = shiftPoint(definition.anchor.row, definition.anchor.column, shift);
+    if (!anchor) return null;
+    next = { ...next, anchor: { row: anchor[0], column: anchor[1] } };
+  }
+  if (definition.sourceSheet === shift.sheet) {
+    const source = shiftWindow(definition.source, shift);
+    if (!source) return null;
+    next = { ...next, source };
+  }
+  return next;
+}
+
 /** The operation moved past the removal of a sheet: later sheets move up, the removed one's operations go. */
 function pastRemovedSheet(operation: SheetOperation, removed: number): SheetOperation | null {
   const move = (index: number): number | null => (index === removed ? null : index > removed ? index - 1 : index);
   const args = [...operation.args];
   switch (operation.method) {
     case 'addSheet':
+    case 'refreshPivotTables':
       return operation;
+    case 'addPivotTable':
+    case 'setPivotTable': {
+      const position = operation.method === 'addPivotTable' ? 1 : 2;
+      const definition = args[position] as PivotTableDefinition;
+      const sheet = move(args[0] as number);
+      const source = move(definition.sourceSheet);
+      if (sheet === null || source === null) return null;
+      args[0] = sheet;
+      args[position] = { ...definition, sourceSheet: source };
+      return { ...operation, args };
+    }
     case 'setDefinedName':
     case 'removeDefinedName': {
       const position = operation.method === 'setDefinedName' ? 2 : 1;
@@ -317,6 +364,18 @@ function pastRemovedSheet(operation: SheetOperation, removed: number): SheetOper
   }
 }
 
+/** The operation moved past a pivot table removed from the same sheet. */
+function pastRemovedPivot(operation: SheetOperation, sheet: number, index: number): SheetOperation | null {
+  const indexed = ['setPivotTable', 'refreshPivotTable', 'removePivotTable'];
+  if (!indexed.includes(operation.method) || operation.args[0] !== sheet) return operation;
+  const own = operation.args[1] as number;
+  if (own === index) return null;
+  if (own < index) return operation;
+  const args = [...operation.args];
+  args[1] = own - 1;
+  return { ...operation, args };
+}
+
 /** The operation moved past a chart removed from the same sheet. */
 function pastRemovedChart(operation: SheetOperation, sheet: number, index: number): SheetOperation | null {
   if (operation.method !== 'setChart' && operation.method !== 'removeChart') return operation;
@@ -343,6 +402,9 @@ export function transformSheetOperation(operation: SheetOperation, earlier: Shee
   }
   if (earlier.method === 'removeChart') {
     return pastRemovedChart(operation, earlier.args[0] as number, earlier.args[1] as number);
+  }
+  if (earlier.method === 'removePivotTable') {
+    return pastRemovedPivot(operation, earlier.args[0] as number, earlier.args[1] as number);
   }
   return operation;
 }

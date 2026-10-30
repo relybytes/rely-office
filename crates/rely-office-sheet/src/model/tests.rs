@@ -361,6 +361,7 @@ fn comments_are_written_moved_and_removed() {
         Some(&Comment {
             author: "Anna".to_owned(),
             text: "Da verificare\nentro venerdi".to_owned(),
+            ..Comment::default()
         })
     );
     workbook.insert_rows(0, 0, 1).unwrap();
@@ -383,5 +384,134 @@ fn comments_are_written_moved_and_removed() {
     assert_eq!(
         workbook.set_comment(0, CellRef::new(MAX_ROWS, 0), "", "x"),
         Err(EditError::OutOfBounds)
+    );
+}
+
+#[test]
+fn a_thread_is_opened_answered_resolved_and_trimmed() {
+    let mut workbook = Workbook::new();
+    let b2 = CellRef::parse("B2").unwrap();
+    workbook
+        .start_comment_thread(0, b2, " Anna ", "Prezzo?", Some("2026-10-30T09:00:00.000Z"))
+        .unwrap();
+    workbook
+        .reply_to_comment(0, b2, "Bruno", "Confermato", Some("2026-10-30T09:05:00"))
+        .unwrap();
+    workbook
+        .reply_to_comment(0, b2, "Carla", "Grazie", None)
+        .unwrap();
+    workbook.set_comment_resolved(0, b2, true).unwrap();
+    workbook.remove_comment_reply(0, b2, 1).unwrap();
+    let comment = workbook.sheets()[0].comment(b2).unwrap();
+    assert_eq!(comment.author, "Anna");
+    assert!(comment.threaded && comment.resolved);
+    assert_eq!(comment.date.as_deref(), Some("2026-10-30T09:00:00.000Z"));
+    assert_eq!(
+        comment.replies,
+        vec![CommentReply {
+            author: "Bruno".to_owned(),
+            text: "Confermato".to_owned(),
+            date: Some("2026-10-30T09:05:00".to_owned()),
+        }]
+    );
+    // Writing the text again keeps the thread and the author who opened it.
+    workbook
+        .set_comment(0, b2, "Dario", "Prezzo giusto?")
+        .unwrap();
+    let comment = workbook.sheets()[0].comment(b2).unwrap();
+    assert_eq!(
+        (comment.author.as_str(), comment.text.as_str()),
+        ("Anna", "Prezzo giusto?")
+    );
+    assert_eq!(comment.replies.len(), 1);
+    // A note answered becomes a thread.
+    let c3 = CellRef::parse("C3").unwrap();
+    workbook.set_comment(0, c3, "Eva", "Nota").unwrap();
+    assert!(!workbook.sheets()[0].comment(c3).unwrap().threaded);
+    workbook
+        .reply_to_comment(0, c3, "Eva", "Seguito", None)
+        .unwrap();
+    assert!(workbook.sheets()[0].comment(c3).unwrap().threaded);
+    workbook.set_comment_resolved(0, c3, false).unwrap();
+    // A thread moves with its cell and is removed as a note is.
+    workbook.insert_rows(0, 0, 1).unwrap();
+    assert!(
+        workbook.sheets()[0]
+            .comment(CellRef::parse("B3").unwrap())
+            .is_some()
+    );
+    workbook
+        .set_comment(0, CellRef::parse("B3").unwrap(), "", "")
+        .unwrap();
+    assert!(
+        workbook.sheets()[0]
+            .comment(CellRef::parse("B3").unwrap())
+            .is_none()
+    );
+}
+
+#[test]
+fn a_thread_refuses_what_it_cannot_keep() {
+    let mut workbook = Workbook::new();
+    let a1 = CellRef::new(0, 0);
+    assert_eq!(
+        workbook.reply_to_comment(0, a1, "Anna", "x", None),
+        Err(EditError::InvalidComment)
+    );
+    assert_eq!(
+        workbook.set_comment_resolved(0, a1, true),
+        Err(EditError::InvalidComment)
+    );
+    assert_eq!(
+        workbook.remove_comment_reply(0, a1, 0),
+        Err(EditError::InvalidComment)
+    );
+    assert_eq!(
+        workbook.start_comment_thread(0, a1, "Anna", " ", None),
+        Err(EditError::InvalidComment)
+    );
+    for date in [
+        "30/10/2026",
+        "2026-10-30",
+        "2026-10-30T09:00:00 ora",
+        "2026-1x-30T09:00:00",
+    ] {
+        assert_eq!(
+            workbook.start_comment_thread(0, a1, "Anna", "x", Some(date)),
+            Err(EditError::InvalidComment),
+            "{date}"
+        );
+    }
+    assert_eq!(
+        workbook.start_comment_thread(0, CellRef::new(MAX_ROWS, 0), "Anna", "x", None),
+        Err(EditError::OutOfBounds)
+    );
+    assert_eq!(
+        workbook.start_comment_thread(0, a1, "Anna", &"x".repeat(MAX_COMMENT_CHARS + 1), None),
+        Err(EditError::OutOfBounds)
+    );
+    assert_eq!(
+        workbook.start_comment_thread(2, a1, "Anna", "x", None),
+        Err(EditError::NoSuchSheet(2))
+    );
+    assert_eq!(
+        workbook.reply_to_comment(2, a1, "Anna", "x", None),
+        Err(EditError::NoSuchSheet(2))
+    );
+    workbook
+        .start_comment_thread(0, a1, "Anna", "x", None)
+        .unwrap();
+    assert_eq!(
+        workbook.remove_comment_reply(0, a1, 0),
+        Err(EditError::InvalidComment)
+    );
+    for _ in 0..MAX_COMMENT_REPLIES {
+        workbook
+            .reply_to_comment(0, a1, "Bruno", "y", None)
+            .unwrap();
+    }
+    assert_eq!(
+        workbook.reply_to_comment(0, a1, "Bruno", "y", None),
+        Err(EditError::InvalidComment)
     );
 }

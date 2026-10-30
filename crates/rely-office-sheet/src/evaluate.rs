@@ -479,6 +479,9 @@ impl<'a> Evaluator<'a> {
                 if let Some(operand) = self.reference_call(sheet, name, arguments) {
                     return operand;
                 }
+                if let Some(operand) = self.pivot_call(sheet, name, arguments) {
+                    return operand;
+                }
                 match self
                     .array_call(sheet, name, arguments)
                     .or_else(|| self.matrix_call(sheet, name, arguments))
@@ -1382,6 +1385,7 @@ mod functions;
 mod lambda;
 mod matrices;
 mod more;
+mod pivots;
 mod probability;
 mod reference;
 mod securities;

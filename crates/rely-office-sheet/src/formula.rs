@@ -1119,6 +1119,9 @@ const ITALIAN_FUNCTION_NAMES: &[(&str, &str)] = &[
     ("INV.GAMMA.N", "GAMMA.INV"),
     ("INV.GAMMA", "GAMMAINV"),
     ("CRESCITA", "GROWTH"),
+    ("INFO.DATI.TAB.PIVOT", "GETPIVOTDATA"),
+    ("RAGGRUPPA.PER", "GROUPBY"),
+    ("PIVOT.PER", "PIVOTBY"),
     ("DISTRIB.IPERGEOM.N", "HYPGEOM.DIST"),
     ("DISTRIB.IPERGEOM", "HYPGEOMDIST"),
     ("COMP.MODULO", "IMABS"),
@@ -1244,7 +1247,7 @@ fn canonical_name(name: &str) -> String {
     }
 }
 
-fn canonical_function_name(name: &str) -> String {
+pub(crate) fn canonical_function_name(name: &str) -> String {
     let upper = name.to_uppercase();
     // Files store the functions newer than Excel 2007 with a prefix.
     let upper = upper
@@ -1441,6 +1444,8 @@ pub(crate) const PREFIXED_FUNCTIONS: &[&str] = &[
     "FORECAST.ETS.CONFINT",
     "FORECAST.ETS.SEASONALITY",
     "FORECAST.ETS.STAT",
+    "GROUPBY",
+    "PIVOTBY",
 ];
 
 /// The functions that reach outside the workbook: a web service, market data, a picture by
@@ -1653,6 +1658,8 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "GCD",
     "GEOMEAN",
     "GESTEP",
+    "GETPIVOTDATA",
+    "GROUPBY",
     "GROWTH",
     "HARMEAN",
     "HEX2BIN",
@@ -1807,6 +1814,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "PHI",
     "PHONETIC",
     "PI",
+    "PIVOTBY",
     "PMT",
     "POISSON",
     "POISSON.DIST",

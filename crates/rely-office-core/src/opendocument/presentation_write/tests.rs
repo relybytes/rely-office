@@ -264,6 +264,7 @@ fn deck() -> Presentation {
             bytes: PNG.to_vec(),
         }],
         truncated: false,
+        ..Presentation::default()
     }
 }
 

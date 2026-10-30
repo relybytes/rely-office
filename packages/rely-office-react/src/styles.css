@@ -1109,6 +1109,51 @@
   grid-column: 2;
 }
 
+.rely-sheet-comment-replies {
+  display: flex;
+  grid-column: 1 / span 2;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.rely-sheet-rules .rely-sheet-comment-replies li {
+  padding: 2px 6px;
+  border: 0;
+  border-left: 2px solid var(--rely-border);
+  border-radius: 0;
+}
+
+.rely-sheet-rules .rely-sheet-comment-replies li button {
+  grid-row: 1;
+}
+
+.rely-sheet-comment-resolved {
+  color: var(--rely-accent);
+  font-style: normal;
+}
+
+.rely-sheet-panel-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.rely-sheet-pivot-field {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.rely-sheet-pivot-field > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .rely-sheet-rule-chip {
   display: inline-flex;
   gap: 4px;

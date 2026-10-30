@@ -248,6 +248,9 @@ fn read_layouts(
         .map(|xml| differential_looks(xml, &theme))
         .unwrap_or_default();
 
+    let persons = part("person")
+        .and_then(|target| crate::sheet_names::xlsx_persons(&mut package, &target, limits).ok())
+        .unwrap_or_default();
     let mut layouts = HashMap::new();
     for (name, relationship_id) in sheet_entries(&workbook)? {
         let Some(relationship) = relationships
@@ -279,9 +282,13 @@ fn read_layouts(
             &cells,
         )
         .unwrap_or_default();
-        layout.comments =
-            crate::sheet_names::xlsx_sheet_comments(&mut package, &relationship.target, limits)
-                .unwrap_or_default();
+        layout.comments = crate::sheet_names::xlsx_sheet_comments(
+            &mut package,
+            &relationship.target,
+            &persons,
+            limits,
+        )
+        .unwrap_or_default();
         layout.font_family.clone_from(&font_family);
         layout.font_size_tenths = font_size_tenths;
         layout.styles.clone_from(&styles);
@@ -431,6 +438,66 @@ fn sheet_entries(workbook: &str) -> Result<Vec<(String, String)>, OfficeError> {
                 }
             }
             Event::Eof => return Ok(entries),
+            _ => {}
+        }
+    }
+}
+
+/// The names the VBA project of an xlsm knows the workbook and its sheets by: the
+/// `codeName` of `workbookPr` and of each sheet's `sheetPr`, the sheets by their name.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct XlsxCodeNames {
+    pub workbook: Option<String>,
+    pub sheets: HashMap<String, String>,
+}
+
+/// The code names of an xlsx; a package it cannot read gives none.
+#[must_use]
+pub fn read_xlsx_code_names(bytes: &[u8], limits: &Limits) -> XlsxCodeNames {
+    read_code_names(bytes, limits).unwrap_or_default()
+}
+
+fn read_code_names(bytes: &[u8], limits: &Limits) -> Result<XlsxCodeNames, OfficeError> {
+    let mut package = open_package(bytes)?;
+    let workbook_part = main_part_path(&mut package, limits, WORKBOOK_PART)?;
+    let Some(workbook) = read_text_member(&mut package, &workbook_part, limits)? else {
+        return Ok(XlsxCodeNames::default());
+    };
+    let relationships = read_relationships(&mut package, &workbook_part, limits)?;
+    let mut names = XlsxCodeNames {
+        workbook: first_code_name(&workbook, "workbookPr")?,
+        sheets: HashMap::new(),
+    };
+    for (name, relationship_id) in sheet_entries(&workbook)? {
+        let Some(target) = relationships
+            .iter()
+            .find(|relationship| relationship.id == relationship_id && !relationship.external)
+            .map(|relationship| relationship.target.clone())
+        else {
+            continue;
+        };
+        if let Some(sheet) = read_text_member(&mut package, &target, limits)?
+            && let Some(code_name) = first_code_name(&sheet, "sheetPr")?
+        {
+            names.sheets.insert(name, code_name);
+        }
+    }
+    Ok(names)
+}
+
+/// The `codeName` of the first `element` of a part, read up to the cells at most.
+fn first_code_name(xml: &str, element: &str) -> Result<Option<String>, OfficeError> {
+    let mut reader = Reader::from_str(xml);
+    loop {
+        match reader.read_event().map_err(malformed)? {
+            Event::Start(start) | Event::Empty(start) => match start.local_name().as_ref() {
+                name if name == element => {
+                    return Ok(attribute(&start, "codeName").filter(|name| !name.is_empty()));
+                }
+                "sheetData" | "sheets" => return Ok(None),
+                _ => {}
+            },
+            Event::Eof => return Ok(None),
             _ => {}
         }
     }

@@ -24,6 +24,7 @@ import {
 } from 'react';
 import type {
   Border,
+  CellComment,
   CellRange,
   CellStyle,
   CellWindow,
@@ -54,6 +55,7 @@ import {
   type CellPosition,
 } from './geometry.js';
 import { ENGLISH_SHEET_GRID_LABELS, type SheetGridLabels } from './labels.js';
+import { PivotPanel } from './pivot-panel.js';
 import {
   BorderMenu,
   ChartPanel,
@@ -113,7 +115,7 @@ interface FunctionHints {
   active: number;
 }
 
-type Panel = 'conditional' | 'validation' | 'comments' | 'names' | 'charts' | null;
+type Panel = 'conditional' | 'validation' | 'comments' | 'names' | 'charts' | 'pivots' | null;
 
 /** A chart being dragged by its frame or its corner, and how far the pointer went. */
 interface ChartDrag {
@@ -262,6 +264,7 @@ export const SheetGrid = forwardRef(function SheetGrid(
   const [nameError, setNameError] = useState<string | null>(null);
   const [chosenChart, setChosenChart] = useState<number | null>(null);
   const [chartError, setChartError] = useState<string | null>(null);
+  const [pivotError, setPivotError] = useState<string | null>(null);
   const [chartDrag, setChartDrag] = useState<ChartDrag | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const cellEditor = useRef<HTMLInputElement>(null);
@@ -654,6 +657,19 @@ export const SheetGrid = forwardRef(function SheetGrid(
     event.preventDefault();
   };
 
+  /** Run a change to the pivot tables, keeping why it was refused for the pivot panel. */
+  const changePivot = (change: () => void) => {
+    try {
+      change();
+    } catch (error) {
+      setPivotError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    setPivotError(null);
+    refresh();
+    onChange?.();
+  };
+
   /** Run a change to the charts, keeping why it was refused for the chart panel. */
   const changeChart = (change: () => void): boolean => {
     try {
@@ -818,7 +834,7 @@ export const SheetGrid = forwardRef(function SheetGrid(
         aria-label={cellName({ row, column })}
         aria-selected={contains(selected, { row, column })}
         aria-description={comment ? comment.text : undefined}
-        title={comment ? (comment.author ? `${comment.author}: ${comment.text}` : comment.text) : undefined}
+        title={comment ? commentTitle(comment) : undefined}
         className={[
           'rely-sheet-cell',
           workbook.invalid.has(key) ? 'rely-sheet-invalid' : '',
@@ -1290,6 +1306,19 @@ export const SheetGrid = forwardRef(function SheetGrid(
             <button
               type="button"
               className="rely-tool"
+              aria-label={words.pivotTables}
+              title={words.pivotTables}
+              aria-pressed={panel === 'pivots'}
+              onClick={() => {
+                setPivotError(null);
+                setPanel((current) => (current === 'pivots' ? null : 'pivots'));
+              }}
+            >
+              {'⊞'}
+            </button>
+            <button
+              type="button"
+              className="rely-tool"
               aria-label={words.definedNames}
               title={words.definedNames}
               aria-pressed={panel === 'names'}
@@ -1559,6 +1588,22 @@ export const SheetGrid = forwardRef(function SheetGrid(
             selection={selected}
             comments={workbook.comments}
             onChange={(row, column, text) => mutate(() => sheet.setComment(workbook.index, row, column, text, author ?? ''))}
+            onStart={(row, column, text) =>
+              mutate(() =>
+                sheet.startCommentThread(workbook.index, row, column, text, author ?? '', new Date().toISOString()),
+              )
+            }
+            onReply={(row, column, text) =>
+              mutate(() =>
+                sheet.replyToComment(workbook.index, row, column, text, author ?? '', new Date().toISOString()),
+              )
+            }
+            onResolve={(row, column, resolved) =>
+              mutate(() => sheet.setCommentResolved(workbook.index, row, column, resolved))
+            }
+            onRemoveReply={(row, column, reply) =>
+              mutate(() => sheet.removeCommentReply(workbook.index, row, column, reply))
+            }
             onSelect={(row, column) => moveTo({ row, column }, false)}
             onClose={() => setPanel(null)}
           />
@@ -1589,6 +1634,30 @@ export const SheetGrid = forwardRef(function SheetGrid(
               setChosenChart(null);
               changeChart(() => sheet.removeChart(workbook.index, index));
             }}
+            onClose={() => setPanel(null)}
+          />
+        ) : null}
+        {panel === 'pivots' ? (
+          <PivotPanel
+            words={words}
+            selection={selected}
+            sheetIndex={workbook.index}
+            tables={sheet.pivotTables(workbook.index)}
+            fieldsOf={(source, window) => {
+              if (window.bottom <= window.top) return null;
+              try {
+                return sheet.pivotSourceFields(source, window);
+              } catch {
+                return null;
+              }
+            }}
+            error={pivotError}
+            onCreate={(definition) => changePivot(() => sheet.addPivotTable(workbook.index, definition))}
+            onChange={(index, definition) => changePivot(() => sheet.setPivotTable(workbook.index, index, definition))}
+            onRefresh={(index) => changePivot(() => sheet.refreshPivotTable(workbook.index, index))}
+            onRefreshAll={() => changePivot(() => sheet.refreshPivotTables())}
+            onRemove={(index) => changePivot(() => sheet.removePivotTable(workbook.index, index))}
+            onSelect={(row, column) => moveTo({ row, column }, false)}
             onClose={() => setPanel(null)}
           />
         ) : null}
@@ -1688,3 +1757,10 @@ export const SheetGrid = forwardRef(function SheetGrid(
     </div>
   );
 });
+
+/** What pointing at a commented cell shows: the comment and each reply under its author. */
+function commentTitle(comment: CellComment): string {
+  return [comment, ...comment.replies]
+    .map((entry) => (entry.author ? `${entry.author}: ${entry.text}` : entry.text))
+    .join('\n');
+}

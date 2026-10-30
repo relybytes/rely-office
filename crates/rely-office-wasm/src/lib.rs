@@ -13,10 +13,11 @@
 //! cross as their own byte arrays, never inside the JSON.
 
 use rely_office_core::{
-    Block, Comment, DocumentTree, EmbeddedObject, HeadersFooters, ImportReport, Limits, Media,
-    Note, OfficeError, PageLayout, Section, Sheet, TrackedChanges, TreeOptions, detect_format,
-    extract_text, read_document_tree, read_document_tree_named, read_presentation, read_workbook,
-    sniff_image_type, write_docx, write_html, write_markdown, write_odt, write_pptx,
+    Block, Comment, DocumentTree, EmbeddedObject, HeadersFooters, ImportReport, Limits,
+    MacroProject, Media, Note, OfficeError, PageLayout, Section, Sheet, TrackedChanges,
+    TreeOptions, detect_format, extract_text, read_document_tree, read_document_tree_named,
+    read_presentation, read_workbook, sniff_image_type, write_docx, write_html, write_markdown,
+    write_odt, write_pptx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -292,6 +293,7 @@ pub struct DocumentTreeHandle {
     json: String,
     media: Vec<Media>,
     objects: Vec<EmbeddedObject>,
+    macro_project: Option<Vec<u8>>,
 }
 
 #[wasm_bindgen]
@@ -325,6 +327,13 @@ impl DocumentTreeHandle {
             .get_mut(index)
             .map(|media| std::mem::take(&mut media.bytes))
     }
+
+    /// The macros of a docm as one opaque value to give back to the writer, moved out of the
+    /// handle: a second call, or a document without macros, returns none.
+    #[wasm_bindgen(js_name = takeMacroProject)]
+    pub fn take_macro_project(&mut self) -> Option<Vec<u8>> {
+        self.macro_project.take()
+    }
 }
 
 /// Read a docx or an odt as a [`DocumentTreeHandle`].
@@ -350,6 +359,7 @@ pub fn document_tree(
         sections,
         comments,
         objects,
+        macro_project,
     } = read_document_tree_named(bytes, file_name, &limits, &options)?;
     let json = to_json(&DocumentTreeOutput {
         blocks: &blocks,
@@ -389,10 +399,14 @@ pub fn document_tree(
             })
             .collect(),
     })?;
+    let macro_project = macro_project
+        .map(|project| project.to_bytes())
+        .transpose()?;
     Ok(DocumentTreeHandle {
         json,
         media,
         objects,
+        macro_project,
     })
 }
 
@@ -502,6 +516,7 @@ pub fn tree_from_json(
         sections,
         comments: input.comments,
         objects,
+        macro_project: None,
     })
 }
 
@@ -511,6 +526,7 @@ pub fn tree_from_json(
 pub struct DocxWriter {
     media: Vec<Media>,
     objects: Vec<EmbeddedObject>,
+    macro_project: Option<MacroProject>,
 }
 
 #[wasm_bindgen]
@@ -557,12 +573,29 @@ impl DocxWriter {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen]
     pub fn write(&mut self, tree_json: &str) -> Result<Vec<u8>, JsError> {
-        docx_from_json(
+        let mut tree = tree_from_json(
             tree_json,
             std::mem::take(&mut self.media),
             std::mem::take(&mut self.objects),
         )
-        .map_err(|failure| throw(&failure))
+        .map_err(|failure| throw(&failure))?;
+        tree.macro_project = self.macro_project.take();
+        write_docx(&tree).map_err(|error| throw(&error.into()))
+    }
+
+    /// Give the docx the macros `takeMacroProject` gave, so it is written as a docm.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code, for bytes that are no macro
+    /// project.
+    #[wasm_bindgen(js_name = setMacroProject)]
+    pub fn set_macro_project(&mut self, bytes: &[u8]) -> Result<(), JsError> {
+        self.macro_project = Some(
+            MacroProject::from_bytes(bytes, &Limits::default())
+                .map_err(|error| throw(&error.into()))?,
+        );
+        Ok(())
     }
 
     /// Write the tree as an odt, `OpenDocument` text.

@@ -115,6 +115,7 @@ pub(crate) fn read_odp(bytes: &[u8], limits: &Limits) -> Result<Presentation, Of
         slides,
         media: reader.media,
         truncated,
+        ..Presentation::default()
     })
 }
 

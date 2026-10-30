@@ -250,6 +250,7 @@ pub(crate) fn shift(
         .into_iter()
         .filter_map(|(cell, stored)| shift.cell(cell).map(|cell| (cell, stored)))
         .collect();
+    move_pivot_tables(sheets, target, shift);
 
     let target_name = sheets[target].name.to_lowercase();
     for (index, sheet) in sheets.iter_mut().enumerate() {
@@ -269,6 +270,51 @@ pub(crate) fn shift(
         defined.expression = shifted_expression(&defined.expression, local, &target_name, shift);
     }
     Ok(())
+}
+
+/// Move the pivot tables a shift reaches: a table on the sheet moves with its cells, one deleted
+/// with them goes, and a source on the sheet grows, shrinks or moves with its rows or columns.
+fn move_pivot_tables(sheets: &mut [Sheet], target: usize, shift: Shift) {
+    let span = |first: u32, last: u32| shift.span(first, last);
+    let range = |range: rely_office_core::CellRange| {
+        if shift.rows() {
+            span(range.first_row, range.last_row).map(|(first, last)| rely_office_core::CellRange {
+                first_row: first,
+                last_row: last,
+                ..range
+            })
+        } else {
+            span(range.first_column, range.last_column).map(|(first, last)| {
+                rely_office_core::CellRange {
+                    first_column: first,
+                    last_column: last,
+                    ..range
+                }
+            })
+        }
+    };
+    let target_name = sheets[target].name.to_lowercase();
+    for (index, sheet) in sheets.iter_mut().enumerate() {
+        if index == target {
+            sheet
+                .pivot_tables
+                .retain_mut(|table| match shift.cell(table.anchor) {
+                    Some(anchor) => {
+                        table.anchor = anchor;
+                        table.area = table.area.and_then(range);
+                        true
+                    }
+                    None => false,
+                });
+        }
+        for table in &mut sheet.pivot_tables {
+            if table.source_sheet.to_lowercase() == target_name
+                && let Some(source) = range(table.source)
+            {
+                table.source = source;
+            }
+        }
+    }
 }
 
 fn shift_range(range: &RangeAddress, shift: Shift) -> Expr {

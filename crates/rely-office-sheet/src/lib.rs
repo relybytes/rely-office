@@ -30,6 +30,7 @@ mod history;
 mod looks;
 mod model;
 mod ods;
+mod pivots;
 mod region;
 mod rules;
 mod styling;
@@ -50,11 +51,15 @@ pub use formula::{
 pub use history::{EditHistory, MAX_UNDO_CELLS, MAX_UNDO_STEPS};
 pub use looks::{CellLook, DataBarLook, IconLook};
 pub use model::{
-    Cell, Comment, DefinedName, EditError, MAX_CELLS, MAX_COMMENT_CHARS, MAX_SHEETS, NumberFormat,
-    Sheet, Workbook,
+    Cell, Comment, CommentReply, DefinedName, EditError, MAX_CELLS, MAX_COMMENT_CHARS,
+    MAX_COMMENT_REPLIES, MAX_SHEETS, NumberFormat, Sheet, Workbook,
 };
 pub use ods::write_ods;
-pub use region::{MAX_REGION_CELLS, Region, RegionCell, RegionComment};
+pub use pivots::{
+    MAX_PIVOT_COLUMN_KEYS, MAX_PIVOT_FIELDS, MAX_PIVOT_ROW_KEYS, MAX_PIVOT_SOURCE_CELLS,
+    MAX_PIVOT_TABLES, PivotField, PivotFunction, PivotTable, PivotValue, SourceField, item_label,
+};
+pub use region::{MAX_REGION_CELLS, Region, RegionCell, RegionComment, RegionReply};
 pub use rely_office_core::{
     Border, BorderStyle, CellBorders, CellFont, CellRange, CellStyle, ChartSeriesSpec, ChartSpec,
     ChartType, ComparisonOperator, Condition, ConditionalFormat, ConditionalRule, DataValidation,

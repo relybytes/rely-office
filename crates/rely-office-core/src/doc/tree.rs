@@ -585,6 +585,7 @@ impl Converter<'_> {
             notes: self.notes,
             headers_footers: last.headers_footers,
             sections: tree_sections,
+            macro_project: None,
         }
     }
 

@@ -4,7 +4,7 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
-import type { CellWindow, SheetDocument } from '../model.js';
+import type { CellWindow, PivotTableDefinition, SheetDocument } from '../model.js';
 import type { SequencedOperation, SubmittedOperation } from './protocol.js';
 import type { CollabSession } from './session.js';
 import {
@@ -251,6 +251,9 @@ export class SheetCollaboration {
     if (operation.method === 'addChart') {
       return [{ method: 'removeChart', args: [operation.args[0], result], locale: operation.locale }];
     }
+    if (operation.method === 'addPivotTable') {
+      return [{ method: 'removePivotTable', args: [operation.args[0], result], locale: operation.locale }];
+    }
     return [];
   }
 
@@ -314,6 +317,10 @@ export class SheetCollaboration {
       case 'setInput':
       case 'setFormat':
       case 'setComment':
+      case 'startCommentThread':
+      case 'replyToComment':
+      case 'setCommentResolved':
+      case 'removeCommentReply':
         return restore(sheet, { top: args[1] as number, left: args[2] as number, bottom: args[1] as number, right: args[2] as number });
       case 'setInputs':
         return restore(sheet, windowOf((args[1] as [number, number, string][]).map(([row, column]) => [row, column])));
@@ -408,9 +415,35 @@ export class SheetCollaboration {
         const chart = this.sheet.charts(sheet)[args[1] as number];
         return chart?.spec ? [{ method: 'addChart', args: [sheet, chart.spec, chart.placement], locale }] : [];
       }
+      case 'setPivotTable':
+      case 'removePivotTable': {
+        const definition = this.pivotDefinition(sheet, args[1] as number);
+        if (!definition) return [];
+        return method === 'setPivotTable'
+          ? [{ method: 'setPivotTable', args: [sheet, args[1], definition], locale }]
+          : [{ method: 'addPivotTable', args: [sheet, definition], locale }];
+      }
       default:
         return [];
     }
+  }
+
+  /** A pivot table as the definition that makes it again; null when its source sheet is gone. */
+  private pivotDefinition(sheet: number, index: number): PivotTableDefinition | null {
+    const table = this.sheet.pivotTables(sheet).find((each) => each.index === index);
+    if (!table || table.sourceSheet === null) return null;
+    return {
+      name: table.name,
+      sourceSheet: table.sourceSheet,
+      source: table.source,
+      anchor: table.anchor,
+      rows: table.rows,
+      columns: table.columns,
+      values: table.values,
+      filters: table.filters,
+      rowGrandTotals: table.rowGrandTotals,
+      columnGrandTotals: table.columnGrandTotals,
+    };
   }
 
   /** Apply an operation in the locale it was typed in; a refused one changes nothing. */

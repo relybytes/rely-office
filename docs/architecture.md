@@ -24,8 +24,8 @@ Editing together is in the frontend package, over Yjs and a room the host runs
 checkpoints a shared workbook undoes and rolls back with.
 
 What it deliberately does not do: pixel-perfect Word layout (Typst lays pages out
-its own way; [rendering.md](rendering.md) measures how close), macros, editing pivot tables, and
-the functions that call outside the workbook.
+its own way; [rendering.md](rendering.md) measures how close), running macros (they are kept, see
+[editing.md](editing.md#macros)), and the functions that call outside the workbook.
 
 ## Crates and packages
 

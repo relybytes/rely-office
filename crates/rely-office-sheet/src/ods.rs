@@ -6,10 +6,12 @@
 
 //! A workbook written as ods: each sheet a table with its column widths, row heights, merged
 //! cells, cell styles and number formats, every formula in `OpenFormula` with its computed
-//! value, and the conditional formats and validations as `LibreOffice` keeps them. Pictures,
-//! charts and pivot tables are written to xlsx only.
+//! value, the conditional formats and validations as `LibreOffice` keeps them, the pictures and
+//! charts in frames and the pivot tables as data pilot tables. A pivot table an xlsx carried
+//! without the model reading it is written to xlsx only.
 
 mod formula;
+mod pivots;
 mod rules;
 mod styles;
 
@@ -22,6 +24,7 @@ use zip::CompressionMethod;
 use zip::write::SimpleFileOptions;
 
 use self::formula::odf_formula;
+pub(crate) use self::pivots::{place_data_pilots, read_data_pilots};
 use self::rules::{
     ConditionalStyles, conditional_formats_xml, content_validations_xml, validation_name,
 };
@@ -231,14 +234,28 @@ fn named_expressions_xml(workbook: &Workbook, sheet: Option<usize>) -> String {
     }
 }
 
-/// The annotation `LibreOffice` shows for a cell's comment.
+/// The annotation `LibreOffice` shows for a cell's comment. ODF has no threads, so the replies
+/// of a thread follow its text, a paragraph each opening with its author.
 fn annotation_xml(comment: &Comment) -> String {
     let mut xml = String::from("<office:annotation>");
     if !comment.author.is_empty() {
         let _ = write!(xml, "<dc:creator>{}</dc:creator>", escape(&comment.author));
     }
+    if let Some(date) = comment.date.as_deref().and_then(|date| date.get(..19)) {
+        let _ = write!(xml, "<dc:date>{}</dc:date>", escape(date));
+    }
     for line in comment.text.split('\n') {
         let _ = write!(xml, "<text:p>{}</text:p>", paragraph_text(line));
+    }
+    for reply in &comment.replies {
+        for (number, line) in reply.text.split('\n').enumerate() {
+            let line = if number == 0 && !reply.author.is_empty() {
+                format!("{}: {line}", reply.author)
+            } else {
+                line.to_owned()
+            };
+            let _ = write!(xml, "<text:p>{}</text:p>", paragraph_text(&line));
+        }
     }
     xml.push_str("</office:annotation>");
     xml
@@ -432,7 +449,7 @@ fn content_part(workbook: &Workbook, conditional: &ConditionalStyles, objects: &
         concat!(
             r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content {}>"#,
             "<office:automatic-styles>{}</office:automatic-styles>",
-            "<office:body><office:spreadsheet>{}{}{}{}</office:spreadsheet></office:body>",
+            "<office:body><office:spreadsheet>{}{}{}{}{}</office:spreadsheet></office:body>",
             "</office:document-content>"
         ),
         NAMESPACES,
@@ -440,7 +457,8 @@ fn content_part(workbook: &Workbook, conditional: &ConditionalStyles, objects: &
         content_validations_xml(workbook),
         tables,
         named_expressions_xml(workbook, None),
-        database_ranges_xml(workbook)
+        database_ranges_xml(workbook),
+        pivots::data_pilot_tables_xml(workbook)
     )
 }
 

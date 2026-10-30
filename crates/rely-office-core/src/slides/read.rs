@@ -118,7 +118,9 @@ pub fn read_presentation(bytes: &[u8], limits: &Limits) -> Result<Presentation, 
         return crate::opendocument::read_odp(bytes, limits);
     }
     if format == DocumentFormat::Ppt {
-        return crate::ppt::read_ppt_presentation(bytes, limits);
+        let mut presentation = crate::ppt::read_ppt_presentation(bytes, limits)?;
+        presentation.holds_macros = crate::holds_macros(bytes, limits);
+        return Ok(presentation);
     }
     if format != DocumentFormat::Pptx {
         return Err(OfficeError::UnsupportedFormat(format));
@@ -165,12 +167,15 @@ pub fn read_presentation(bytes: &[u8], limits: &Limits) -> Result<Presentation, 
         }
     }
     let truncated = reader.truncated;
+    let macro_project = crate::read_macro_project(bytes, limits);
     Ok(Presentation {
         width_emu,
         height_emu,
         slides,
         media: reader.media,
         truncated,
+        holds_macros: macro_project.is_some(),
+        macro_project,
     })
 }
 

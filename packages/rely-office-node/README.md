@@ -204,9 +204,18 @@ Italian `=SOMMA(A1;0,5)`, and it reads back the same through `setInput`. `undo()
 go back and forth over the edits, up to 100 of them, with `canUndo()` and `canRedo()` for the
 buttons.
 
+`macros()` says what became of the macros of the file read: `kept` for an xlsm, which `save`
+writes back as an xlsm, `dropped` for an xls, `none` otherwise. They are never run; a docm and a
+pptm keep theirs the same way, as the `macroProject` that `readDocumentTree` and
+`readPresentation` give and `writeDocx` and `writePptx` write back.
+
 `definedNames()`, `setDefinedName(name, formula, sheet?)` and `removeDefinedName(name, sheet?)`
 manage the names formulas read, a `LAMBDA` among them; `comments(sheet)` and
-`setComment(sheet, row, column, text, author?)` the comments of the cells. `charts(sheet)` lists
+`setComment(sheet, row, column, text, author?)` the comments of the cells, and
+`startCommentThread(sheet, row, column, text, author?, date?)`, `replyToComment(...)`,
+`setCommentResolved(sheet, row, column, resolved)` and `removeCommentReply(sheet, row, column,
+index)` the threads of Excel 365, each comment carrying `threaded`, `resolved`, `date` and its
+`replies`. `charts(sheet)` lists
 the charts with where they sit and, when they can be changed, what they show;
 `chartForRange(sheet, window, 'column')` suggests the chart of a selection, which `addChart(sheet,
 chart, placement)` adds, `setChart(sheet, index, { chart?, placement? })` changes or moves and
@@ -217,7 +226,23 @@ const chart = sheet.chartForRange(0, { top: 0, left: 0, bottom: 12, right: 2 }, 
 sheet.addChart(0, { ...chart, title: 'Vendite' }, { row: 1, column: 5, width: 4389120, height: 2651760 });
 ```
 
-`save()` writes an xlsx, `saveOds()` an ods, which keeps everything but the pivot tables, and
+`pivotTables(sheet)` lists the pivot tables of a sheet, `pivotSourceFields(sheet, window)` the
+fields of a range with their items, and `addPivotTable(sheet, definition)`, `setPivotTable`,
+`refreshPivotTable`, `refreshPivotTables` and `removePivotTable` make, change, compute again and
+remove them:
+
+```js
+sheet.addPivotTable(0, {
+  sourceSheet: 0,
+  source: { top: 0, left: 0, bottom: 120, right: 3 },
+  anchor: { row: 0, column: 6 },
+  rows: [{ field: 0 }],
+  columns: [{ field: 2 }],
+  values: [{ field: 3, function: 'sum' }],
+});
+```
+
+`save()` writes an xlsx, `saveOds()` an ods, its pivot tables as data pilot tables, and
 `saveCsv(sheet, separator?)` one sheet as csv, by default with the separator of the csv it was
 read from (`delimiter()`) or of the locale. The formulas, functions, rules and edits are described in
 [docs/editing.md](https://github.com/relybytes/rely-office/blob/main/docs/editing.md).

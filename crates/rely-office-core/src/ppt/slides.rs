@@ -137,6 +137,7 @@ pub(crate) fn read_ppt_presentation(
         slides,
         media: reader.media,
         truncated: reader.truncated,
+        ..Presentation::default()
     })
 }
 

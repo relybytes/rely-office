@@ -12,6 +12,9 @@ import type {
   Border,
   BorderPlacement,
   CellComment,
+  PivotSourceField,
+  PivotTableDefinition,
+  SheetPivotTable,
   CellFormat,
   CellRange,
   CellStyle,
@@ -188,6 +191,50 @@ class BrowserSheetDocument implements SheetDocument {
     call(() => this.document.setComment(sheet, row, column, author, text));
   }
 
+  startCommentThread(sheet: number, row: number, column: number, text: string, author = '', date = ''): void {
+    call(() => this.document.startCommentThread(sheet, row, column, author, text, date));
+  }
+
+  replyToComment(sheet: number, row: number, column: number, text: string, author = '', date = ''): void {
+    call(() => this.document.replyToComment(sheet, row, column, author, text, date));
+  }
+
+  pivotTables(sheet: number): SheetPivotTable[] {
+    return parse(() => this.document.pivotTablesJson(sheet));
+  }
+
+  pivotSourceFields(sheet: number, { top, left, bottom, right }: CellWindow): PivotSourceField[] {
+    return parse(() => this.document.pivotSourceFieldsJson(sheet, top, left, bottom, right));
+  }
+
+  addPivotTable(sheet: number, definition: PivotTableDefinition): number {
+    return call(() => this.document.addPivotTable(sheet, JSON.stringify(definition)));
+  }
+
+  setPivotTable(sheet: number, index: number, definition: PivotTableDefinition): void {
+    call(() => this.document.setPivotTable(sheet, index, JSON.stringify(definition)));
+  }
+
+  refreshPivotTable(sheet: number, index: number): void {
+    call(() => this.document.refreshPivotTable(sheet, index));
+  }
+
+  refreshPivotTables(): number {
+    return this.document.refreshPivotTables();
+  }
+
+  removePivotTable(sheet: number, index: number): void {
+    call(() => this.document.removePivotTable(sheet, index));
+  }
+
+  setCommentResolved(sheet: number, row: number, column: number, resolved: boolean): void {
+    call(() => this.document.setCommentResolved(sheet, row, column, resolved));
+  }
+
+  removeCommentReply(sheet: number, row: number, column: number, reply: number): void {
+    call(() => this.document.removeCommentReply(sheet, row, column, reply));
+  }
+
   mergeCells(sheet: number, { top, left, bottom, right }: CellWindow): void {
     call(() => this.document.mergeCells(sheet, top, left, bottom, right));
   }
@@ -347,6 +394,10 @@ class BrowserSheetDocument implements SheetDocument {
 
   delimiter(): string | null {
     return this.document.delimiter() ?? null;
+  }
+
+  macros(): 'none' | 'kept' | 'dropped' {
+    return this.document.macros() as 'none' | 'kept' | 'dropped';
   }
 
   undo(): boolean {

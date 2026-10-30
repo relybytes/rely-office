@@ -186,6 +186,7 @@ pub(crate) fn read_odt_tree(
         headers_footers: last.headers_footers,
         sections,
         objects: converter.objects,
+        macro_project: None,
     })
 }
 

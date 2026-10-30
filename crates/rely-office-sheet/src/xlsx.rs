@@ -15,10 +15,11 @@ use std::io::{Cursor, Write};
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use rely_office_core::{
-    Border, BorderStyle, CarriedPart, CellBorders, CellFont, CellRange, CellStyle, DocumentFormat,
-    HorizontalAlignment, Limits, OfficeError, SheetLayout, VerticalAlignment, WorkbookName,
-    delimited_separator, detect_format, excel_formula_from_odf, read_ods_sheet_layouts,
-    read_workbook, read_workbook_names, read_xlsx_drawing_parts, read_xlsx_layouts,
+    Border, BorderStyle, CarriedPart, CarriedPivot, CellBorders, CellFont, CellRange, CellStyle,
+    DocumentFormat, HorizontalAlignment, Limits, OfficeError, SheetLayout, VerticalAlignment,
+    WorkbookName, delimited_separator, detect_format, excel_formula_from_odf, holds_macros,
+    insert_macro_project, read_macro_project, read_ods_sheet_layouts, read_workbook,
+    read_workbook_names, read_xlsx_code_names, read_xlsx_drawing_parts, read_xlsx_layouts,
     read_xlsx_pivot_parts, read_xlsx_theme_part,
 };
 use zip::write::SimpleFileOptions;
@@ -36,6 +37,7 @@ use crate::model::{
 };
 use crate::value::{ErrorKind, Input, Locale, Value};
 
+mod pivots;
 mod rules;
 
 use rules::{Differentials, conditional_formatting_xml, data_validations_xml};
@@ -82,7 +84,7 @@ pub fn read_spreadsheet(
                 // The layout's view and pictures are taken after its looks are applied.
                 let mut layouts_for_view: HashMap<String, SheetLayout> = HashMap::new();
                 let mut drawings = read_xlsx_drawing_parts(bytes, limits);
-                let mut pivots = read_xlsx_pivot_parts(bytes, limits);
+                let mut carried_pivots = read_xlsx_pivot_parts(bytes, limits);
                 for sheet in &mut sheets {
                     if let Some(layout) = layouts.remove(&sheet.name) {
                         apply_layout(sheet, &layout, &mut styles);
@@ -93,7 +95,13 @@ pub fn read_spreadsheet(
                         apply_view(sheet, &layout);
                         sheet.pictures = layout.drawings;
                     }
-                    sheet.pivots = pivots.remove(&sheet.name).unwrap_or_default();
+                    let (tables, kept) = pivots::model_pivots(
+                        carried_pivots.remove(&sheet.name).unwrap_or_default(),
+                        &sheet.name,
+                        locale,
+                    );
+                    sheet.pivots = kept;
+                    sheet.pivot_tables = tables;
                 }
             }
             sheets
@@ -125,7 +133,25 @@ pub fn read_spreadsheet(
     }
     if format == DocumentFormat::Xlsx {
         workbook.theme = read_xlsx_theme_part(bytes, limits);
+        workbook.macro_project = read_macro_project(bytes, limits);
+        if workbook.macro_project.is_some() {
+            let mut code_names = read_xlsx_code_names(bytes, limits);
+            workbook.code_name = code_names.workbook;
+            for sheet in &mut workbook.sheets {
+                sheet.code_name = code_names.sheets.remove(&sheet.name);
+            }
+        }
     }
+    if format == DocumentFormat::Ods {
+        let pending = crate::ods::read_data_pilots(bytes, limits);
+        crate::ods::place_data_pilots(&mut workbook, pending, locale);
+    }
+    workbook.snapshot_pivot_tables();
+    workbook.holds_macros = match format {
+        DocumentFormat::Xlsx => workbook.macro_project.is_some(),
+        DocumentFormat::Xls => holds_macros(bytes, limits),
+        _ => false,
+    };
     Ok(workbook)
 }
 
@@ -162,6 +188,10 @@ fn apply_view(sheet: &mut Sheet, layout: &SheetLayout) {
                 Comment {
                     author: comment.author.clone(),
                     text: comment.text.clone(),
+                    date: comment.date.clone(),
+                    threaded: comment.threaded,
+                    resolved: comment.resolved,
+                    replies: comment.replies.clone(),
                 },
             )
         })
@@ -532,6 +562,19 @@ fn delimited_sheet(rows: &[Vec<String>], locale: Locale) -> Result<Sheet, Office
 /// [`OfficeError::DamagedContainer`] when the zip cannot be written, which only a failing
 /// allocator causes.
 pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
+    let package = write_package(workbook)?;
+    match &workbook.macro_project {
+        Some(project) => insert_macro_project(&package, project),
+        None => Ok(package),
+    }
+}
+
+/// The package of a workbook, its macros aside.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the parts of a package are written in the order the content types list them"
+)]
+fn write_package(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
     let differentials = Differentials::new(workbook);
     let styles = Styles::new(workbook, &differentials);
 
@@ -546,11 +589,16 @@ pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
             .map_err(|error| OfficeError::DamagedContainer(error.to_string()))
     };
     let count = workbook.sheets.len();
-    let carried = carried_parts(workbook);
+    let pivots = pivots::written_pivots(workbook);
+    let carried = carried_parts(workbook, &pivots);
     let spills = workbook.spills.iter().any(|spills| !spills.is_empty());
     let commented: Vec<usize> = (0..count)
         .filter(|index| !workbook.sheets[*index].comments.is_empty())
         .collect();
+    let threaded: Vec<usize> = (0..count)
+        .filter(|index| has_threads(&workbook.sheets[*index]))
+        .collect();
+    let persons = thread_persons(workbook);
     add(
         "[Content_Types].xml",
         content_types(
@@ -559,21 +607,29 @@ pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
             workbook.theme.is_some(),
             spills,
             &commented,
+            &threaded,
         )
         .as_bytes(),
     )?;
     add("_rels/.rels", PACKAGE_RELATIONSHIPS.as_bytes())?;
-    add("xl/workbook.xml", workbook_part(workbook).as_bytes())?;
+    add(
+        "xl/workbook.xml",
+        workbook_part(workbook, &pivots).as_bytes(),
+    )?;
     add(
         "xl/_rels/workbook.xml.rels",
         workbook_relationships(
             count,
             workbook.theme.is_some(),
-            &pivot_caches(workbook),
+            &pivot_caches(&pivots),
             spills,
+            !persons.is_empty(),
         )
         .as_bytes(),
     )?;
+    if !persons.is_empty() {
+        add(PERSONS_PART, persons_part(&persons).as_bytes())?;
+    }
     if let Some(theme) = &workbook.theme {
         add(THEME_PART, &theme.bytes)?;
     }
@@ -593,17 +649,23 @@ pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
             &format!("xl/worksheets/sheet{}.xml", index + 1),
             xml.as_bytes(),
         )?;
-        if sheet.drawing.is_some() || !sheet.pivots.is_empty() || !sheet.comments.is_empty() {
+        if sheet.drawing.is_some() || !pivots[index].is_empty() || !sheet.comments.is_empty() {
             add(
                 &format!("xl/worksheets/_rels/sheet{}.xml.rels", index + 1),
-                sheet_relationships(sheet, index).as_bytes(),
+                sheet_relationships(sheet, index, &pivots[index]).as_bytes(),
             )?;
         }
         if !sheet.comments.is_empty() {
             add(
                 &format!("xl/comments{}.xml", index + 1),
-                comments_part(sheet).as_bytes(),
+                comments_part(sheet, index).as_bytes(),
             )?;
+            if has_threads(sheet) {
+                add(
+                    &format!("xl/threadedComments/threadedComment{}.xml", index + 1),
+                    threaded_comments_part(sheet, index).as_bytes(),
+                )?;
+            }
             add(
                 &format!("xl/drawings/vmlDrawing{}.vml", index + 1),
                 comment_shapes_part(sheet, index).as_bytes(),
@@ -904,6 +966,9 @@ fn sheet_part(
         r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" "#,
         r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#
     ));
+    if let Some(code_name) = &sheet.code_name {
+        let _ = write!(xml, r#"<sheetPr codeName="{}"/>"#, escape(code_name));
+    }
     xml.push_str(&sheet_views_xml(sheet));
     if !sheet.column_widths.is_empty() {
         xml.push_str("<cols>");
@@ -1256,12 +1321,16 @@ fn write_cell(
     }
 }
 
-fn workbook_part(workbook: &Workbook) -> String {
+fn workbook_part(workbook: &Workbook, pivots: &[Vec<CarriedPivot>]) -> String {
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" "#,
-        r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>"#
+        r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#
     ));
+    if let Some(code_name) = &workbook.code_name {
+        let _ = write!(xml, r#"<workbookPr codeName="{}"/>"#, escape(code_name));
+    }
+    xml.push_str("<sheets>");
     for (index, sheet) in workbook.sheets.iter().enumerate() {
         let _ = write!(
             xml,
@@ -1274,7 +1343,7 @@ fn workbook_part(workbook: &Workbook) -> String {
     xml.push_str("</sheets>");
     xml.push_str(&defined_names_xml(workbook));
     xml.push_str(r#"<calcPr calcId="191029" fullCalcOnLoad="1"/>"#);
-    let caches = pivot_caches(workbook);
+    let caches = pivot_caches(pivots);
     if !caches.is_empty() {
         xml.push_str("<pivotCaches>");
         for (index, (_, cache_id)) in caches.iter().enumerate() {
@@ -1291,9 +1360,9 @@ fn workbook_part(workbook: &Workbook) -> String {
 }
 
 /// The pivot caches the sheets' pivot tables read, each once with its id, in sheet order.
-fn pivot_caches(workbook: &Workbook) -> Vec<(&str, u32)> {
+fn pivot_caches(pivots: &[Vec<CarriedPivot>]) -> Vec<(&str, u32)> {
     let mut caches: Vec<(&str, u32)> = Vec::new();
-    for pivot in workbook.sheets.iter().flat_map(|sheet| &sheet.pivots) {
+    for pivot in pivots.iter().flatten() {
         if !caches.iter().any(|(part, _)| *part == pivot.cache_part) {
             caches.push((&pivot.cache_part, pivot.cache_id));
         }
@@ -1317,6 +1386,7 @@ fn workbook_relationships(
     theme: bool,
     caches: &[(&str, u32)],
     metadata: bool,
+    persons: bool,
 ) -> String {
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
@@ -1350,13 +1420,19 @@ fn workbook_relationships(
     if metadata {
         xml.push_str(r#"<Relationship Id="rIdMetadata" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata" Target="metadata.xml"/>"#);
     }
+    if persons {
+        xml.push_str(r#"<Relationship Id="rIdPersons" Type="http://schemas.microsoft.com/office/2017/10/relationships/person" Target="persons/person.xml"/>"#);
+    }
     xml.push_str("</Relationships>");
     xml
 }
 
 /// The parts the drawings of the sheets carry, each once; none can take the place of a part the
 /// writer makes itself.
-fn carried_parts(workbook: &Workbook) -> Vec<&CarriedPart> {
+fn carried_parts<'w>(
+    workbook: &'w Workbook,
+    pivots: &'w [Vec<CarriedPivot>],
+) -> Vec<&'w CarriedPart> {
     let mut names = HashSet::new();
     workbook
         .sheets
@@ -1366,8 +1442,8 @@ fn carried_parts(workbook: &Workbook) -> Vec<&CarriedPart> {
                 .drawing
                 .iter()
                 .flat_map(|drawing| drawing.parts.iter())
-                .chain(sheet.pivots.iter().flat_map(|pivot| pivot.parts.iter()))
         })
+        .chain(pivots.iter().flatten().flat_map(|pivot| pivot.parts.iter()))
         .filter(|part| {
             let name = part.name.to_ascii_lowercase();
             !name.starts_with("xl/worksheets/")
@@ -1383,7 +1459,7 @@ fn carried_parts(workbook: &Workbook) -> Vec<&CarriedPart> {
 }
 
 /// The relationships of a worksheet: its drawing, its pivot tables and its comments.
-fn sheet_relationships(sheet: &Sheet, index: usize) -> String {
+fn sheet_relationships(sheet: &Sheet, index: usize, pivots: &[CarriedPivot]) -> String {
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
@@ -1395,7 +1471,7 @@ fn sheet_relationships(sheet: &Sheet, index: usize) -> String {
             escape(&target_from(1, &drawing.drawing_part))
         );
     }
-    for (index, pivot) in sheet.pivots.iter().enumerate() {
+    for (index, pivot) in pivots.iter().enumerate() {
         let _ = write!(
             xml,
             r#"<Relationship Id="rIdPivot{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable" Target="{}"/>"#,
@@ -1414,6 +1490,13 @@ fn sheet_relationships(sheet: &Sheet, index: usize) -> String {
             COMMENT_SHAPES_RELATIONSHIP
         );
     }
+    if has_threads(sheet) {
+        let _ = write!(
+            xml,
+            r#"<Relationship Id="rIdThreadedComments1" Type="http://schemas.microsoft.com/office/2017/10/relationships/threadedComment" Target="../threadedComments/threadedComment{}.xml"/>"#,
+            index + 1
+        );
+    }
     xml.push_str("</Relationships>");
     xml
 }
@@ -1423,36 +1506,199 @@ const DRAWING_RELATIONSHIP: &str = "rIdDrawing1";
 /// The relationship a worksheet names the shapes of its comments by.
 const COMMENT_SHAPES_RELATIONSHIP: &str = "rIdCommentShapes1";
 
-/// The comments of a sheet, each author listed once.
-fn comments_part(sheet: &Sheet) -> String {
-    let mut authors: Vec<&str> = Vec::new();
-    for comment in sheet.comments.values() {
-        if !authors.contains(&comment.author.as_str()) {
-            authors.push(&comment.author);
+/// The comments of a sheet, each author listed once. A thread is written as the note Excel puts
+/// beside it for the versions that do not read threads: its author is `tc=` and the thread's id,
+/// and its text the thread spelled out.
+fn comments_part(sheet: &Sheet, index: usize) -> String {
+    let author_of = |cell: &CellRef, comment: &Comment| {
+        if comment.threaded {
+            format!("tc={}", thread_id(index, *cell, None))
+        } else {
+            comment.author.clone()
+        }
+    };
+    let mut authors: Vec<String> = Vec::new();
+    for (cell, comment) in &sheet.comments {
+        let author = author_of(cell, comment);
+        if !authors.contains(&author) {
+            authors.push(author);
         }
     }
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
-        r#"<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><authors>"#
+        r#"<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" "#,
+        r#"xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="xr" "#,
+        r#"xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision"><authors>"#
     ));
     for author in &authors {
         let _ = write!(xml, "<author>{}</author>", escape(author));
     }
     xml.push_str("</authors><commentList>");
     for (cell, comment) in &sheet.comments {
+        let author = author_of(cell, comment);
         let author = authors
             .iter()
-            .position(|known| *known == comment.author)
+            .position(|known| *known == author)
             .unwrap_or(0);
+        let (uid, text) = if comment.threaded {
+            (
+                format!(r#" xr:uid="{}""#, thread_id(index, *cell, None)),
+                thread_note_text(comment),
+            )
+        } else {
+            (String::new(), comment.text.clone())
+        };
         let _ = write!(
             xml,
-            r#"<comment ref="{}{}" authorId="{author}"><text><r><t xml:space="preserve">{}</t></r></text></comment>"#,
+            r#"<comment ref="{}{}" authorId="{author}"{uid}><text><r><t xml:space="preserve">{}</t></r></text></comment>"#,
             column_name(cell.column),
             cell.row + 1,
-            escape(&comment.text)
+            escape(&text)
         );
     }
     xml.push_str("</commentList></comments>");
+    xml
+}
+
+/// Whether any comment of a sheet is a thread.
+fn has_threads(sheet: &Sheet) -> bool {
+    sheet.comments.values().any(|comment| comment.threaded)
+}
+
+/// A thread spelled out as a note's text: the comment and each reply under its author.
+fn thread_note_text(comment: &Comment) -> String {
+    let indented = |author: &str, text: &str| {
+        let body = text.replace('\n', "\n    ");
+        if author.is_empty() {
+            format!("    {body}")
+        } else {
+            format!("    {author}: {body}")
+        }
+    };
+    let mut text = format!(
+        "[Threaded comment]\n\nComment:\n{}",
+        indented(&comment.author, &comment.text)
+    );
+    for reply in &comment.replies {
+        let _ = write!(text, "\nReply:\n{}", indented(&reply.author, &reply.text));
+    }
+    text
+}
+
+/// The id of a thread, or of one of its replies: a GUID made from where the thread is, so the
+/// same workbook is always written the same way.
+fn thread_id(sheet: usize, cell: CellRef, reply: Option<usize>) -> String {
+    let seed = match reply {
+        Some(reply) => format!("reply:{sheet}:{}:{}:{reply}", cell.row, cell.column),
+        None => format!("thread:{sheet}:{}:{}", cell.row, cell.column),
+    };
+    guid(&seed)
+}
+
+/// A GUID in braces, as Office writes them, from a seed: two FNV-1a hashes with the version 4
+/// and variant bits set.
+fn guid(seed: &str) -> String {
+    let hash = |offset: u64| {
+        seed.bytes().fold(offset, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+        })
+    };
+    let high = hash(0xcbf2_9ce4_8422_2325);
+    let low = hash(0x8422_2325_cbf2_9ce4);
+    let value = (u128::from(high) << 64 | u128::from(low)) & !(0xF_u128 << 76) & !(0x3_u128 << 62)
+        | (0x4_u128 << 76)
+        | (0x2_u128 << 62);
+    let hex = format!("{value:032X}");
+    format!(
+        "{{{}-{}-{}-{}-{}}}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+/// The authors of the threads of a workbook, each once, in the order they first write.
+fn thread_persons(workbook: &Workbook) -> Vec<&str> {
+    let mut persons: Vec<&str> = Vec::new();
+    for comment in workbook
+        .sheets
+        .iter()
+        .flat_map(|sheet| sheet.comments.values())
+        .filter(|comment| comment.threaded)
+    {
+        for author in std::iter::once(comment.author.as_str())
+            .chain(comment.replies.iter().map(|reply| reply.author.as_str()))
+        {
+            if !persons.contains(&author) {
+                persons.push(author);
+            }
+        }
+    }
+    persons
+}
+
+const PERSONS_PART: &str = "xl/persons/person.xml";
+const THREADS_NAMESPACE: &str =
+    "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments";
+
+/// The people who write the threads of a workbook, each with the id the threads name them by.
+fn persons_part(persons: &[&str]) -> String {
+    let mut xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><personList xmlns="{THREADS_NAMESPACE}" xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main">"#
+    );
+    for person in persons {
+        let shown = if person.is_empty() { "?" } else { person };
+        let _ = write!(
+            xml,
+            r#"<person displayName="{}" id="{}" userId="{}" providerId="None"/>"#,
+            escape(shown),
+            guid(&format!("person:{person}")),
+            escape(shown)
+        );
+    }
+    xml.push_str("</personList>");
+    xml
+}
+
+/// The threads of a sheet: each comment, then its replies naming it as their parent.
+fn threaded_comments_part(sheet: &Sheet, index: usize) -> String {
+    let mut xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ThreadedComments xmlns="{THREADS_NAMESPACE}" xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main">"#
+    );
+    let date = |date: &Option<String>| {
+        date.as_ref()
+            .map(|date| format!(r#" dT="{}""#, escape(date)))
+            .unwrap_or_default()
+    };
+    for (cell, comment) in sheet
+        .comments
+        .iter()
+        .filter(|(_, comment)| comment.threaded)
+    {
+        let reference = format!("{}{}", column_name(cell.column), cell.row + 1);
+        let id = thread_id(index, *cell, None);
+        let _ = write!(
+            xml,
+            r#"<threadedComment ref="{reference}"{} personId="{}" id="{id}"{}><text>{}</text></threadedComment>"#,
+            date(&comment.date),
+            guid(&format!("person:{}", comment.author)),
+            if comment.resolved { r#" done="1""# } else { "" },
+            escape(&comment.text)
+        );
+        for (number, reply) in comment.replies.iter().enumerate() {
+            let _ = write!(
+                xml,
+                r#"<threadedComment ref="{reference}"{} personId="{}" id="{}" parentId="{id}"><text>{}</text></threadedComment>"#,
+                date(&reply.date),
+                guid(&format!("person:{}", reply.author)),
+                thread_id(index, *cell, Some(number)),
+                escape(&reply.text)
+            );
+        }
+    }
+    xml.push_str("</ThreadedComments>");
     xml
 }
 
@@ -1498,6 +1744,7 @@ fn content_types(
     theme: bool,
     metadata: bool,
     commented: &[usize],
+    threaded: &[usize],
 ) -> String {
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
@@ -1521,6 +1768,19 @@ fn content_types(
             xml,
             r#"<Override PartName="/xl/comments{}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>"#,
             index + 1
+        );
+    }
+    for index in threaded {
+        let _ = write!(
+            xml,
+            r#"<Override PartName="/xl/threadedComments/threadedComment{}.xml" ContentType="application/vnd.ms-excel.threadedcomments+xml"/>"#,
+            index + 1
+        );
+    }
+    if !threaded.is_empty() {
+        let _ = write!(
+            xml,
+            r#"<Override PartName="/{PERSONS_PART}" ContentType="application/vnd.ms-excel.person+xml"/>"#
         );
     }
     if theme {

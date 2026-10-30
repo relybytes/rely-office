@@ -116,7 +116,9 @@ export function readDocumentTree(
       bytes: handle.takeObjectBytes(item.index) ?? new Uint8Array(0),
     }));
     const { objects: _objects, ...rest } = tree;
-    return objects === undefined ? { ...rest, media } : { ...rest, media, objects };
+    const read: DocumentTree = objects === undefined ? { ...rest, media } : { ...rest, media, objects };
+    const macroProject = handle.takeMacroProject();
+    return macroProject === undefined ? read : { ...read, macroProject };
   } finally {
     handle.free();
   }
@@ -125,7 +127,7 @@ export function readDocumentTree(
 /** A document tree as a docx Word opens and `readDocumentTree` reads back to the same tree. */
 export function writeDocx(tree: DocxInput): Uint8Array {
   ready();
-  const { blocks, page, media, notes, headersFooters, sections, comments, objects } = tree;
+  const { blocks, page, media, notes, headersFooters, sections, comments, objects, macroProject } = tree;
   const writer = new DocxWriter();
   try {
     for (const item of media ?? []) {
@@ -138,6 +140,9 @@ export function writeDocx(tree: DocxInput): Uint8Array {
         object.name ?? 'oleObject.bin',
         object.program,
       );
+    }
+    if (macroProject !== undefined) {
+      call(() => writer.setMacroProject(macroProject));
     }
     return call(() =>
       writer.write(
@@ -200,7 +205,7 @@ export function readPresentation(bytes: DocumentBytes, limits?: Limits): Present
     const presentation = JSON.parse(handle.json) as Omit<Presentation, 'media'> & {
       media: { index: number; contentType: string }[];
     };
-    return {
+    const read: Presentation = {
       ...presentation,
       media: presentation.media.map((item) => ({
         index: item.index,
@@ -208,6 +213,8 @@ export function readPresentation(bytes: DocumentBytes, limits?: Limits): Present
         bytes: handle.takeMediaBytes(item.index) ?? new Uint8Array(0),
       })),
     };
+    const macroProject = handle.takeMacroProject();
+    return macroProject === undefined ? read : { ...read, macroProject };
   } finally {
     handle.free();
   }
@@ -216,11 +223,14 @@ export function readPresentation(bytes: DocumentBytes, limits?: Limits): Present
 /** Slides as a pptx PowerPoint opens and `readPresentation` reads back to the same slides. */
 function writeSlides(presentation: PptxInput, write: (writer: PptxWriter, json: string) => Uint8Array): Uint8Array {
   ready();
-  const { widthEmu, heightEmu, slides, media } = presentation;
+  const { widthEmu, heightEmu, slides, media, macroProject } = presentation;
   const writer = new PptxWriter();
   try {
     for (const item of media ?? []) {
       writer.addMedia(toBytes(item instanceof Uint8Array ? item : 'bytes' in item ? item.bytes : item));
+    }
+    if (macroProject !== undefined) {
+      call(() => writer.setMacroProject(macroProject));
     }
     const json = JSON.stringify({ widthEmu, heightEmu, slides: slides ?? [] });
     return call(() => write(writer, json));

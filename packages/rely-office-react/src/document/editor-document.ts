@@ -29,6 +29,8 @@ export interface DocumentAside {
   sections?: Section[];
   comments?: Comment[];
   objects?: EmbeddedObject[];
+  /** The macros of a docm, written back as they came and never run. */
+  macroProject?: Uint8Array;
 }
 
 /**

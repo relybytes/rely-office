@@ -27,6 +27,7 @@ mod error;
 mod format;
 mod geometry;
 mod limits;
+mod macros;
 mod math;
 mod metafile;
 mod number_format;
@@ -69,6 +70,7 @@ pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};
 pub use geometry::{FillShade, PathCommand, PathPoint, ShapePath, preset_outline};
 pub use limits::Limits;
+pub use macros::{MacroProject, holds_macros, insert_macro_project, read_macro_project};
 pub use math::latex_to_typst;
 pub use metafile::convert_metafile_to_svg;
 pub use number_format::{
@@ -84,10 +86,10 @@ pub use sheet_drawings::{
     chart_formula_range, drawing_anchors, redraw_carried_drawing,
 };
 pub use sheet_layout::{
-    AutoFilterLayout, CellRange, MergePlace, SheetLayout, read_xlsx_drawing_parts,
-    read_xlsx_layouts, read_xlsx_pivot_parts, read_xlsx_theme_part,
+    AutoFilterLayout, CellRange, MergePlace, SheetLayout, XlsxCodeNames, read_xlsx_code_names,
+    read_xlsx_drawing_parts, read_xlsx_layouts, read_xlsx_pivot_parts, read_xlsx_theme_part,
 };
-pub use sheet_names::{CellComment, WorkbookName, read_workbook_names};
+pub use sheet_names::{CellComment, CommentReply, WorkbookName, read_workbook_names};
 pub use sheet_rules::{
     ComparisonOperator, Condition, ConditionalFormat, ConditionalRule, DataValidation,
     DifferentialLook, ErrorStyle, ScalePoint, ScaleValue, TextOperator, ValidationKind,

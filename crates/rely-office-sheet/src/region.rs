@@ -8,10 +8,13 @@
 //! since the snapshot of the whole workbook the history keeps would also undo what the others
 //! wrote since.
 
-use rely_office_core::{CellRange, CellStyle};
+use rely_office_core::{CellRange, CellStyle, CommentReply};
 
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS};
-use crate::model::{Cell, EditError, MAX_CELLS, NumberFormat, Workbook};
+use crate::model::{
+    Cell, Comment, EditError, MAX_CELLS, MAX_COMMENT_CHARS, MAX_COMMENT_REPLIES, NumberFormat,
+    Workbook,
+};
 use crate::value::{Input, Locale};
 
 /// The most cells a region holds, so an undo of a whole-sheet edit stays a bounded message.
@@ -34,7 +37,21 @@ pub struct RegionCell {
     pub style: Option<CellStyle>,
 }
 
-/// A comment of a region's cell.
+/// A reply of a region's comment thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "camelCase")
+)]
+pub struct RegionReply {
+    pub author: String,
+    pub text: String,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub date: Option<String>,
+}
+
+/// A comment of a region's cell, with its thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serde",
@@ -46,6 +63,46 @@ pub struct RegionComment {
     pub column: u32,
     pub author: String,
     pub text: String,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub date: Option<String>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub threaded: bool,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub resolved: bool,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub replies: Vec<RegionReply>,
+}
+
+impl RegionComment {
+    fn to_comment(&self) -> Result<Comment, EditError> {
+        let too_long = |text: &str| text.chars().count() > MAX_COMMENT_CHARS;
+        if too_long(&self.text)
+            || too_long(&self.author)
+            || self.replies.len() > MAX_COMMENT_REPLIES
+            || self
+                .replies
+                .iter()
+                .any(|reply| too_long(&reply.text) || too_long(&reply.author))
+        {
+            return Err(EditError::OutOfBounds);
+        }
+        Ok(Comment {
+            author: self.author.clone(),
+            text: self.text.clone(),
+            date: self.date.clone(),
+            threaded: self.threaded,
+            resolved: self.resolved,
+            replies: self
+                .replies
+                .iter()
+                .map(|reply| CommentReply {
+                    author: reply.author.clone(),
+                    text: reply.text.clone(),
+                    date: reply.date.clone(),
+                })
+                .collect(),
+        })
+    }
 }
 
 /// A rectangle of a sheet: its cells, the merges inside it and its comments.
@@ -157,6 +214,18 @@ impl Workbook {
                 column: cell.column,
                 author: comment.author.clone(),
                 text: comment.text.clone(),
+                date: comment.date.clone(),
+                threaded: comment.threaded,
+                resolved: comment.resolved,
+                replies: comment
+                    .replies
+                    .iter()
+                    .map(|reply| RegionReply {
+                        author: reply.author.clone(),
+                        text: reply.text.clone(),
+                        date: reply.date.clone(),
+                    })
+                    .collect(),
             })
             .collect();
         Ok(Region {
@@ -198,17 +267,23 @@ impl Workbook {
         if region.merges.iter().any(|merge| !contains(&area, merge)) {
             return Err(EditError::OutOfBounds);
         }
-        let backup = self
+        let mut comments = Vec::with_capacity(region.comments.len());
+        for comment in &region.comments {
+            let at = CellRef::new(comment.row, comment.column);
+            if !inside(&area, at) {
+                return Err(EditError::OutOfBounds);
+            }
+            comments.push((at, comment.to_comment()?));
+        }
+        let replaced = self
             .sheets
             .get(sheet)
-            .cloned()
-            .ok_or(EditError::NoSuchSheet(sheet))?;
-        let outside: usize = self.cell_count()
-            - backup
-                .cells
-                .keys()
-                .filter(|cell| inside(&area, **cell))
-                .count();
+            .ok_or(EditError::NoSuchSheet(sheet))?
+            .cells
+            .keys()
+            .filter(|cell| inside(&area, **cell))
+            .count();
+        let outside = self.cell_count() - replaced;
         if outside
             + parsed
                 .iter()
@@ -241,17 +316,7 @@ impl Workbook {
             }
         }
         target.merges.extend(region.merges.iter().copied());
-        for comment in &region.comments {
-            let at = CellRef::new(comment.row, comment.column);
-            if !inside(&area, at) {
-                self.sheets[sheet] = backup;
-                return Err(EditError::OutOfBounds);
-            }
-            if let Err(error) = self.set_comment(sheet, at, &comment.author, &comment.text) {
-                self.sheets[sheet] = backup;
-                return Err(error);
-            }
-        }
+        target.comments.extend(comments);
         self.recalculate();
         Ok(())
     }

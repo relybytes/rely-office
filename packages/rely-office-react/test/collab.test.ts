@@ -182,6 +182,19 @@ describe('sheet operations', () => {
     expect(transformSheetOperation(op('setChart', 0, 1, {}), op('removeChart', 0, 1))).toBeNull();
     expect(transformSheetOperation(op('setInput', 0, 1, 1, 'x'), op('setInput', 0, 1, 1, 'y'))!.args[3]).toBe('x');
   });
+
+  it('moves comment threads and pivot tables past structure', () => {
+    expect(transformSheetOperation(op('replyToComment', 0, 3, 0, 'ok'), op('insertRows', 0, 0, 2))!.args).toEqual([0, 5, 0, 'ok']);
+    const pivot = { sourceSheet: 1, source: { top: 0, left: 0, bottom: 9, right: 2 }, anchor: { row: 4, column: 4 } };
+    const moved = transformSheetOperation(op('addPivotTable', 0, pivot), op('insertRows', 0, 0, 1))!.args[1];
+    expect(moved).toMatchObject({ anchor: { row: 5, column: 4 }, source: { top: 0, bottom: 9 } });
+    const source = transformSheetOperation(op('addPivotTable', 0, pivot), op('deleteRows', 1, 9, 1))!.args[1];
+    expect(source).toMatchObject({ source: { top: 0, bottom: 8 } });
+    expect(transformSheetOperation(op('addPivotTable', 0, pivot), op('removeSheet', 1))).toBeNull();
+    expect(transformSheetOperation(op('setPivotTable', 0, 2, pivot), op('removePivotTable', 0, 1))!.args[1]).toBe(1);
+    expect(transformSheetOperation(op('refreshPivotTable', 0, 1), op('removePivotTable', 0, 1))).toBeNull();
+    expect(transformSheetOperation(op('refreshPivotTables'), op('removeSheet', 0))!.method).toBe('refreshPivotTables');
+  });
 });
 
 describe('a shared workbook', () => {

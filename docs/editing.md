@@ -173,6 +173,29 @@ numbers in list styles. The speaker notes, hidden slides, transitions (type, dir
 how they advance) and animations (an `anim:par` tree with LibreOffice's presets, triggers and
 delays) are written too, and read back to the same slides.
 
+## Macros
+
+A docm, an xlsm and a pptm are read like a docx, an xlsx and a pptx, and their macros are kept
+as they are and never run: `read_macro_project` takes the VBA project, `vbaProject.bin`, with every
+part it relates to (the data Word keeps beside it, a signature) into a `MacroProject`, which the
+document tree (`DocumentTree::macro_project`), the slides (`Presentation::macro_project`) and the
+workbook (`Workbook::macro_project`) carry. `write_docx`, `write_pptx` and `write_xlsx` put it back
+with `insert_macro_project`: the main part relates to it again and takes the macro-enabled content
+type, so the file saved is a docm, a pptm or an xlsm again. An xlsm also keeps the `codeName` of
+the workbook and of each sheet, which its macros name them by.
+
+`holds_macros` tells whether a file holds macros in any format: the VBA project of an OOXML
+package, the `Macros` storage of a doc, `_VBA_PROJECT_CUR` of an xls, the VBA record of a ppt's
+document. Nothing writes the binary formats, so their macros are left out of what they are
+converted to; the import report says so (`ImportReport::macros`, `Presentation::holds_macros`,
+`Workbook::holds_macros`) for a host to tell the user. The OpenDocument writers leave macros out:
+ODF has its own Basic, not VBA.
+
+From JavaScript the project is an opaque `Uint8Array`: `readDocumentTree` and `readPresentation`
+give it as `macroProject`, which `writeDocx` and `writePptx` write back, `report.macros` and
+`holdsMacros` say the file held macros, and a sheet's `macros()` answers `kept`, `dropped` or
+`none`.
+
 ## The spreadsheet model
 
 `rely-office-sheet` holds a `Workbook` of up to 256 sheets and 2,000,000 cells with content, on
@@ -311,9 +334,13 @@ does not rename (`XOR`, `INT`) keeps its name.
   Never called: what reaches outside the workbook (`CALL`, `REGISTER.ID`, `RTD`, `WEBSERVICE`,
   `STOCKHISTORY`, `IMAGE`, `TRANSLATE`). A file's formula holding one keeps the value the file
   stored and is written back as it was, through edits that move its cell; typed anew it is
-  `#VALUE!`. What a pivot table answers (`GETPIVOTDATA`, `GROUPBY`, `PIVOTBY`) is not computed.
+  `#VALUE!`.
 - **Arrays**: a formula whose result is an array spills it into the cells below and to the right
-  of its own (`=FILTER(A2:C9;B2:B9="Nord")`). `FILTER`, `SORT`, `SORTBY`, `UNIQUE`, `SEQUENCE`,
+  of its own (`=FILTER(A2:C9;B2:B9="Nord")`). `GROUPBY` and `PIVOTBY` summarise by rows, and by
+  rows and columns, with a function named (`SUM`, any function of the list) or a `LAMBDA`, field
+  headers detected or set, grand totals at the end or the start, a subtotal per first key for a
+  depth of 2, a sort by key or value column and a filter; the `relative_to` of `PIVOTBY` and the
+  field relationship of `GROUPBY` are not read. `FILTER`, `SORT`, `SORTBY`, `UNIQUE`, `SEQUENCE`,
   `TRANSPOSE`, `TAKE`, `DROP`, `CHOOSEROWS`, `CHOOSECOLS`, `VSTACK`, `HSTACK`, `TOCOL`, `TOROW`,
   `WRAPROWS`, `WRAPCOLS`, `EXPAND`, `MMULT`, `MUNIT`, `FREQUENCY` and `TEXTSPLIT` return one, and so
   does a range or an operator over ranges (`=C2:C9*2`), computed value by value with a single value
@@ -399,6 +426,50 @@ columns are inserted and deleted, and goes when its row or column does. An xlsx 
 in its comments part with the VML note boxes Excel shows them in; an ods as `office:annotation`;
 both read back with the author and the lines.
 
+A comment is a note, as older Excel and LibreOffice write them, or a thread, as Excel 365 does:
+`start_comment_thread(sheet, cell, author, text, date)` opens one, `reply_to_comment` answers it,
+`set_comment_resolved` resolves or reopens it and `remove_comment_reply` takes a reply away; a
+note answered or resolved becomes a thread, and `set_comment` on a thread changes its text and
+keeps its author and replies. A date is ISO 8601 (`2026-10-30T09:00:00.000Z`), passed in by the
+host, since WebAssembly has no clock; a thread keeps at most 1,000 replies.
+
+An xlsx keeps a thread in its `threadedComments` part, the people who wrote it in
+`xl/persons/person.xml`, and beside it the note Excel writes for the versions that do not read
+threads, its author `tc=` and the thread's id and its text the thread spelled out. Reading an
+xlsx takes the threads and the notes on the cells no thread is on. The ids are GUIDs made from
+where each thread sits, so the same workbook is always written the same way. ODF has no
+threads: an ods writes a thread as the annotation of its cell, the replies following its text as
+paragraphs that open with their author, and reads it back as one note.
+
+### Pivot tables
+
+A `PivotTable` summarises a range, a header row then records, into the cells of a sheet: the
+columns of the source placed on its rows, its columns and its filters (`PivotField`, by position,
+with the labels of the items it hides), and the columns it summarises (`PivotValue`, by a
+`PivotFunction`: sum, count, average, max, min, product, count numbers, standard deviation and
+variance, sample and population, with an optional caption). From its anchor the table writes its
+filters, each with `(All)`, the one item shown or `(Multiple Items)`, a blank row, a header row,
+a row per distinct row label and a grand total row, and across a column per distinct column
+label and value with a grand total column; labels are ordered numbers first, then text ignoring
+case, logical values, errors and blanks, and the captions are English or Italian (`locale`).
+
+`add_pivot_table`, `set_pivot_table` and `remove_pivot_table` make, change and remove a table,
+its cells written and cleared with it; `refresh_pivot_table` and `refresh_pivot_tables` compute
+again from the source, as a refresh in Excel does: the cells keep what the last refresh wrote,
+however the source changes. `pivot_source_fields` gives the names and items of a range for an
+editor's lists. A table follows rows and columns inserted and deleted, its own and its source's,
+and a renamed sheet; it is refused when it would cover its own source, when a column falls outside
+the source or is placed twice, past 64 tables a sheet, 10,000 row labels or 256 column labels.
+`GETPIVOTDATA(field, table, [name, item]...)` reads a table as last refreshed.
+
+An xlsx writes a table as a pivot cache definition, its source and the items of every placed
+field, without records and marked to refresh on load, and a pivot table definition, its location,
+fields, hidden items, page fields and data fields: Excel rebuilds the cache when it opens the file
+and LibreOffice reads the table as it is. Reading an xlsx takes each pivot table whose source is a
+range of the workbook into the model, and carries any other (a source that is a named table or
+another workbook) unchanged, as before. An ods writes and reads the tables as
+`table:data-pilot-tables`, each field named by its header.
+
 ### Charts
 
 `charts(sheet)` lists the charts of a sheet, each with where it sits (`ChartPlacement`: the cell
@@ -447,8 +518,8 @@ booleans, number formats, styles, merged cells, column widths and row heights ar
 pictures and charts of each sheet, and the workbook's theme they take their colours from, are
 written back exactly as the file had them: they stay anchored to the cells they had, so rows
 inserted above a chart leave it where it was. Conditional formats are written with their
-differential formats, validations with their messages, and pivot tables are carried with their
-caches: the cells they show are ordinary cells, which a refresh in Excel rebuilds. LibreOffice
+differential formats and validations with their messages; pivot tables are described in
+[Pivot tables](#pivot-tables). LibreOffice
 opens and recalculates the files (checked by hand on the corpus); the round trip is tested in
 `xlsx/tests.rs`.
 
@@ -459,8 +530,8 @@ comments. Each picture is written as an image and each chart a spec describes as
 reading the same cells, both in a frame anchored to their cell; a chart no spec describes is
 written as the picture it is drawn as. A sheet read from an ods gets the same drawing a sheet of an
 xlsx carries, built from its pictures and charts, so they are edited the same way and an xlsx saved
-from it keeps them as charts. Pivot tables are kept by `write_xlsx` only. An xls is always saved as
-xlsx.
+from it keeps them as charts. Pivot tables are written as data pilot tables. An xls is always saved
+as xlsx.
 
 `write_csv(workbook, sheet, locale, separator)` saves one sheet as UTF-8 with its byte order mark
 and CRLF line ends, each cell as it is shown, fields quoted when they hold the separator, a quote
@@ -471,8 +542,8 @@ the file back as it came.
 An ods keeps the frozen panes in `settings.xml` and the filter as a `table:database-range` with its
 conditions, the rows it hides marked as filtered.
 
-Not kept: the threaded comments of Excel 365 (their legacy note is kept), and formulas with
-functions outside the list, which show `#NAME?` after an edit recalculates them.
+Not kept: formulas with functions outside the list, which show `#NAME?` after an edit
+recalculates them.
 
 ## From JavaScript
 
@@ -485,9 +556,12 @@ each with its `input`, `display`, `kind` and `format`) and sends each action as 
 `clearStyles`, `mergeCells`, `unmergeCells`, `clearRange`, `copyRange`, `insertRows`, `deleteRows`,
 `insertColumns`, `deleteColumns`, `addSheet`, `renameSheet`, `removeSheet`,
 `setConditionalFormats`, `setValidations`, `fillRange`, `sortRange`, `setAutoFilter`,
-`setFilterColumn`, `setFrozen`, `setDefinedName`, `removeDefinedName`, `setComment`, `addChart`,
+`setFilterColumn`, `setFrozen`, `setDefinedName`, `removeDefinedName`, `setComment`,
+`startCommentThread`, `replyToComment`, `setCommentResolved`, `removeCommentReply`,
+`addPivotTable`, `setPivotTable`, `refreshPivotTable`, `refreshPivotTables`, `removePivotTable`, `addChart`,
 `setChart`, `removeChart`, `setToday`, `save`, `saveOds`, `saveCsv`; `filterChoices`, `pictures`
-with `pictureBytes`, `definedNames`, `comments`, `charts`, `chartForRange`, `delimiter` and
+with `pictureBytes`, `definedNames`, `comments`, `pivotTables`, `pivotSourceFields`, `charts`,
+`chartForRange`, `macros`, `delimiter` and
 `functionNames` serve an editor's menus; `stylesJson` and
 `mergesJson` give the styles and merges to draw, `conditionalFormats`, `validations`,
 `conditionalLooks`, `validation` and `invalidCells` the rules and what they make of the cells. A

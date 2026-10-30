@@ -33,6 +33,27 @@ below 1.0, a minor version may change the API.
   their own geometry with the adjust values they set, as PowerPoint and LibreOffice draw them.
 - A free-form shape of a ppt draws its arcs, elliptical quadrants, angle ellipses and quadratic
   curves, and leaves unfilled or unlined the paths its file says.
+- Threaded comments of Excel 365: read from and written to xlsx with their people, replies,
+  dates and resolved state, and the note Excel keeps beside each thread for older versions;
+  `start_comment_thread`, `reply_to_comment`, `set_comment_resolved` and `remove_comment_reply`,
+  `startCommentThread`, `replyToComment`, `setCommentResolved` and `removeCommentReply` from
+  JavaScript, and replies, resolving and reopening in the grid's comments panel. An ods writes a
+  thread as one annotation with its replies.
+- Macros kept and never run: a docm, an xlsm and a pptm are read with their VBA project
+  (`read_macro_project`, `MacroProject`) and written back as a docm, an xlsm and a pptm
+  (`insert_macro_project`), an xlsm with its code names; `holds_macros` tells a doc, an xls or a
+  ppt whose macros a conversion leaves out, reported as `ImportReport::macros`,
+  `Presentation::holds_macros` and `Workbook::holds_macros`. From JavaScript, `macroProject` on
+  the tree and the slides, and `macros()` on a sheet. A docm and a pptm are now detected as Word
+  and PowerPoint files.
+- Pivot tables as a model: `PivotTable` with its rows, columns, values (`PivotFunction`) and
+  filters, computed into the cells of a sheet by `add_pivot_table`, `set_pivot_table`,
+  `refresh_pivot_table` and `refresh_pivot_tables`, removed by `remove_pivot_table`, following
+  row, column and sheet edits. Read from and written to xlsx (a cache that refreshes on load and
+  the table definition) and ods (data pilot tables, which an ods used to drop); a table whose
+  source is not a range stays carried as before. `GETPIVOTDATA`, `GROUPBY` and `PIVOTBY`. From
+  JavaScript, `pivotTables`, `pivotSourceFields`, `addPivotTable`, `setPivotTable`,
+  `refreshPivotTable`, `refreshPivotTables` and `removePivotTable`, and a pivot panel in the grid.
 
 ### Changed
 

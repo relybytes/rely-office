@@ -59,6 +59,10 @@ const docx = editor.current!.saveDocx(); // Uint8Array
 const odt = saveDocumentAs(editor.current!.getDocument(), 'odt'); // or 'docx', 'markdown', 'html'
 ```
 
+The macros of a docm ride along unrun and `saveDocx` writes them back, so the bytes are a docm
+again (`report.macros` says the file held some); the same holds for a pptm in the slide editor
+and an xlsm in the grid, whose `sheet.macros()` answers `kept`, `dropped` or `none`.
+
 Beside the text, a panel edits what a document holds around it: the comments with their replies
 and their resolved state, the notes in the order the text refers to them, the headers and footers,
 a section's own included. Each is a small editor with the same schema as the page, so a header
@@ -126,11 +130,14 @@ conditional formats and the validations of the selection. While a formula is typ
 it could be calling are offered in the locale's names; Tab or Enter takes one. The pictures and
 charts of the file are drawn over the cells, each chart from the cells as they are now.
 
-The comments panel writes the comment of the active cell (by `author`), and a commented cell
-shows a mark and its comment on hover; the names panel defines the names formulas read. The
+The comments panel writes the comment of the active cell (by `author`), a new one opening a
+thread as Excel 365 does, answers it, resolves and reopens it, and a commented cell shows a mark
+and its comment with the replies on hover; the names panel defines the names formulas read. The
 charts panel inserts a chart of the selection in the type chosen, and changes the chosen one: its
 type, title, legend, stacking and data. A chart is chosen by a click, moved by dragging it,
-resized by its corner and removed with Delete.
+resized by its corner and removed with Delete. The pivot panel makes a pivot table of the
+selection, places each column of it on the rows, the columns, the values (with how they are
+summarised) or the filters, and refreshes and removes the tables of the sheet.
 
 ## A presentation
 

@@ -23,7 +23,7 @@ use crate::document::{Alignment, Media};
 use crate::geometry::ShapePath;
 
 /// A presentation's slides, in show order.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Presentation {
     /// The slide size in English Metric Units, 914,400 to the inch.
     pub width_emu: i64,
@@ -33,6 +33,11 @@ pub struct Presentation {
     pub media: Vec<Media>,
     /// The presentation held more slides, shapes or images than the limits let through.
     pub truncated: bool,
+    /// The macros of a pptm, carried as they are and written back by [`write_pptx`], which then
+    /// writes a pptm; never run.
+    pub macro_project: Option<crate::MacroProject>,
+    /// The file holds macros: kept in `macro_project` for a pptm, left out of a ppt.
+    pub holds_macros: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

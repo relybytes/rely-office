@@ -101,6 +101,10 @@ function readDocumentTree(bytes, limits, options, fileName) {
         bytes: handle.takeObjectBytes(item.index) ?? new Uint8Array(0),
       }));
     }
+    const macroProject = handle.takeMacroProject();
+    if (macroProject !== undefined) {
+      tree.macroProject = macroProject;
+    }
     return tree;
   } finally {
     handle.free();
@@ -127,6 +131,10 @@ function readPresentation(bytes, limits) {
       contentType: item.contentType,
       bytes: handle.takeMediaBytes(item.index) ?? new Uint8Array(0),
     }));
+    const macroProject = handle.takeMacroProject();
+    if (macroProject !== undefined) {
+      presentation.macroProject = macroProject;
+    }
     return presentation;
   } finally {
     handle.free();
@@ -135,11 +143,14 @@ function readPresentation(bytes, limits) {
 
 /** Slides as a pptx, with the images they name by index. */
 function writeSlides(presentation, write) {
-  const { widthEmu, heightEmu, slides, media } = presentation ?? {};
+  const { widthEmu, heightEmu, slides, media, macroProject } = presentation ?? {};
   const writer = new wasm.PptxWriter();
   try {
     for (const item of media ?? []) {
       writer.addMedia(toBytes(item instanceof Uint8Array ? item : item.bytes));
+    }
+    if (macroProject !== undefined && macroProject !== null) {
+      call(() => writer.setMacroProject(toBytes(macroProject)));
     }
     return call(() => write(writer, JSON.stringify({ widthEmu, heightEmu, slides: slides ?? [] })));
   } finally {
@@ -202,7 +213,7 @@ function render(bytes, fileName, options) {
 }
 
 function writeDocx(tree) {
-  const { blocks, page, media, notes, headersFooters, sections, comments, objects } = tree ?? {};
+  const { blocks, page, media, notes, headersFooters, sections, comments, objects, macroProject } = tree ?? {};
   const writer = new wasm.DocxWriter();
   try {
     for (const bytes of media ?? []) {
@@ -210,6 +221,9 @@ function writeDocx(tree) {
     }
     for (const object of objects ?? []) {
       writer.addObject(object.media, toBytes(object.bytes), object.name ?? 'oleObject.bin', object.program);
+    }
+    if (macroProject !== undefined && macroProject !== null) {
+      call(() => writer.setMacroProject(toBytes(macroProject)));
     }
     return call(() =>
       writer.write(
@@ -361,6 +375,50 @@ class SheetDocument {
 
   setComment(sheet, row, column, text, author = '') {
     call(() => this.document.setComment(sheet, row, column, author, text));
+  }
+
+  startCommentThread(sheet, row, column, text, author = '', date = '') {
+    call(() => this.document.startCommentThread(sheet, row, column, author, text, date));
+  }
+
+  replyToComment(sheet, row, column, text, author = '', date = '') {
+    call(() => this.document.replyToComment(sheet, row, column, author, text, date));
+  }
+
+  pivotTables(sheet) {
+    return JSON.parse(call(() => this.document.pivotTablesJson(sheet)));
+  }
+
+  pivotSourceFields(sheet, { top, left, bottom, right }) {
+    return JSON.parse(call(() => this.document.pivotSourceFieldsJson(sheet, top, left, bottom, right)));
+  }
+
+  addPivotTable(sheet, definition) {
+    return call(() => this.document.addPivotTable(sheet, JSON.stringify(definition)));
+  }
+
+  setPivotTable(sheet, index, definition) {
+    call(() => this.document.setPivotTable(sheet, index, JSON.stringify(definition)));
+  }
+
+  refreshPivotTable(sheet, index) {
+    call(() => this.document.refreshPivotTable(sheet, index));
+  }
+
+  refreshPivotTables() {
+    return this.document.refreshPivotTables();
+  }
+
+  removePivotTable(sheet, index) {
+    call(() => this.document.removePivotTable(sheet, index));
+  }
+
+  setCommentResolved(sheet, row, column, resolved) {
+    call(() => this.document.setCommentResolved(sheet, row, column, resolved));
+  }
+
+  removeCommentReply(sheet, row, column, reply) {
+    call(() => this.document.removeCommentReply(sheet, row, column, reply));
   }
 
   mergeCells(sheet, { top, left, bottom, right }) {
@@ -515,6 +573,10 @@ class SheetDocument {
 
   delimiter() {
     return this.document.delimiter() ?? null;
+  }
+
+  macros() {
+    return this.document.macros();
   }
 
   undo() {

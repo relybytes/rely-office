@@ -9,11 +9,11 @@ use std::io::{Cursor, Read};
 /// What a document is, decided from its bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DocumentFormat {
-    /// Word 2007+ (`.docx`).
+    /// Word 2007+ (`.docx`, `.docm`).
     Docx,
     /// Excel 2007+ (`.xlsx`, `.xlsm`).
     Xlsx,
-    /// `PowerPoint` 2007+ (`.pptx`).
+    /// `PowerPoint` 2007+ (`.pptx`, `.pptm`).
     Pptx,
     /// `OpenDocument` text (`.odt`).
     Odt,
@@ -124,13 +124,17 @@ fn detect_zip_format(bytes: &[u8]) -> DocumentFormat {
     let Some(content_types) = read_small_member(&mut archive, "[Content_Types].xml") else {
         return DocumentFormat::Unknown;
     };
-    if content_types.contains("wordprocessingml.document.main") {
+    if content_types.contains("wordprocessingml.document.main")
+        || content_types.contains("ms-word.document.macroEnabled.main")
+    {
         DocumentFormat::Docx
     } else if content_types.contains("spreadsheetml.sheet.main")
         || content_types.contains("ms-excel.sheet.macroEnabled.main")
     {
         DocumentFormat::Xlsx
-    } else if content_types.contains("presentationml.presentation.main") {
+    } else if content_types.contains("presentationml.presentation.main")
+        || content_types.contains("ms-powerpoint.presentation.macroEnabled.main")
+    {
         DocumentFormat::Pptx
     } else {
         DocumentFormat::Unknown
