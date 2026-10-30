@@ -2,13 +2,14 @@
 
 Office documents in the browser, for the frontend: a docx, doc, odt, Markdown or HTML file, a
 pptx, ppt or odp and an xlsx, xls, ods or csv read and written by [rely-office](https://github.com/relybytes/rely-office)
-compiled to WebAssembly, and three React editors over them.
+compiled to WebAssembly, four React editors over them, and real-time collaboration over Yjs.
 
 | Component | Edits | Saves |
 | --- | --- | --- |
 | `DocumentEditor` | the document tree in a rich-text editor (TipTap): headings, Word's named styles, fonts, sizes, line spacing, every mark of the tree, nested lists, tables with merged cells and resizable columns, images resized, floating images with their wrapping and side, comments, tracked changes recorded while typing, footnote references, equations, page breaks, a page view with headers and footers, find and replace | docx, odt, Markdown or HTML |
 | `SheetGrid` | a `SheetDocument`: cells, formulas with function suggestions, styles, borders, number formats, merges, conditional formats and data validation with their editors, comments, defined names, charts made from a selection, changed, dragged and resized, rows and columns resized by drag, the fill handle, frozen panes, sort and filter, the file's pictures, sheets, the clipboard | xlsx, ods or csv |
 | `SlideEditor` | the slide model: shapes moved along guides, resized, rotated, selected several at a time, copied and written into, preset shapes, text styled, pictures, tables edited cell by cell, backgrounds, slides added, duplicated, reordered and hidden, speaker notes, transitions and animations, the slide show | pptx or odp |
+| `TextEditor` | a plain text file, its caret and its long lines wrapped or not | the same file, in its encoding, byte order mark and line ending |
 
 The backend has its own package, [`@relybytes/rely-office`](../rely-office-node/README.md), with
 the same model plus rendering to PDF and PNG, which this package leaves out: the typesetter is
@@ -161,6 +162,41 @@ orders and times the animations of the selected shapes. F5, or the play button, 
 over the whole screen: a click, the space bar or an arrow runs the next animation or brings the
 next slide in with its transition, hidden slides are skipped and Escape leaves. `SlideShow` plays
 a presentation by itself, for a host's own player.
+
+## Editing together
+
+Each editor takes a `collaboration` prop and edits a shared copy instead of its own: documents,
+slides and plain text merge as a Yjs document, a spreadsheet as a log of operations a room orders.
+`@relybytes/rely-office-react/collab` holds the room a server runs and the session a page opens,
+with no React in it; `@relybytes/rely-office-react/collab-editor` holds the TipTap extensions of a
+shared document, which need the optional peers:
+
+```sh
+npm install @tiptap/extension-collaboration @tiptap/extension-collaboration-caret @tiptap/y-tiptap
+```
+
+```tsx
+import { CollabSession } from '@relybytes/rely-office-react/collab';
+import { documentCollaborationExtensions } from '@relybytes/rely-office-react/collab-editor';
+
+const session = new CollabSession({ kind: 'document', address: fetchTicketUrl, user: { name, color } });
+session.connect();
+// once `session.welcome` is set, on the 'control' event of the welcome:
+const welcome = session.welcome!;
+<DocumentEditor
+  document={opened}
+  collaboration={{
+    doc: session.doc,
+    extensions: documentCollaborationExtensions(session, { name, color }),
+    slot: welcome.slot,
+    seed: welcome.seed,
+    onSeeded: () => session.markSeeded(),
+  }}
+/>;
+```
+
+The protocol, the room's storage and save claims, and each binding are described in
+[docs/collaboration.md](../../docs/collaboration.md).
 
 ## The look
 

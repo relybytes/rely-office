@@ -31,6 +31,7 @@ import type {
   SheetDocument,
   SheetOptions,
   SheetPicture,
+  SheetRegion,
   SheetSummary,
   SortKey,
   StylePatch,
@@ -362,6 +363,42 @@ class BrowserSheetDocument implements SheetDocument {
 
   canRedo(): boolean {
     return this.document.canRedo();
+  }
+
+  region(sheet: number, { top, left, bottom, right }: CellWindow): SheetRegion {
+    return parse(() => this.document.regionJson(sheet, top, left, bottom, right));
+  }
+
+  restoreRegion(sheet: number, region: SheetRegion): void {
+    call(() => this.document.restoreRegion(sheet, JSON.stringify(region)));
+  }
+
+  checkpoint(): void {
+    this.document.checkpoint();
+  }
+
+  rollback(): boolean {
+    return this.document.rollback();
+  }
+
+  discardCheckpoint(): void {
+    this.document.discardCheckpoint();
+  }
+
+  hasCheckpoint(): boolean {
+    return this.document.hasCheckpoint();
+  }
+
+  setHistoryEnabled(enabled: boolean): void {
+    this.document.setHistoryEnabled(Boolean(enabled));
+  }
+
+  locale(): 'it' | 'en' {
+    return this.document.locale() as 'it' | 'en';
+  }
+
+  setLocale(locale: 'it' | 'en'): void {
+    call(() => this.document.setLocale(String(locale)));
   }
 
   free(): void {

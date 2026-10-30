@@ -351,6 +351,14 @@ edit, because an edit that moves rows rewrites formulas on every sheet: a copy c
 The copies are bounded, at most 100 steps and 2,000,000 cells together, the oldest going first, so
 a large workbook keeps fewer steps rather than its size a hundred times over.
 
+A workbook edited together cannot undo with copies, since a copy would also undo what the others
+wrote. It undoes with a `Region` instead: the cells, looks, merges and comments of one rectangle
+as they were (`Workbook::region`, at most `MAX_REGION_CELLS`, 200,000 cells), put back by
+`Workbook::restore_region`. The WebAssembly document adds what the shared grid needs around it:
+`setHistoryEnabled(false)` turns the snapshot history off, `checkpoint` and `rollback` keep the
+workbook as the room last agreed it, and `setLocale` applies another client's input in the locale
+it was typed in. See [collaboration.md](collaboration.md).
+
 ### Sorting, filtering, freezing and filling
 
 - `sort_range(sheet, window, keys, has_header)` orders the rows of a rectangle by up to 64 keys,

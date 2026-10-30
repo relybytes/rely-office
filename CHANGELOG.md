@@ -3,6 +3,32 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## Unreleased
+
+### Added
+
+- Real-time collaboration in the frontend package, over Yjs: `@relybytes/rely-office-react/collab`
+  carries the channel protocol, `CollabRoom` for the server, `CollabSession` for the page, and the
+  bindings `SharedDocumentAside`, `SharedPresentation` and `SheetCollaboration`;
+  `@relybytes/rely-office-react/collab-editor` carries `documentCollaborationExtensions` for
+  TipTap. `DocumentEditor`, `SheetGrid`, `SlideEditor` and `TextEditor` take a `collaboration`
+  prop. Documents, presentations and plain text merge as a CRDT; a spreadsheet is a log of
+  operations the room orders and every client moves past each other with the same transform. Undo
+  takes back one's own edits only. See [docs/collaboration.md](docs/collaboration.md).
+- `TextEditor`, an editor for plain text files, with `readTextFile` and `writeTextFile` keeping
+  the file's encoding (UTF-8, UTF-16 LE or BE, Windows-1252), byte order mark and line ending.
+- Regions of a sheet in `rely-office-sheet` (`Region`, `Workbook::region`,
+  `Workbook::restore_region`, bounded by `MAX_REGION_CELLS`), and from JavaScript `region`,
+  `restoreRegion`, `checkpoint`, `rollback`, `discardCheckpoint`,
+  `hasCheckpoint`, `setHistoryEnabled`, `locale` and `setLocale` on `SheetDocument` from
+  JavaScript.
+
+### Changed
+
+- Every peer dependency of `@relybytes/rely-office-react` is optional, so a server that runs
+  collaboration rooms installs neither React nor TipTap. `yjs`, `y-protocols` and `lib0` are
+  dependencies.
+
 ## 0.8.0
 
 ### Added

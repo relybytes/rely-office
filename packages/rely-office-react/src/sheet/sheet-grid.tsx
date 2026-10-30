@@ -145,6 +145,18 @@ export interface SheetGridHandle {
   focus: () => void;
 }
 
+/** A workbook edited together: a `SheetCollaboration`, whose `document` the grid is given as `sheet`. */
+export interface SheetGridCollaboration {
+  /** Called after another client changed the workbook. */
+  subscribe: (listener: () => void) => () => void;
+  /** Share the selection of this grid. */
+  setSelection: (selection: { sheet: number; window: CellWindow } | null) => void;
+  /** Where the others' selections are. */
+  remoteSelections: () => { client: number; name: string; color: string; sheet: number; window: CellWindow }[];
+  /** Called when the others' presence changes. */
+  onPresence: (listener: () => void) => () => void;
+}
+
 export interface SheetGridProps {
   /** The workbook to edit; the grid changes it in place. */
   sheet: SheetDocument;
@@ -156,6 +168,8 @@ export interface SheetGridProps {
   labels?: Partial<SheetGridLabels>;
   /** Who writes the comments added in the grid. */
   author?: string;
+  /** Edit together: the grid redraws on the others' changes and shows where they are. */
+  collaboration?: SheetGridCollaboration;
   className?: string;
 }
 
@@ -224,13 +238,16 @@ function textWidth(text: string): number {
  * a cell to dragging its fill handle or the edge of a column.
  */
 export const SheetGrid = forwardRef(function SheetGrid(
-  { sheet, onChange, editable = true, labels, author, className }: SheetGridProps,
+  { sheet, onChange, editable = true, labels, author, collaboration, className }: SheetGridProps,
   ref: Ref<SheetGridHandle>,
 ): ReactElement {
   const words = useMemo(() => ({ ...ENGLISH_SHEET_GRID_LABELS, ...labels }), [labels]);
   const [activeSheet, setActiveSheet] = useState(0);
   const [revision, refresh] = useReducer((value: number) => value + 1, 0);
   const [selection, setSelection] = useState<Selection>({ anchor: { row: 0, column: 0 }, focus: { row: 0, column: 0 } });
+  const [presence, refreshPresence] = useReducer((value: number) => value + 1, 0);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
   const [editing, setEditing] = useState<Editing | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
@@ -296,6 +313,29 @@ export const SheetGrid = forwardRef(function SheetGrid(
   const selected = useMemo(
     () => coverMerges(windowBetween(selection.anchor, selection.focus), workbook.merges),
     [selection, workbook.merges],
+  );
+
+  useEffect(() => {
+    if (!collaboration) return;
+    const stopChanges = collaboration.subscribe(() => {
+      refresh();
+      onChangeRef.current?.();
+    });
+    const stopPresence = collaboration.onPresence(refreshPresence);
+    return () => {
+      stopChanges();
+      stopPresence();
+    };
+  }, [collaboration]);
+
+  useEffect(() => {
+    collaboration?.setSelection({ sheet: workbook.index, window: selected });
+  }, [collaboration, workbook.index, selected]);
+
+  const others = useMemo(
+    () => (collaboration ? collaboration.remoteSelections().filter((other) => other.sheet === workbook.index) : []),
+    // `presence` stands for every change of the others' selections.
+    [collaboration, workbook.index, presence],
   );
   const rowCount = Math.max(MINIMUM_ROWS, Math.max(workbook.summary.rows, selected.bottom + 1) + EXTRA_ROWS);
   const columnCount = Math.max(MINIMUM_COLUMNS, Math.max(workbook.summary.columns, selected.right + 1) + EXTRA_COLUMNS);
@@ -934,6 +974,18 @@ export const SheetGrid = forwardRef(function SheetGrid(
     const handleHere = editable && !editing && paneOf({ row: selected.bottom, column: selected.right }) === pane;
     return (
       <>
+        {others.map((other) => (
+          <div
+            key={other.client}
+            className="rely-sheet-remote"
+            style={{ ...rectangle(other.window), borderColor: other.color }}
+            title={other.name}
+          >
+            <span className="rely-sheet-remote-name" style={{ background: other.color }}>
+              {other.name}
+            </span>
+          </div>
+        ))}
         <div className="rely-sheet-selection" style={selectionRectangle} />
         <div className="rely-sheet-active" style={rectangle(activeArea)} />
         {filling ? <div className="rely-sheet-fill-target" style={rectangle(filling.target)} /> : null}

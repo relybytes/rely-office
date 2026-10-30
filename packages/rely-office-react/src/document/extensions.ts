@@ -515,6 +515,8 @@ export interface RelyDocumentExtensionOptions {
   extensions?: AnyExtension[];
   /** Who the changes recorded while tracking is on are by. */
   author?: () => string;
+  /** False leaves undo to a collaboration extension, which takes back this client's changes only. */
+  history?: boolean;
 }
 
 /**
@@ -524,6 +526,7 @@ export interface RelyDocumentExtensionOptions {
 export function createRelyDocumentExtensions(options: RelyDocumentExtensionOptions = {}): AnyExtension[] {
   return [
     StarterKit.configure({
+      ...(options.history === false ? { undoRedo: false as const } : {}),
       link: {
         openOnClick: false,
         autolink: true,

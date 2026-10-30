@@ -533,6 +533,42 @@ class SheetDocument {
     return this.document.canRedo();
   }
 
+  region(sheet, { top, left, bottom, right }) {
+    return JSON.parse(call(() => this.document.regionJson(sheet, top, left, bottom, right)));
+  }
+
+  restoreRegion(sheet, region) {
+    call(() => this.document.restoreRegion(sheet, JSON.stringify(region)));
+  }
+
+  checkpoint() {
+    this.document.checkpoint();
+  }
+
+  rollback() {
+    return this.document.rollback();
+  }
+
+  discardCheckpoint() {
+    this.document.discardCheckpoint();
+  }
+
+  hasCheckpoint() {
+    return this.document.hasCheckpoint();
+  }
+
+  setHistoryEnabled(enabled) {
+    this.document.setHistoryEnabled(Boolean(enabled));
+  }
+
+  locale() {
+    return this.document.locale();
+  }
+
+  setLocale(locale) {
+    call(() => this.document.setLocale(String(locale)));
+  }
+
   free() {
     this.document.free();
   }

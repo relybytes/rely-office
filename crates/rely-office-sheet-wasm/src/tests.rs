@@ -554,3 +554,72 @@ fn makes_lists_changes_and_removes_charts_as_json() {
     document.workbook.remove_chart(0, 0).unwrap();
     assert_eq!(document.charts_summary(0).unwrap(), "[]");
 }
+
+#[test]
+fn rolls_back_to_the_checkpoint_a_collaborative_editor_keeps() {
+    let mut document = SheetDocument::create("it").unwrap();
+    document.set_inputs_json(0, r#"[[0,0,"1"]]"#).unwrap();
+    assert!(!document.has_checkpoint());
+    assert!(!document.rollback());
+    document.checkpoint();
+    assert!(document.has_checkpoint());
+    document
+        .set_inputs_json(0, r#"[[0,0,"2"],[1,0,"3"]]"#)
+        .unwrap();
+    assert!(document.rollback());
+    assert!(!document.has_checkpoint());
+    assert_eq!(document.input(0, 0, 0), "1");
+    assert_eq!(document.input(0, 1, 0), "");
+    document.checkpoint();
+    document.discard_checkpoint();
+    assert!(!document.rollback());
+}
+
+#[test]
+fn keeps_no_history_when_it_is_turned_off() {
+    let mut document = SheetDocument::create("it").unwrap();
+    document.set_input(0, 0, 0, "1").unwrap();
+    assert!(document.can_undo());
+    document.set_history_enabled(false);
+    assert!(!document.can_undo());
+    document.set_input(0, 0, 0, "2").unwrap();
+    assert!(!document.remove_defined_name("Missing", None));
+    assert!(!document.can_undo());
+    document.set_history_enabled(true);
+    document.set_input(0, 0, 0, "3").unwrap();
+    assert!(document.undo());
+    assert_eq!(document.input(0, 0, 0), "2");
+}
+
+#[test]
+fn types_in_the_locale_it_is_switched_to() {
+    let mut document = SheetDocument::create("it").unwrap();
+    assert_eq!(document.locale(), "it");
+    document.set_locale("en").unwrap();
+    assert_eq!(document.locale(), "en");
+    document.set_input(0, 0, 0, "1.5").unwrap();
+    document.set_locale("it").unwrap();
+    assert_eq!(document.input(0, 0, 0), "1,5");
+}
+
+#[test]
+fn gives_and_restores_a_region_as_json() {
+    let mut document = SheetDocument::create("it").unwrap();
+    document
+        .set_inputs_json(0, r#"[[0,0,"1,5"],[1,0,"=SOMMA(A1;1)"]]"#)
+        .unwrap();
+    let region = document.region_summary(0, 0, 0, 1, 0).unwrap();
+    let json = parse(&region);
+    assert_eq!(json["cells"][0]["input"], "1.5");
+    assert_eq!(json["cells"][1]["input"], "=SUM(A1,1)");
+    assert_eq!(json["area"]["lastRow"], 1);
+    document
+        .set_inputs_json(0, r#"[[0,0,"9"],[1,0,""]]"#)
+        .unwrap();
+    document.restore_region_json(0, &region).unwrap();
+    assert_eq!(document.input(0, 1, 0), "=SOMMA(A1;1)");
+    assert_eq!(
+        document.restore_region_json(0, "{}").unwrap_err().code,
+        "INVALID_INPUT"
+    );
+}

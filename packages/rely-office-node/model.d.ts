@@ -670,6 +670,17 @@ export interface StylePatch {
 /** Which edges of a window a border goes on. */
 export type BorderPlacement = 'all' | 'outline' | 'inside' | 'top' | 'bottom' | 'left' | 'right';
 
+/**
+ * A rectangle of a sheet as it was, from `region`, for `restoreRegion` to put back: what a
+ * collaborative editor undoes with. Inputs are typed in English whatever the document's locale.
+ */
+export interface SheetRegion {
+  area: CellRange;
+  cells: { row: number; column: number; input: string; format: unknown; style: CellStyle | null }[];
+  merges: CellRange[];
+  comments: { row: number; column: number; author: string; text: string }[];
+}
+
 /** A merged range, zero-based and inclusive; its top-left cell shows the content. */
 export interface CellRange {
   firstRow: number;
@@ -1053,5 +1064,21 @@ export interface SheetDocument {
   redo(): boolean;
   canUndo(): boolean;
   canRedo(): boolean;
+  /** A rectangle of a sheet as it is now, cells, looks, merges and comments. */
+  region(sheet: number, window: CellWindow): SheetRegion;
+  /** Put back a rectangle as `region` gave it: everything in it goes, then what it held returns. */
+  restoreRegion(sheet: number, region: SheetRegion): void;
+  /** Keep the workbook as it is for `rollback`: a collaborative editor keeps what the room agreed. */
+  checkpoint(): void;
+  /** Return to the last checkpoint, which is used up; false when there is none. */
+  rollback(): boolean;
+  discardCheckpoint(): void;
+  hasCheckpoint(): boolean;
+  /** Turn the undo history on or off; off forgets it. */
+  setHistoryEnabled(enabled: boolean): void;
+  /** The locale inputs are typed and shown in. */
+  locale(): 'it' | 'en';
+  /** Type and show in another locale from now on. */
+  setLocale(locale: 'it' | 'en'): void;
   free(): void;
 }

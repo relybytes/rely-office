@@ -11,7 +11,8 @@
 
 .rely-document-editor,
 .rely-sheet-grid,
-.rely-slide-editor {
+.rely-slide-editor,
+.rely-text-editor {
   --rely-surface: #ffffff;
   --rely-canvas: #f3f4f6;
   --rely-text: #1f2328;
@@ -1986,4 +1987,99 @@
   .rely-slide-stage {
     padding: 8px;
   }
+}
+
+.rely-text-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--rely-surface);
+}
+
+.rely-text-editor .rely-toolbar {
+  border-bottom: 1px solid var(--rely-border);
+}
+
+.rely-tool-check {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.rely-text-area {
+  flex: 1;
+  min-height: 320px;
+  padding: 12px 16px;
+  border: 0;
+  resize: none;
+  color: var(--rely-text);
+  background: var(--rely-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  tab-size: 4;
+}
+
+.rely-text-area:focus {
+  outline: none;
+}
+
+.rely-text-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 4px 12px;
+  border-top: 1px solid var(--rely-border);
+  color: var(--rely-muted);
+  font-size: 12px;
+}
+
+.rely-text-warning {
+  color: var(--rely-danger);
+}
+
+.rely-sheet-remote {
+  position: absolute;
+  border: 2px solid var(--rely-accent);
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.rely-sheet-remote-name {
+  position: absolute;
+  top: -16px;
+  left: -2px;
+  padding: 0 4px;
+  border-radius: 3px 3px 3px 0;
+  color: #ffffff;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.collaboration-carets__caret {
+  position: relative;
+  margin-right: -1px;
+  margin-left: -1px;
+  border-right: 1px solid;
+  border-left: 1px solid;
+  word-break: normal;
+  pointer-events: none;
+}
+
+.collaboration-carets__label {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px 3px 3px 0;
+  color: #ffffff;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: normal;
+  white-space: nowrap;
+  user-select: none;
 }

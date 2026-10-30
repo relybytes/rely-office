@@ -105,6 +105,26 @@ export interface SlideEditorHandle {
   play: (slide?: number) => void;
 }
 
+/** A presentation edited together: the shared slides of a collaboration session. */
+export interface SlideCollaboration {
+  /** The shared presentation, a `SharedPresentation` of the session's document. */
+  shared: {
+    isEmpty: () => boolean;
+    seed: (presentation: Presentation) => void;
+    read: () => Presentation;
+    write: (presentation: Presentation) => Presentation;
+    observe: (listener: () => void) => () => void;
+    undo: () => boolean;
+    redo: () => boolean;
+    canUndo: () => boolean;
+    canRedo: () => boolean;
+  };
+  /** Put `presentation` into the shared one when it is empty: the welcome said this client seeds. */
+  seed: boolean;
+  /** Called once this client put the presentation in. */
+  onSeeded?: () => void;
+}
+
 export interface SlideEditorProps {
   /** The presentation to open; the editor keeps its own state after that, so key it to open another. */
   presentation: Presentation;
@@ -116,6 +136,11 @@ export interface SlideEditorProps {
   labels?: Partial<SlideEditorLabels>;
   /** The bytes of an image the user chose, or null to refuse it; by default the file's bytes. */
   onImageFile?: (file: File) => Promise<Uint8Array | null>;
+  /**
+   * Edit a shared presentation instead of `presentation`, which only seeds an empty one: what the
+   * others change appears as they change it, and undo takes back this client's changes.
+   */
+  collaboration?: SlideCollaboration;
   className?: string;
 }
 
@@ -150,11 +175,12 @@ function PresetIcon({ preset }: Readonly<{ preset: ShapePreset }>): ReactElement
  * layout shows locked, as PowerPoint shows it.
  */
 export const SlideEditor = forwardRef(function SlideEditor(
-  { presentation: initial, onChange, editable = true, labels, onImageFile = readFile, className }: SlideEditorProps,
+  { presentation: initial, onChange, editable = true, labels, onImageFile = readFile, collaboration, className }: SlideEditorProps,
   ref: Ref<SlideEditorHandle>,
 ): ReactElement {
   const words = useMemo(() => ({ ...ENGLISH_SLIDE_EDITOR_LABELS, ...labels }), [labels]);
-  const [presentation, setPresentation] = useState(initial);
+  const shared = collaboration?.shared;
+  const [presentation, setPresentation] = useState(() => (shared && !shared.isEmpty() ? shared.read() : initial));
   const [active, setActive] = useState(0);
   const [selected, setSelected] = useState<number[]>([]);
   const [editingText, setEditingText] = useState<number | null>(null);
@@ -202,7 +228,8 @@ export const SlideEditor = forwardRef(function SlideEditor(
   /** Change the presentation; `notify` is false while a drag is still going. */
   const update = useCallback(
     (change: (current: Presentation) => Presentation, notify = true) => {
-      const next = change(latest.current);
+      let next = change(latest.current);
+      if (notify && shared) next = shared.write(next);
       latest.current = next;
       setPresentation(next);
       if (notify) {
@@ -210,11 +237,48 @@ export const SlideEditor = forwardRef(function SlideEditor(
         onChangeRef.current?.(next);
       }
     },
-    [commit],
+    [commit, shared],
   );
+
+  useEffect(() => {
+    if (!shared) return;
+    return shared.observe(() => {
+      const next = shared.read();
+      latest.current = next;
+      committed.current = next;
+      setPresentation(next);
+      setHistoryVersion((version) => version + 1);
+      onChangeRef.current?.(next);
+    });
+  }, [shared]);
+
+  const seedRequested = collaboration?.seed ?? false;
+  const onSeededRef = useRef(collaboration?.onSeeded);
+  onSeededRef.current = collaboration?.onSeeded;
+  const seedSource = useRef(initial);
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (!shared || !seedRequested || seededRef.current) return;
+    seededRef.current = true;
+    if (shared.isEmpty()) {
+      shared.seed(seedSource.current);
+      const next = shared.read();
+      latest.current = next;
+      committed.current = next;
+      setPresentation(next);
+    }
+    onSeededRef.current?.();
+  }, [shared, seedRequested]);
 
   /** Go one change back (`undo`) or forward (`redo`). */
   const travel = (direction: 'undo' | 'redo') => {
+    if (shared) {
+      if (!editable) return;
+      if (direction === 'undo') shared.undo();
+      else shared.redo();
+      setEditingText(null);
+      return;
+    }
     const from = direction === 'undo' ? past : future;
     const to = direction === 'undo' ? future : past;
     const target = from.current[from.current.length - 1];
@@ -349,6 +413,10 @@ export const SlideEditor = forwardRef(function SlideEditor(
         return;
       }
       if (current.moved) {
+        if (shared) {
+          latest.current = shared.write(latest.current);
+          setPresentation(latest.current);
+        }
         commit();
         onChangeRef.current?.(latest.current);
       }
@@ -574,8 +642,8 @@ export const SlideEditor = forwardRef(function SlideEditor(
       {editable ? (
         <div className="rely-toolbar" role="toolbar" aria-label={words.toolbar}>
           <div className="rely-tool-group">
-            {tool(words.undo, () => travel('undo'), '↶', { disabled: past.current.length === 0 })}
-            {tool(words.redo, () => travel('redo'), '↷', { disabled: future.current.length === 0 })}
+            {tool(words.undo, () => travel('undo'), '↶', { disabled: shared ? !shared.canUndo() : past.current.length === 0 })}
+            {tool(words.redo, () => travel('redo'), '↷', { disabled: shared ? !shared.canRedo() : future.current.length === 0 })}
           </div>
           <div className="rely-tool-group">
             {tool(words.addSlide, () => {

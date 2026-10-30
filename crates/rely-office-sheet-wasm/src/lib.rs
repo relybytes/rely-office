@@ -15,7 +15,7 @@ use rely_office_core::{Limits, OfficeError, SheetDrawing};
 use rely_office_sheet::{
     Border, BorderPlacement, CellLook, CellRange, CellRef, ChartPlacement, ChartSpec, ChartType,
     ConditionalFormat, DataValidation, EditError, EditHistory, Input, Locale, MAX_COLUMNS,
-    MAX_ROWS, NumberFormat, SortKey, StylePatch, Value, Workbook, default_separator,
+    MAX_ROWS, NumberFormat, Region, SortKey, StylePatch, Value, Workbook, default_separator,
     function_names, print_formula_in, read_spreadsheet, write_csv, write_ods, write_xlsx,
 };
 use serde::{Deserialize, Serialize};
@@ -283,6 +283,10 @@ pub struct SheetDocument {
     workbook: Workbook,
     locale: Locale,
     history: EditHistory,
+    /// False in a collaborative editor, which undoes with regions instead of snapshots.
+    history_enabled: bool,
+    /// The workbook as a collaborative editor last agreed it with the room.
+    checkpoint: Option<Workbook>,
     /// The pictures last drawn, by sheet and revision: a chart is drawn once per change.
     pictures: std::cell::RefCell<Option<(usize, u64, Vec<SheetDrawing>)>>,
 }
@@ -298,6 +302,8 @@ impl SheetDocument {
             workbook: Workbook::new(),
             locale: parse_locale(locale)?,
             history: EditHistory::new(),
+            history_enabled: true,
+            checkpoint: None,
             pictures: std::cell::RefCell::new(None),
         })
     }
@@ -313,6 +319,8 @@ impl SheetDocument {
             workbook: read_spreadsheet(bytes, file_name, &Limits::default(), locale)?,
             locale,
             history: EditHistory::new(),
+            history_enabled: true,
+            checkpoint: None,
             pictures: std::cell::RefCell::new(None),
         })
     }
@@ -322,12 +330,47 @@ impl SheetDocument {
         &mut self,
         edit: impl FnOnce(&mut Self) -> Result<T, JsError>,
     ) -> Result<T, JsError> {
+        if !self.history_enabled {
+            return edit(self);
+        }
         self.history.record(&self.workbook);
         let result = edit(self);
         if result.is_err() {
             self.history.discard_last();
         }
         result
+    }
+
+    /// A rectangle of a sheet as JSON, to give back to `restore_region_json`.
+    ///
+    /// # Errors
+    ///
+    /// The workbook's error for the sheet or the rectangle.
+    pub fn region_summary(
+        &self,
+        sheet: usize,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+    ) -> Result<String, Failure> {
+        let region = self.workbook.region(
+            sheet,
+            (CellRef::new(top, left), CellRef::new(bottom, right)),
+        )?;
+        serde_json::to_string(&region).map_err(|error| Failure::new("INTERNAL", error.to_string()))
+    }
+
+    /// Put back a rectangle `region_summary` gave.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_INPUT` for JSON that is not a region, else the workbook's error.
+    pub fn restore_region_json(&mut self, sheet: usize, region_json: &str) -> Result<(), Failure> {
+        let region: Region = serde_json::from_str(region_json)
+            .map_err(|error| Failure::new("INVALID_INPUT", error.to_string()))?;
+        self.workbook.restore_region(sheet, &region)?;
+        Ok(())
     }
 
     /// The sheets: name, used area and column widths.
@@ -1365,14 +1408,114 @@ impl SheetDocument {
     /// Remove a name; false when the workbook has none by that name there.
     #[wasm_bindgen(js_name = removeDefinedName)]
     pub fn remove_defined_name(&mut self, name: &str, sheet: Option<u32>) -> bool {
-        self.history.record(&self.workbook);
+        if self.history_enabled {
+            self.history.record(&self.workbook);
+        }
         let removed = self
             .workbook
             .remove_defined_name(name, sheet.map(|sheet| sheet as usize));
-        if !removed {
+        if !removed && self.history_enabled {
             self.history.discard_last();
         }
         removed
+    }
+
+    /// Keep the workbook as it is, for `rollback` to return to: a collaborative editor keeps
+    /// what the room agreed while its own edits wait for their turn.
+    #[wasm_bindgen]
+    pub fn checkpoint(&mut self) {
+        self.checkpoint = Some(self.workbook.clone());
+    }
+
+    /// Return to the last checkpoint, which is used up; false when there is none.
+    #[wasm_bindgen]
+    pub fn rollback(&mut self) -> bool {
+        match self.checkpoint.take() {
+            Some(workbook) => {
+                self.workbook = workbook;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Forget the last checkpoint.
+    #[wasm_bindgen(js_name = discardCheckpoint)]
+    pub fn discard_checkpoint(&mut self) {
+        self.checkpoint = None;
+    }
+
+    /// Whether `checkpoint` holds a workbook.
+    #[wasm_bindgen(js_name = hasCheckpoint)]
+    #[must_use]
+    pub fn has_checkpoint(&self) -> bool {
+        self.checkpoint.is_some()
+    }
+
+    /// Turn the undo history on or off; off forgets it. A collaborative editor turns it off,
+    /// since a snapshot would also undo what the others wrote.
+    #[wasm_bindgen(js_name = setHistoryEnabled)]
+    pub fn set_history_enabled(&mut self, enabled: bool) {
+        self.history_enabled = enabled;
+        if !enabled {
+            self.history = EditHistory::new();
+        }
+    }
+
+    /// The locale inputs are typed and shown in, `it` or `en`.
+    #[wasm_bindgen]
+    #[must_use]
+    pub fn locale(&self) -> String {
+        match self.locale {
+            Locale::Italian => "it",
+            Locale::English => "en",
+        }
+        .to_owned()
+    }
+
+    /// Type and show in another locale from now on: a collaborative editor applies another
+    /// client's operation in the locale it was typed in.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with `INVALID_LOCALE`.
+    #[wasm_bindgen(js_name = setLocale)]
+    pub fn set_locale(&mut self, locale: &str) -> Result<(), JsError> {
+        self.locale = parse_locale(locale).map_err(|failure| throw(&failure))?;
+        Ok(())
+    }
+
+    /// A rectangle of a sheet as JSON: its cells typed in English with their looks, the merges
+    /// inside it and its comments.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = regionJson)]
+    pub fn region_json(
+        &self,
+        sheet: usize,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+    ) -> Result<String, JsError> {
+        self.region_summary(sheet, top, left, bottom, right)
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// Put back a rectangle `regionJson` gave: everything in it goes, then what it held returns.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = restoreRegion)]
+    pub fn restore_region(&mut self, sheet: usize, region_json: &str) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .restore_region_json(sheet, region_json)
+                .map_err(|failure| throw(&failure))
+        })
     }
 
     /// The charts of a sheet, as JSON.

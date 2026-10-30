@@ -30,6 +30,7 @@ mod history;
 mod looks;
 mod model;
 mod ods;
+mod region;
 mod rules;
 mod styling;
 mod value;
@@ -53,6 +54,7 @@ pub use model::{
     Sheet, Workbook,
 };
 pub use ods::write_ods;
+pub use region::{MAX_REGION_CELLS, Region, RegionCell, RegionComment};
 pub use rely_office_core::{
     Border, BorderStyle, CellBorders, CellFont, CellRange, CellStyle, ChartSeriesSpec, ChartSpec,
     ChartType, ComparisonOperator, Condition, ConditionalFormat, ConditionalRule, DataValidation,

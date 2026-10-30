@@ -18,7 +18,9 @@ import {
   type ReactElement,
   type Ref,
 } from 'react';
-import type { Block, DocumentTree, Inline, MediaItem } from '../model.js';
+import type * as Y from 'yjs';
+import { SharedDocumentAside } from '../collab/document-collab.js';
+import type { Block, Comment, DocumentTree, Inline, MediaItem, Note } from '../model.js';
 import { saveDocument } from './document-files.js';
 import { DocumentSidePanel } from './document-side-panel.js';
 import { DocumentToolbar } from './document-toolbar.js';
@@ -94,6 +96,20 @@ export interface DocumentEditorHandle {
   editor: Editor | null;
 }
 
+/** A document edited together: what binds the editor to a collaboration session. */
+export interface DocumentCollaboration {
+  /** The session's shared document; its fragment `content` holds the text. */
+  doc: Y.Doc;
+  /** From `documentCollaborationExtensions` of `@relybytes/rely-office-react/collab-editor`. */
+  extensions: AnyExtension[];
+  /** The slot of the session's welcome, so the comments and images it adds keep their own indexes. */
+  slot: number;
+  /** Put `document` into the shared document when it is empty: the welcome said this client seeds. */
+  seed: boolean;
+  /** Called once this client put the document in. */
+  onSeeded?: () => void;
+}
+
 export interface DocumentEditorProps {
   /** The document to open; the editor keeps its own state after that, so key it to open another. */
   document: EditorDocument;
@@ -122,6 +138,11 @@ export interface DocumentEditorProps {
   pageView?: boolean;
   /** Open recording tracked changes. */
   trackChanges?: boolean;
+  /**
+   * Edit a shared document instead of `document`: the text, comments, notes and images are the
+   * session's, and `document` only seeds an empty one. Undo takes back this client's changes.
+   */
+  collaboration?: DocumentCollaboration;
   className?: string;
 }
 
@@ -157,22 +178,35 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
     sidePanel = true,
     pageView: initialPageView = false,
     trackChanges: initialTrackChanges = false,
+    collaboration,
     className,
   }: DocumentEditorProps,
   ref: Ref<DocumentEditorHandle>,
 ): ReactElement {
   const words = useMemo(() => ({ ...ENGLISH_DOCUMENT_EDITOR_LABELS, ...labels }), [labels]);
-  const media = useRef<MediaItem[]>([...document.media]);
+  const sharedDoc = collaboration?.doc;
+  const slot = collaboration?.slot ?? 0;
+  const shared = useMemo(() => (sharedDoc ? new SharedDocumentAside(sharedDoc, slot) : null), [sharedDoc, slot]);
+  const sharedFilled = shared !== null && !shared.isEmpty();
+  const media = useRef<MediaItem[]>(sharedFilled ? shared.readMedia() : [...document.media]);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const writer = author ?? { name: words.you };
   const writerName = useRef(writer.name);
   writerName.current = writer.name;
+  const collaborationExtensions = collaboration?.extensions;
   const allExtensions = useMemo(
-    () => createRelyDocumentExtensions({ extensions, author: () => writerName.current }),
-    [extensions],
+    () =>
+      createRelyDocumentExtensions({
+        extensions: [...(extensions ?? []), ...(collaborationExtensions ?? [])],
+        author: () => writerName.current,
+        history: collaborationExtensions === undefined,
+      }),
+    [extensions, collaborationExtensions],
   );
-  const [aside, setAsideState] = useState<DocumentAside>(document.aside);
+  const [aside, setAsideState] = useState<DocumentAside>(() =>
+    sharedFilled ? shared.readAside(document.aside) : document.aside,
+  );
   const asideRef = useRef(aside);
   const [references, setReferences] = useState<ContentReferences>(() => contentReferences(document.content));
   const [focusComment, setFocusComment] = useState<number | null>(null);
@@ -192,7 +226,7 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
 
   const editor = useEditor({
     extensions: allExtensions,
-    content: document.content,
+    content: collaboration ? undefined : document.content,
     editable,
     immediatelyRender: false,
     editorProps: { attributes: { class: 'rely-document-content' } },
@@ -244,59 +278,98 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
 
   const setAside = useCallback(
     (next: DocumentAside) => {
-      asideRef.current = next;
-      setAsideState(next);
+      const written = shared ? shared.writeAside(asideRef.current, next) : next;
+      asideRef.current = written;
+      setAsideState(written);
       if (editor) onChangeRef.current?.(current(editor));
     },
-    [editor, current],
+    [editor, current, shared],
   );
+
+  useEffect(() => {
+    if (!shared) return;
+    return shared.observe(() => {
+      const next = shared.readAside(asideRef.current);
+      asideRef.current = next;
+      setAsideState(next);
+      media.current = shared.readMedia();
+      if (editor) onChangeRef.current?.(current(editor));
+    });
+  }, [shared, editor, current]);
+
+  const seedRequested = collaboration?.seed ?? false;
+  const onSeededRef = useRef(collaboration?.onSeeded);
+  onSeededRef.current = collaboration?.onSeeded;
+  const seedSource = useRef(document);
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (!editor || !shared || !seedRequested || seededRef.current) return;
+    seededRef.current = true;
+    const source = seedSource.current;
+    if (shared.isEmpty()) {
+      shared.seed(source);
+      editor
+        .chain()
+        .command(({ tr }) => {
+          tr.setMeta('addToHistory', false);
+          return true;
+        })
+        .setContent(source.content)
+        .run();
+      const seeded = shared.readAside(source.aside);
+      asideRef.current = seeded;
+      setAsideState(seeded);
+      media.current = shared.readMedia();
+    }
+    onSeededRef.current?.();
+  }, [editor, shared, seedRequested]);
 
   const addComment = useCallback(() => {
     if (!editor || editor.state.selection.empty) return;
     const comments = asideRef.current.comments ?? [];
-    const index = comments.length;
-    setAside({
-      ...asideRef.current,
-      comments: [
-        ...comments,
-        {
-          author: writer.name,
-          ...(writer.initials ? { initials: writer.initials } : {}),
-          date: new Date().toISOString(),
-          blocks: [{ type: 'paragraph', content: [] }],
-          resolved: false,
-        },
-      ],
-    });
+    const index = shared ? shared.allocate('comment', comments.length) : comments.length;
+    const next: Comment[] = [...comments];
+    while (next.length < index) next.push({ author: '', date: '', blocks: [], resolved: true });
+    next[index] = {
+      author: writer.name,
+      ...(writer.initials ? { initials: writer.initials } : {}),
+      date: new Date().toISOString(),
+      blocks: [{ type: 'paragraph', content: [] }],
+      resolved: false,
+    };
+    setAside({ ...asideRef.current, comments: next });
     setFocusComment(index);
     editor.chain().focus().setMark('comment', { comment: index }).run();
-  }, [editor, setAside, writer.name, writer.initials]);
+  }, [editor, setAside, writer.name, writer.initials, shared]);
 
   const insertFootnote = useCallback(() => {
     if (!editor) return;
-    const index = asideRef.current.notes.length;
-    setAside({
-      ...asideRef.current,
-      notes: [...asideRef.current.notes, { kind: 'footnote', blocks: [{ type: 'paragraph', content: [] }] }],
-    });
+    const notes = asideRef.current.notes;
+    const index = shared ? shared.allocate('note', notes.length) : notes.length;
+    const next: Note[] = [...notes];
+    while (next.length < index) next.push({ kind: 'footnote', blocks: [] });
+    next[index] = { kind: 'footnote', blocks: [{ type: 'paragraph', content: [] }] };
+    setAside({ ...asideRef.current, notes: next });
     editor.chain().focus().insertNoteReference(index).run();
-  }, [editor, setAside]);
+  }, [editor, setAside, shared]);
 
   const insertImage = useCallback(
     async (file: File) => {
       if (!editor) return;
       const bytes = await onImageFile(file);
       if (bytes === null) return;
-      const index = media.current.reduce((highest, item) => Math.max(highest, item.index + 1), 0);
+      const next = media.current.reduce((highest, item) => Math.max(highest, item.index + 1), 0);
+      const index = shared ? shared.allocate('media', next) : next;
       const item: MediaItem = { index, contentType: sniffImageType(bytes), bytes };
       media.current = [...media.current, item];
+      shared?.addMedia(item);
       editor
         .chain()
         .focus()
         .insertContent({ type: 'image', attrs: { src: imageSource(item), alt: file.name, media: index } })
         .run();
     },
-    [editor, onImageFile, imageSource],
+    [editor, onImageFile, imageSource, shared],
   );
 
   useImperativeHandle(

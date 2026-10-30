@@ -19,7 +19,11 @@ spreadsheet engine. Rendering goes through Typst, a typesetter in Rust linked in
 editing a Word document goes through the document tree and the platform's own rich-text editor;
 editing a spreadsheet goes through `rely-office-sheet` and the platform's own grid.
 
-What it deliberately does not do: collaboration, pixel-perfect Word layout (Typst lays pages out
+Editing together is in the frontend package, over Yjs and a room the host runs
+([collaboration.md](collaboration.md)); the Rust crates know nothing of it beyond the regions and
+checkpoints a shared workbook undoes and rolls back with.
+
+What it deliberately does not do: pixel-perfect Word layout (Typst lays pages out
 its own way; [rendering.md](rendering.md) measures how close), macros, editing pivot tables, and
 the functions that call outside the workbook.
 
