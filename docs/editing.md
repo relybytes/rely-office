@@ -320,12 +320,16 @@ does not rename (`XOR`, `INT`) keeps its name.
 
   Left out on purpose, and `#NAME?` like any unknown name: what calls outside the workbook
   (`CALL`, `REGISTER.ID`, `RTD`, `WEBSERVICE`, `STOCKHISTORY`, `IMAGE`, `TRANSLATE`, `FILTERXML`,
-  `INFO`), what a pivot table answers (`GETPIVOTDATA`, `GROUPBY`, `PIVOTBY`), the Japanese and Thai
+  `INFO`), the Japanese and Thai
   text functions (`PHONETIC`, `BAHTTEXT`), `EUROCONVERT`, the exponential smoothing of
   `FORECAST.ETS` and its three companions, and the odd-period bond functions (`ODDFPRICE`,
   `ODDFYIELD`, `ODDLPRICE`, `ODDLYIELD`).
 - **Arrays**: a formula whose result is an array spills it into the cells below and to the right
-  of its own (`=FILTER(A2:C9;B2:B9="Nord")`). `FILTER`, `SORT`, `SORTBY`, `UNIQUE`, `SEQUENCE`,
+  of its own (`=FILTER(A2:C9;B2:B9="Nord")`). `GROUPBY` and `PIVOTBY` summarise by rows, and by
+  rows and columns, with a function named (`SUM`, any function of the list) or a `LAMBDA`, field
+  headers detected or set, grand totals at the end or the start, a subtotal per first key for a
+  depth of 2, a sort by key or value column and a filter; the `relative_to` of `PIVOTBY` and the
+  field relationship of `GROUPBY` are not read. `FILTER`, `SORT`, `SORTBY`, `UNIQUE`, `SEQUENCE`,
   `TRANSPOSE`, `TAKE`, `DROP`, `CHOOSEROWS`, `CHOOSECOLS`, `VSTACK`, `HSTACK`, `TOCOL`, `TOROW`,
   `WRAPROWS`, `WRAPCOLS`, `EXPAND`, `MMULT`, `MUNIT`, `FREQUENCY` and `TEXTSPLIT` return one, and so
   does a range or an operator over ranges (`=C2:C9*2`), computed value by value with a single value
@@ -418,6 +422,35 @@ where each thread sits, so the same workbook is always written the same way. ODF
 threads: an ods writes a thread as the annotation of its cell, the replies following its text as
 paragraphs that open with their author, and reads it back as one note.
 
+### Pivot tables
+
+A `PivotTable` summarises a range, a header row then records, into the cells of a sheet: the
+columns of the source placed on its rows, its columns and its filters (`PivotField`, by position,
+with the labels of the items it hides), and the columns it summarises (`PivotValue`, by a
+`PivotFunction`: sum, count, average, max, min, product, count numbers, standard deviation and
+variance, sample and population, with an optional caption). From its anchor the table writes its
+filters, each with `(All)`, the one item shown or `(Multiple Items)`, a blank row, a header row,
+a row per distinct row label and a grand total row, and across a column per distinct column
+label and value with a grand total column; labels are ordered numbers first, then text ignoring
+case, logical values, errors and blanks, and the captions are English or Italian (`locale`).
+
+`add_pivot_table`, `set_pivot_table` and `remove_pivot_table` make, change and remove a table,
+its cells written and cleared with it; `refresh_pivot_table` and `refresh_pivot_tables` compute
+again from the source, as a refresh in Excel does: the cells keep what the last refresh wrote,
+however the source changes. `pivot_source_fields` gives the names and items of a range for an
+editor's lists. A table follows rows and columns inserted and deleted, its own and its source's,
+and a renamed sheet; it is refused when it would cover its own source, when a column falls outside
+the source or is placed twice, past 64 tables a sheet, 10,000 row labels or 256 column labels.
+`GETPIVOTDATA(field, table, [name, item]...)` reads a table as last refreshed.
+
+An xlsx writes a table as a pivot cache definition, its source and the items of every placed
+field, without records and marked to refresh on load, and a pivot table definition, its location,
+fields, hidden items, page fields and data fields: Excel rebuilds the cache when it opens the file
+and LibreOffice reads the table as it is. Reading an xlsx takes each pivot table whose source is a
+range of the workbook into the model, and carries any other (a source that is a named table or
+another workbook) unchanged, as before. An ods writes and reads the tables as
+`table:data-pilot-tables`, each field named by its header.
+
 ### Charts
 
 `charts(sheet)` lists the charts of a sheet, each with where it sits (`ChartPlacement`: the cell
@@ -466,8 +499,8 @@ booleans, number formats, styles, merged cells, column widths and row heights ar
 pictures and charts of each sheet, and the workbook's theme they take their colours from, are
 written back exactly as the file had them: they stay anchored to the cells they had, so rows
 inserted above a chart leave it where it was. Conditional formats are written with their
-differential formats, validations with their messages, and pivot tables are carried with their
-caches: the cells they show are ordinary cells, which a refresh in Excel rebuilds. LibreOffice
+differential formats and validations with their messages; pivot tables are described in
+[Pivot tables](#pivot-tables). LibreOffice
 opens and recalculates the files (checked by hand on the corpus); the round trip is tested in
 `xlsx/tests.rs`.
 
@@ -478,8 +511,8 @@ comments. Each picture is written as an image and each chart a spec describes as
 reading the same cells, both in a frame anchored to their cell; a chart no spec describes is
 written as the picture it is drawn as. A sheet read from an ods gets the same drawing a sheet of an
 xlsx carries, built from its pictures and charts, so they are edited the same way and an xlsx saved
-from it keeps them as charts. Pivot tables are kept by `write_xlsx` only. An xls is always saved as
-xlsx.
+from it keeps them as charts. Pivot tables are written as data pilot tables. An xls is always saved
+as xlsx.
 
 `write_csv(workbook, sheet, locale, separator)` saves one sheet as UTF-8 with its byte order mark
 and CRLF line ends, each cell as it is shown, fields quoted when they hold the separator, a quote
@@ -505,9 +538,11 @@ each with its `input`, `display`, `kind` and `format`) and sends each action as 
 `insertColumns`, `deleteColumns`, `addSheet`, `renameSheet`, `removeSheet`,
 `setConditionalFormats`, `setValidations`, `fillRange`, `sortRange`, `setAutoFilter`,
 `setFilterColumn`, `setFrozen`, `setDefinedName`, `removeDefinedName`, `setComment`,
-`startCommentThread`, `replyToComment`, `setCommentResolved`, `removeCommentReply`, `addChart`,
+`startCommentThread`, `replyToComment`, `setCommentResolved`, `removeCommentReply`,
+`addPivotTable`, `setPivotTable`, `refreshPivotTable`, `refreshPivotTables`, `removePivotTable`, `addChart`,
 `setChart`, `removeChart`, `setToday`, `save`, `saveOds`, `saveCsv`; `filterChoices`, `pictures`
-with `pictureBytes`, `definedNames`, `comments`, `charts`, `chartForRange`, `delimiter` and
+with `pictureBytes`, `definedNames`, `comments`, `pivotTables`, `pivotSourceFields`, `charts`,
+`chartForRange`, `macros`, `delimiter` and
 `functionNames` serve an editor's menus; `stylesJson` and
 `mergesJson` give the styles and merges to draw, `conditionalFormats`, `validations`,
 `conditionalLooks`, `validation` and `invalidCells` the rules and what they make of the cells. A

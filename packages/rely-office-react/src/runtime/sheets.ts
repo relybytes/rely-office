@@ -12,6 +12,9 @@ import type {
   Border,
   BorderPlacement,
   CellComment,
+  PivotSourceField,
+  PivotTableDefinition,
+  SheetPivotTable,
   CellFormat,
   CellRange,
   CellStyle,
@@ -193,6 +196,34 @@ class BrowserSheetDocument implements SheetDocument {
 
   replyToComment(sheet: number, row: number, column: number, text: string, author = '', date = ''): void {
     call(() => this.document.replyToComment(sheet, row, column, author, text, date));
+  }
+
+  pivotTables(sheet: number): SheetPivotTable[] {
+    return parse(() => this.document.pivotTablesJson(sheet));
+  }
+
+  pivotSourceFields(sheet: number, { top, left, bottom, right }: CellWindow): PivotSourceField[] {
+    return parse(() => this.document.pivotSourceFieldsJson(sheet, top, left, bottom, right));
+  }
+
+  addPivotTable(sheet: number, definition: PivotTableDefinition): number {
+    return call(() => this.document.addPivotTable(sheet, JSON.stringify(definition)));
+  }
+
+  setPivotTable(sheet: number, index: number, definition: PivotTableDefinition): void {
+    call(() => this.document.setPivotTable(sheet, index, JSON.stringify(definition)));
+  }
+
+  refreshPivotTable(sheet: number, index: number): void {
+    call(() => this.document.refreshPivotTable(sheet, index));
+  }
+
+  refreshPivotTables(): number {
+    return this.document.refreshPivotTables();
+  }
+
+  removePivotTable(sheet: number, index: number): void {
+    call(() => this.document.removePivotTable(sheet, index));
   }
 
   setCommentResolved(sheet: number, row: number, column: number, resolved: boolean): void {

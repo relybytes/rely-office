@@ -6,10 +6,12 @@
 
 //! A workbook written as ods: each sheet a table with its column widths, row heights, merged
 //! cells, cell styles and number formats, every formula in `OpenFormula` with its computed
-//! value, and the conditional formats and validations as `LibreOffice` keeps them. Pictures,
-//! charts and pivot tables are written to xlsx only.
+//! value, the conditional formats and validations as `LibreOffice` keeps them, the pictures and
+//! charts in frames and the pivot tables as data pilot tables. A pivot table an xlsx carried
+//! without the model reading it is written to xlsx only.
 
 mod formula;
+mod pivots;
 mod rules;
 mod styles;
 
@@ -22,6 +24,7 @@ use zip::CompressionMethod;
 use zip::write::SimpleFileOptions;
 
 use self::formula::odf_formula;
+pub(crate) use self::pivots::{place_data_pilots, read_data_pilots};
 use self::rules::{
     ConditionalStyles, conditional_formats_xml, content_validations_xml, validation_name,
 };
@@ -446,7 +449,7 @@ fn content_part(workbook: &Workbook, conditional: &ConditionalStyles, objects: &
         concat!(
             r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content {}>"#,
             "<office:automatic-styles>{}</office:automatic-styles>",
-            "<office:body><office:spreadsheet>{}{}{}{}</office:spreadsheet></office:body>",
+            "<office:body><office:spreadsheet>{}{}{}{}{}</office:spreadsheet></office:body>",
             "</office:document-content>"
         ),
         NAMESPACES,
@@ -454,7 +457,8 @@ fn content_part(workbook: &Workbook, conditional: &ConditionalStyles, objects: &
         content_validations_xml(workbook),
         tables,
         named_expressions_xml(workbook, None),
-        database_ranges_xml(workbook)
+        database_ranges_xml(workbook),
+        pivots::data_pilot_tables_xml(workbook)
     )
 }
 

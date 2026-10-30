@@ -131,6 +131,38 @@ export interface SheetGridLabels {
   reopen: string;
   resolved: string;
   removeReply: string;
+  pivotTables: string;
+  noPivotTables: string;
+  pivotRefresh: string;
+  pivotRefreshAll: string;
+  pivotNew: string;
+  pivotSelectSource: string;
+  pivotSource: string;
+  pivotAnchor: string;
+  pivotField: string;
+  pivotRole: string;
+  pivotFunction: string;
+  pivotRoleNone: string;
+  pivotRoleRows: string;
+  pivotRoleColumns: string;
+  pivotRoleValues: string;
+  pivotRoleFilters: string;
+  pivotSum: string;
+  pivotCount: string;
+  pivotAverage: string;
+  pivotMax: string;
+  pivotMin: string;
+  pivotProduct: string;
+  pivotCountNumbers: string;
+  pivotStdDev: string;
+  pivotStdDevP: string;
+  pivotVar: string;
+  pivotVarP: string;
+  pivotRowTotals: string;
+  pivotColumnTotals: string;
+  pivotBadAnchor: string;
+  pivotCreate: string;
+  pivotApply: string;
   definedNames: string;
   noNames: string;
   name: string;
@@ -290,6 +322,38 @@ export const ENGLISH_SHEET_GRID_LABELS: SheetGridLabels = {
   reopen: 'Reopen',
   resolved: 'Resolved',
   removeReply: 'Remove reply',
+  pivotTables: 'Pivot tables',
+  noPivotTables: 'No pivot tables on this sheet',
+  pivotRefresh: 'Refresh',
+  pivotRefreshAll: 'Refresh all',
+  pivotNew: 'New from the selection',
+  pivotSelectSource: 'Select a range with a header row to summarise',
+  pivotSource: 'Source',
+  pivotAnchor: 'Starts at cell',
+  pivotField: 'Column',
+  pivotRole: 'Place',
+  pivotFunction: 'Summarise by',
+  pivotRoleNone: 'Not used',
+  pivotRoleRows: 'Rows',
+  pivotRoleColumns: 'Columns',
+  pivotRoleValues: 'Values',
+  pivotRoleFilters: 'Filters',
+  pivotSum: 'Sum',
+  pivotCount: 'Count',
+  pivotAverage: 'Average',
+  pivotMax: 'Max',
+  pivotMin: 'Min',
+  pivotProduct: 'Product',
+  pivotCountNumbers: 'Count numbers',
+  pivotStdDev: 'Standard deviation',
+  pivotStdDevP: 'Standard deviation (population)',
+  pivotVar: 'Variance',
+  pivotVarP: 'Variance (population)',
+  pivotRowTotals: 'Grand total row',
+  pivotColumnTotals: 'Grand total column',
+  pivotBadAnchor: 'Write the starting cell as A1',
+  pivotCreate: 'Create pivot table',
+  pivotApply: 'Apply',
   definedNames: 'Names',
   noNames: 'The workbook defines no names',
   name: 'Name',
@@ -449,6 +513,38 @@ export const ITALIAN_SHEET_GRID_LABELS: SheetGridLabels = {
   reopen: 'Riapri',
   resolved: 'Risolto',
   removeReply: 'Elimina risposta',
+  pivotTables: 'Tabelle pivot',
+  noPivotTables: 'Nessuna tabella pivot in questo foglio',
+  pivotRefresh: 'Aggiorna',
+  pivotRefreshAll: 'Aggiorna tutte',
+  pivotNew: 'Nuova dalla selezione',
+  pivotSelectSource: 'Seleziona un intervallo con una riga di intestazione da riepilogare',
+  pivotSource: 'Origine',
+  pivotAnchor: 'Inizia dalla cella',
+  pivotField: 'Colonna',
+  pivotRole: 'Posizione',
+  pivotFunction: 'Riepiloga per',
+  pivotRoleNone: 'Non usato',
+  pivotRoleRows: 'Righe',
+  pivotRoleColumns: 'Colonne',
+  pivotRoleValues: 'Valori',
+  pivotRoleFilters: 'Filtri',
+  pivotSum: 'Somma',
+  pivotCount: 'Conteggio',
+  pivotAverage: 'Media',
+  pivotMax: 'Massimo',
+  pivotMin: 'Minimo',
+  pivotProduct: 'Prodotto',
+  pivotCountNumbers: 'Conta numeri',
+  pivotStdDev: 'Deviazione standard',
+  pivotStdDevP: 'Deviazione standard (popolazione)',
+  pivotVar: 'Varianza',
+  pivotVarP: 'Varianza (popolazione)',
+  pivotRowTotals: 'Riga del totale complessivo',
+  pivotColumnTotals: 'Colonna del totale complessivo',
+  pivotBadAnchor: 'Scrivi la cella di partenza come A1',
+  pivotCreate: 'Crea tabella pivot',
+  pivotApply: 'Applica',
   definedNames: 'Nomi',
   noNames: 'La cartella non definisce nomi',
   name: 'Nome',

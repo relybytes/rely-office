@@ -134,7 +134,9 @@ thread as Excel 365 does, answers it, resolves and reopens it, and a commented c
 and its comment with the replies on hover; the names panel defines the names formulas read. The
 charts panel inserts a chart of the selection in the type chosen, and changes the chosen one: its
 type, title, legend, stacking and data. A chart is chosen by a click, moved by dragging it,
-resized by its corner and removed with Delete.
+resized by its corner and removed with Delete. The pivot panel makes a pivot table of the
+selection, places each column of it on the rows, the columns, the values (with how they are
+summarised) or the filters, and refreshes and removes the tables of the sheet.
 
 ## A presentation
 

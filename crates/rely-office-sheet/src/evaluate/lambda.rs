@@ -184,7 +184,12 @@ impl Evaluator<'_> {
     }
 
     /// Call a function: its body computed among the names it was made with and its parameters.
-    fn invoke(&self, sheet: usize, closure: &Closure, mut values: Vec<Option<Operand>>) -> Operand {
+    pub(super) fn invoke(
+        &self,
+        sheet: usize,
+        closure: &Closure,
+        mut values: Vec<Option<Operand>>,
+    ) -> Operand {
         if values.len() > closure.parameters.len() {
             return Operand::Value(Value::Error(ErrorKind::Value));
         }

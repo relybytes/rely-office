@@ -48,8 +48,8 @@ In the Drive of the Rely Platform, rely-office runs inside the Node service as W
 | doc (97-2003, Word 6 and 95) | yes | every story | - | yes | layout, as a docx | as docx or odt | through the tree |
 | odt | yes | body with headers and footers | - | yes | layout, as a docx | as odt, docx, Markdown or HTML | through the tree |
 | md, html | by name or doctype | yes | - | yes | layout, as a docx | as Markdown, HTML, docx or odt | through the tree |
-| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings, cell formats, conditional formats, merges, and pictures and charts over their cells | yes | yes, with names, comments and charts made and changed; its styles, merges, rules, pictures and pivot tables kept |
-| ods | yes | every sheet | yes | - | layout, as an xlsx | as ods, xlsx or csv | yes, its names, comments, pictures and charts kept |
+| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings, cell formats, conditional formats, merges, and pictures and charts over their cells | yes | yes, with names, threaded comments, charts and pivot tables made and changed; its styles, merges, rules, pictures and macros kept |
+| ods | yes | every sheet | yes | - | layout, as an xlsx | as ods, xlsx or csv | yes, its names, comments, pictures, charts and pivot tables kept |
 | xls | yes | every sheet | yes | - | layout | as xlsx | yes |
 | csv, tsv | by name, text only | yes | yes, UTF-8 or Windows-1252, `;` or `,` | - | layout | as csv, xlsx or ods | yes |
 | pptx, odp | yes | slides and pages with their notes | - | slides | slides, with their masters, shapes, gradient and picture fills, tables, pictures, charts and SmartArt | as pptx or odp | as slides, with notes, transitions and animations |

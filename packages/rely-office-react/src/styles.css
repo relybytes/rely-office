@@ -1139,6 +1139,20 @@
   gap: 6px;
 }
 
+.rely-sheet-pivot-field {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.rely-sheet-pivot-field > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .rely-sheet-rule-chip {
   display: inline-flex;
   gap: 4px;

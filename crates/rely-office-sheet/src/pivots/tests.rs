@@ -1,0 +1,525 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+
+use super::*;
+
+fn cell(address: &str) -> CellRef {
+    CellRef::parse(address).unwrap()
+}
+
+fn range(text: &str) -> CellRange {
+    CellRange::parse(text).unwrap()
+}
+
+/// Sales by region, product and month, one amount left blank.
+pub(crate) fn sales() -> Workbook {
+    let mut workbook = Workbook::new();
+    let rows = [
+        ["Regione", "Prodotto", "Mese", "Importo"],
+        ["Nord", "Mele", "Gen", "10"],
+        ["Nord", "Pere", "Gen", "20"],
+        ["Sud", "Mele", "Feb", "5"],
+        ["Sud", "Mele", "Gen", "7"],
+        ["Nord", "Mele", "Feb", "3"],
+        ["Centro", "Pere", "Feb", ""],
+    ];
+    let mut inputs = Vec::new();
+    for (row, line) in rows.iter().enumerate() {
+        for (column, text) in line.iter().enumerate() {
+            #[expect(clippy::cast_possible_truncation, reason = "a small fixture")]
+            inputs.push((CellRef::new(row as u32, column as u32), (*text).to_owned()));
+        }
+    }
+    workbook.set_inputs(0, &inputs, Locale::English).unwrap();
+    workbook
+}
+
+pub(crate) fn by_region(anchor: &str) -> PivotTable {
+    let mut table = PivotTable::new("Vendite", "Foglio1", range("A1:D7"), cell(anchor));
+    table.locale = Locale::English;
+    table.rows = vec![PivotField {
+        field: 0,
+        hidden: Vec::new(),
+    }];
+    table.values = vec![PivotValue {
+        field: 3,
+        function: PivotFunction::Sum,
+        name: None,
+    }];
+    table
+}
+
+fn grid(workbook: &Workbook, area: &str) -> Vec<Vec<Value>> {
+    let area = range(area);
+    (area.first_row..=area.last_row)
+        .map(|row| {
+            (area.first_column..=area.last_column)
+                .map(|column| workbook.value(0, CellRef::new(row, column)))
+                .collect()
+        })
+        .collect()
+}
+
+fn text(value: &str) -> Value {
+    Value::Text(value.to_owned())
+}
+
+#[test]
+fn a_table_sums_the_records_of_each_row_label() {
+    let mut workbook = sales();
+    assert_eq!(workbook.add_pivot_table(0, by_region("F1")).unwrap(), 0);
+    let table = &workbook.sheets()[0].pivot_tables()[0];
+    assert_eq!(table.area(), Some(range("F1:G5")));
+    assert_eq!(
+        grid(&workbook, "F1:G5"),
+        vec![
+            vec![text("Regione"), text("Sum of Importo")],
+            vec![text("Centro"), Value::Number(0.0)],
+            vec![text("Nord"), Value::Number(33.0)],
+            vec![text("Sud"), Value::Number(12.0)],
+            vec![text("Grand Total"), Value::Number(45.0)],
+        ]
+    );
+}
+
+#[test]
+fn columns_spread_the_values_with_their_totals() {
+    let mut workbook = sales();
+    let mut table = by_region("F1");
+    table.columns = vec![PivotField {
+        field: 2,
+        hidden: Vec::new(),
+    }];
+    workbook.add_pivot_table(0, table).unwrap();
+    assert_eq!(
+        grid(&workbook, "F1:I5"),
+        vec![
+            vec![
+                text("Regione"),
+                text("Feb"),
+                text("Gen"),
+                text("Grand Total")
+            ],
+            vec![
+                text("Centro"),
+                Value::Number(0.0),
+                Value::Empty,
+                Value::Number(0.0)
+            ],
+            vec![
+                text("Nord"),
+                Value::Number(3.0),
+                Value::Number(30.0),
+                Value::Number(33.0)
+            ],
+            vec![
+                text("Sud"),
+                Value::Number(5.0),
+                Value::Number(7.0),
+                Value::Number(12.0)
+            ],
+            vec![
+                text("Grand Total"),
+                Value::Number(8.0),
+                Value::Number(37.0),
+                Value::Number(45.0)
+            ],
+        ]
+    );
+}
+
+#[test]
+fn a_filter_and_hidden_items_leave_records_out() {
+    let mut workbook = sales();
+    let mut table = by_region("F1");
+    table.filters = vec![PivotField {
+        field: 1,
+        hidden: vec!["Pere".to_owned()],
+    }];
+    table.rows[0].hidden = vec!["Sud".to_owned()];
+    table.values.push(PivotValue {
+        field: 3,
+        function: PivotFunction::Count,
+        name: Some("Righe".to_owned()),
+    });
+    table.row_grand_totals = false;
+    workbook.add_pivot_table(0, table).unwrap();
+    assert_eq!(
+        grid(&workbook, "F1:H4"),
+        vec![
+            vec![text("Prodotto"), text("Mele"), Value::Empty],
+            vec![Value::Empty, Value::Empty, Value::Empty],
+            vec![text("Regione"), text("Sum of Importo"), text("Righe")],
+            vec![text("Nord"), Value::Number(13.0), Value::Number(2.0)],
+        ]
+    );
+    assert_eq!(
+        workbook.sheets()[0].pivot_tables()[0].area(),
+        Some(range("F1:H4"))
+    );
+}
+
+#[test]
+fn every_function_summarises_as_a_spreadsheet_does() {
+    let values = [
+        Value::Number(2.0),
+        Value::Number(4.0),
+        text("x"),
+        Value::Empty,
+    ];
+    let expected = [
+        (PivotFunction::Sum, 6.0),
+        (PivotFunction::Count, 3.0),
+        (PivotFunction::Average, 3.0),
+        (PivotFunction::Max, 4.0),
+        (PivotFunction::Min, 2.0),
+        (PivotFunction::Product, 8.0),
+        (PivotFunction::CountNumbers, 2.0),
+        (PivotFunction::StdDev, 2.0_f64.sqrt()),
+        (PivotFunction::StdDevP, 1.0),
+        (PivotFunction::Var, 2.0),
+        (PivotFunction::VarP, 1.0),
+    ];
+    for (function, number) in expected {
+        let Value::Number(found) = function.summarise(&values) else {
+            panic!("{function:?}");
+        };
+        assert!((found - number).abs() < 1e-12, "{function:?} {found}");
+        assert_eq!(PivotFunction::parse(function.name()), Some(function));
+        assert_eq!(PivotFunction::from_xlsx(function.xlsx()), Some(function));
+        assert_eq!(PivotFunction::from_odf(function.odf()), Some(function));
+    }
+    let none = [text("x")];
+    assert_eq!(
+        PivotFunction::Average.summarise(&none),
+        Value::Error(ErrorKind::Div0)
+    );
+    assert_eq!(
+        PivotFunction::StdDev.summarise(&[Value::Number(1.0)]),
+        Value::Error(ErrorKind::Div0)
+    );
+    assert_eq!(
+        PivotFunction::VarP.summarise(&none),
+        Value::Error(ErrorKind::Div0)
+    );
+    assert_eq!(PivotFunction::Product.summarise(&none), Value::Number(0.0));
+    assert_eq!(PivotFunction::parse("median"), None);
+}
+
+#[test]
+fn an_italian_table_writes_italian_captions() {
+    let mut workbook = sales();
+    let mut table = by_region("F1");
+    table.locale = Locale::Italian;
+    table.filters = vec![PivotField {
+        field: 2,
+        hidden: Vec::new(),
+    }];
+    workbook.add_pivot_table(0, table).unwrap();
+    assert_eq!(workbook.value(0, cell("G1")), text("(Tutto)"));
+    assert_eq!(workbook.value(0, cell("G3")), text("Somma di Importo"));
+    assert_eq!(workbook.value(0, cell("F7")), text("Totale complessivo"));
+}
+
+#[test]
+fn a_refresh_reads_the_source_again_and_a_change_moves_the_cells() {
+    let mut workbook = sales();
+    workbook.add_pivot_table(0, by_region("F1")).unwrap();
+    workbook
+        .set_input(0, cell("D2"), "100", Locale::English)
+        .unwrap();
+    assert_eq!(workbook.value(0, cell("G3")), Value::Number(33.0));
+    workbook.refresh_pivot_table(0, 0).unwrap();
+    assert_eq!(workbook.value(0, cell("G3")), Value::Number(123.0));
+    assert_eq!(workbook.refresh_pivot_tables(), 1);
+
+    workbook.set_pivot_table(0, 0, by_region("K10")).unwrap();
+    assert_eq!(workbook.value(0, cell("F1")), Value::Empty);
+    assert_eq!(workbook.value(0, cell("K10")), text("Regione"));
+    workbook.remove_pivot_table(0, 0).unwrap();
+    assert_eq!(workbook.value(0, cell("K10")), Value::Empty);
+    assert_eq!(workbook.sheets()[0].pivot_tables().len(), 0);
+}
+
+#[test]
+fn a_table_that_cannot_be_is_refused() {
+    let mut workbook = sales();
+    assert_eq!(
+        workbook.add_pivot_table(0, by_region("B2")),
+        Err(EditError::InvalidPivot)
+    );
+    let mut outside = by_region("F1");
+    outside.rows[0].field = 9;
+    assert_eq!(
+        workbook.add_pivot_table(0, outside),
+        Err(EditError::InvalidPivot)
+    );
+    let mut twice = by_region("F1");
+    twice.columns = twice.rows.clone();
+    assert_eq!(
+        workbook.add_pivot_table(0, twice),
+        Err(EditError::InvalidPivot)
+    );
+    let mut elsewhere = by_region("F1");
+    elsewhere.source_sheet = "Nessuno".to_owned();
+    assert_eq!(
+        workbook.add_pivot_table(0, elsewhere),
+        Err(EditError::InvalidPivot)
+    );
+    assert_eq!(
+        workbook.add_pivot_table(3, by_region("F1")),
+        Err(EditError::NoSuchSheet(3))
+    );
+    assert_eq!(
+        workbook.add_pivot_table(0, by_region("XFD1")),
+        Err(EditError::OutOfBounds)
+    );
+    assert_eq!(
+        workbook.refresh_pivot_table(0, 0),
+        Err(EditError::InvalidPivot)
+    );
+    assert_eq!(
+        workbook.remove_pivot_table(0, 0),
+        Err(EditError::InvalidPivot)
+    );
+    assert_eq!(
+        workbook.set_pivot_table(0, 0, by_region("F1")),
+        Err(EditError::InvalidPivot)
+    );
+    for _ in 0..MAX_PIVOT_TABLES {
+        let mut table = by_region("F1");
+        table.anchor = CellRef::new(0, 10);
+        workbook.add_pivot_table(0, table).unwrap();
+    }
+    assert_eq!(
+        workbook.add_pivot_table(0, by_region("F1")),
+        Err(EditError::InvalidPivot)
+    );
+}
+
+#[test]
+fn a_table_follows_its_sheet_and_its_source() {
+    let mut workbook = sales();
+    workbook.add_pivot_table(0, by_region("F1")).unwrap();
+    workbook.insert_rows(0, 0, 2).unwrap();
+    let table = &workbook.sheets()[0].pivot_tables()[0];
+    assert_eq!(table.anchor, cell("F3"));
+    assert_eq!(table.source, range("A3:D9"));
+    assert_eq!(table.area(), Some(range("F3:G7")));
+    workbook.rename_sheet(0, "Dati").unwrap();
+    assert_eq!(workbook.sheets()[0].pivot_tables()[0].source_sheet, "Dati");
+    workbook.refresh_pivot_table(0, 0).unwrap();
+    assert_eq!(workbook.value(0, cell("G7")), Value::Number(45.0));
+    workbook.delete_rows(0, 2, 1).unwrap();
+    assert_eq!(workbook.sheets()[0].pivot_tables().len(), 0);
+}
+
+#[test]
+fn the_fields_of_a_source_list_their_items() {
+    let workbook = sales();
+    let fields = workbook.pivot_source_fields(0, range("A1:D7")).unwrap();
+    assert_eq!(fields.len(), 4);
+    assert_eq!(fields[0].name, "Regione");
+    assert_eq!(
+        fields[0].items,
+        vec![text("Centro"), text("Nord"), text("Sud")]
+    );
+    assert_eq!(
+        fields[3].items,
+        vec![
+            Value::Number(3.0),
+            Value::Number(5.0),
+            Value::Number(7.0),
+            Value::Number(10.0),
+            Value::Number(20.0),
+            Value::Empty
+        ]
+    );
+    assert_eq!(
+        workbook.pivot_source_fields(5, range("A1:D7")),
+        Err(EditError::NoSuchSheet(5))
+    );
+}
+
+#[test]
+fn items_are_labelled_and_ordered_as_a_pivot_table_shows_them() {
+    assert_eq!(item_label(&Value::Number(2024.0)), "2024");
+    assert_eq!(item_label(&Value::Bool(true)), "TRUE");
+    assert_eq!(item_label(&Value::Error(ErrorKind::Div0)), "#DIV/0!");
+    let mut keys = [
+        Key(Value::Empty),
+        Key(text("b")),
+        Key(Value::Bool(false)),
+        Key(Value::Number(2.0)),
+        Key(text("A")),
+        Key(Value::Error(ErrorKind::NotAvailable)),
+    ];
+    keys.sort();
+    let order: Vec<Value> = keys.into_iter().map(|key| key.0).collect();
+    assert_eq!(
+        order,
+        vec![
+            Value::Number(2.0),
+            text("A"),
+            text("b"),
+            Value::Bool(false),
+            Value::Error(ErrorKind::NotAvailable),
+            Value::Empty
+        ]
+    );
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "every function and refusal in one workbook"
+)]
+fn the_pivot_functions_summarise_arrays_and_read_a_table() {
+    let mut workbook = sales();
+    workbook.add_pivot_table(0, by_region("F1")).unwrap();
+    let formula = |workbook: &mut Workbook, text: &str| {
+        workbook
+            .set_input(0, cell("Z1"), text, Locale::English)
+            .unwrap();
+        workbook.value(0, cell("Z1"))
+    };
+    assert_eq!(
+        formula(
+            &mut workbook,
+            r#"=GETPIVOTDATA("Importo",F1,"Regione","Nord")"#
+        ),
+        Value::Number(33.0)
+    );
+    assert_eq!(
+        formula(&mut workbook, r#"=GETPIVOTDATA("Sum of Importo",$F$1)"#),
+        Value::Number(45.0)
+    );
+    assert_eq!(
+        formula(
+            &mut workbook,
+            r#"=GETPIVOTDATA("Importo",F1,"Prodotto","Mele")"#
+        ),
+        Value::Error(ErrorKind::Ref)
+    );
+    assert_eq!(
+        formula(&mut workbook, r#"=GETPIVOTDATA("Importo",A1)"#),
+        Value::Error(ErrorKind::Ref)
+    );
+    assert_eq!(
+        formula(
+            &mut workbook,
+            r#"=GETPIVOTDATA("Importo",F1,"Regione","Est")"#
+        ),
+        Value::Error(ErrorKind::Ref)
+    );
+    assert_eq!(
+        formula(&mut workbook, r#"=GETPIVOTDATA("Importo")"#),
+        Value::Error(ErrorKind::Value)
+    );
+
+    let spill = |workbook: &mut Workbook, text: &str, area: &str| {
+        workbook
+            .set_input(0, cell("Z1"), text, Locale::English)
+            .unwrap();
+        let area = range(area);
+        (area.first_row..=area.last_row)
+            .map(|row| {
+                (area.first_column..=area.last_column)
+                    .map(|column| workbook.value(0, CellRef::new(row, column)))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        spill(&mut workbook, "=GROUPBY(A2:A7,D2:D7,SUM)", "Z1:AA4"),
+        vec![
+            vec![text("Centro"), Value::Number(0.0)],
+            vec![text("Nord"), Value::Number(33.0)],
+            vec![text("Sud"), Value::Number(12.0)],
+            vec![text("Total"), Value::Number(45.0)],
+        ]
+    );
+    assert_eq!(
+        spill(
+            &mut workbook,
+            "=GROUPBY(A1:A7,D1:D7,LAMBDA(x,MAX(x)),,0,-2)",
+            "Z1:AA4"
+        ),
+        vec![
+            vec![text("Regione"), text("Importo")],
+            vec![text("Nord"), Value::Number(20.0)],
+            vec![text("Sud"), Value::Number(7.0)],
+            vec![text("Centro"), Value::Number(0.0)],
+        ]
+    );
+    assert_eq!(
+        spill(&mut workbook, "=GROUPBY(A2:B7,D2:D7,SUM,0,2)", "Z1:AB4"),
+        vec![
+            vec![text("Centro"), text("Pere"), Value::Number(0.0)],
+            vec![text("Centro"), Value::Empty, Value::Number(0.0)],
+            vec![text("Nord"), text("Mele"), Value::Number(13.0)],
+            vec![text("Nord"), text("Pere"), Value::Number(20.0)],
+        ]
+    );
+    assert_eq!(
+        spill(
+            &mut workbook,
+            "=GROUPBY(A2:A7,D2:D7,COUNT,0,1,1,B2:B7=\"Mele\")",
+            "Z1:AA3"
+        ),
+        vec![
+            vec![text("Nord"), Value::Number(2.0)],
+            vec![text("Sud"), Value::Number(2.0)],
+            vec![text("Total"), Value::Number(4.0)],
+        ]
+    );
+    assert_eq!(
+        spill(&mut workbook, "=PIVOTBY(A2:A7,C2:C7,D2:D7,SUM)", "Z1:AC5"),
+        vec![
+            vec![Value::Empty, text("Feb"), text("Gen"), text("Total")],
+            vec![
+                text("Centro"),
+                Value::Number(0.0),
+                Value::Empty,
+                Value::Number(0.0)
+            ],
+            vec![
+                text("Nord"),
+                Value::Number(3.0),
+                Value::Number(30.0),
+                Value::Number(33.0)
+            ],
+            vec![
+                text("Sud"),
+                Value::Number(5.0),
+                Value::Number(7.0),
+                Value::Number(12.0)
+            ],
+            vec![
+                text("Total"),
+                Value::Number(8.0),
+                Value::Number(37.0),
+                Value::Number(45.0)
+            ],
+        ]
+    );
+    assert_eq!(
+        formula(&mut workbook, "=GROUPBY(A2:A7,D2:D6,SUM)"),
+        Value::Error(ErrorKind::Value)
+    );
+    assert_eq!(
+        formula(&mut workbook, "=GROUPBY(A2:A7,D2:D7,1)"),
+        Value::Error(ErrorKind::Value)
+    );
+    assert_eq!(
+        formula(&mut workbook, "=GROUPBY(A2:A7,D2:D7,SUM,7)"),
+        Value::Error(ErrorKind::Value)
+    );
+    assert_eq!(
+        formula(&mut workbook, "=PIVOTBY(A2:A7,C2:C6,D2:D7,SUM)"),
+        Value::Error(ErrorKind::Value)
+    );
+}

@@ -98,6 +98,7 @@ pub struct Sheet {
     pub(crate) comments: BTreeMap<CellRef, Comment>,
     /// The name the macros of an xlsm know the sheet by, its `codeName`.
     pub(crate) code_name: Option<String>,
+    pub(crate) pivot_tables: Vec<crate::pivots::PivotTable>,
 }
 
 impl Sheet {
@@ -206,6 +207,10 @@ pub enum EditError {
         "a reply goes to a comment the cell has, names a reply it holds and carries an ISO 8601 date"
     )]
     InvalidComment,
+    #[error(
+        "a pivot table reads a range of an existing sheet, places each of its columns once and does not cover its own source"
+    )]
+    InvalidPivot,
 }
 
 /// A name the workbook defines, `Aliquota` or `Vendite`: what it refers to, a range, a value
@@ -572,6 +577,14 @@ impl Workbook {
         self.check_new_name(name, Some(sheet))?;
         let old = self.sheets[sheet].name.clone();
         crate::edit::rename_references(&mut self.sheets, &mut self.names, &old, name);
+        for table in self
+            .sheets
+            .iter_mut()
+            .flat_map(|sheet| sheet.pivot_tables.iter_mut())
+            .filter(|table| table.source_sheet.eq_ignore_ascii_case(&old))
+        {
+            name.clone_into(&mut table.source_sheet);
+        }
         name.clone_into(&mut self.sheets[sheet].name);
         self.recalculate();
         Ok(())

@@ -20,6 +20,14 @@ below 1.0, a minor version may change the API.
   `Presentation::holds_macros` and `Workbook::holds_macros`. From JavaScript, `macroProject` on
   the tree and the slides, and `macros()` on a sheet. A docm and a pptm are now detected as Word
   and PowerPoint files.
+- Pivot tables as a model: `PivotTable` with its rows, columns, values (`PivotFunction`) and
+  filters, computed into the cells of a sheet by `add_pivot_table`, `set_pivot_table`,
+  `refresh_pivot_table` and `refresh_pivot_tables`, removed by `remove_pivot_table`, following
+  row, column and sheet edits. Read from and written to xlsx (a cache that refreshes on load and
+  the table definition) and ods (data pilot tables, which an ods used to drop); a table whose
+  source is not a range stays carried as before. `GETPIVOTDATA`, `GROUPBY` and `PIVOTBY`. From
+  JavaScript, `pivotTables`, `pivotSourceFields`, `addPivotTable`, `setPivotTable`,
+  `refreshPivotTable`, `refreshPivotTables` and `removePivotTable`, and a pivot panel in the grid.
 
 ## 0.8.0
 

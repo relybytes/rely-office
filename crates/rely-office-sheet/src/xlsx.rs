@@ -15,12 +15,12 @@ use std::io::{Cursor, Write};
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use rely_office_core::{
-    Border, BorderStyle, CarriedPart, CellBorders, CellFont, CellRange, CellStyle, DocumentFormat,
-    HorizontalAlignment, Limits, OfficeError, SheetLayout, VerticalAlignment, WorkbookName,
-    delimited_separator, detect_format, excel_formula_from_odf, holds_macros, insert_macro_project,
-    read_macro_project, read_ods_sheet_layouts, read_workbook, read_workbook_names,
-    read_xlsx_code_names, read_xlsx_drawing_parts, read_xlsx_layouts, read_xlsx_pivot_parts,
-    read_xlsx_theme_part,
+    Border, BorderStyle, CarriedPart, CarriedPivot, CellBorders, CellFont, CellRange, CellStyle,
+    DocumentFormat, HorizontalAlignment, Limits, OfficeError, SheetLayout, VerticalAlignment,
+    WorkbookName, delimited_separator, detect_format, excel_formula_from_odf, holds_macros,
+    insert_macro_project, read_macro_project, read_ods_sheet_layouts, read_workbook,
+    read_workbook_names, read_xlsx_code_names, read_xlsx_drawing_parts, read_xlsx_layouts,
+    read_xlsx_pivot_parts, read_xlsx_theme_part,
 };
 use zip::write::SimpleFileOptions;
 
@@ -37,6 +37,7 @@ use crate::model::{
 };
 use crate::value::{ErrorKind, Input, Locale, Value};
 
+mod pivots;
 mod rules;
 
 use rules::{Differentials, conditional_formatting_xml, data_validations_xml};
@@ -83,7 +84,7 @@ pub fn read_spreadsheet(
                 // The layout's view and pictures are taken after its looks are applied.
                 let mut layouts_for_view: HashMap<String, SheetLayout> = HashMap::new();
                 let mut drawings = read_xlsx_drawing_parts(bytes, limits);
-                let mut pivots = read_xlsx_pivot_parts(bytes, limits);
+                let mut carried_pivots = read_xlsx_pivot_parts(bytes, limits);
                 for sheet in &mut sheets {
                     if let Some(layout) = layouts.remove(&sheet.name) {
                         apply_layout(sheet, &layout, &mut styles);
@@ -94,7 +95,13 @@ pub fn read_spreadsheet(
                         apply_view(sheet, &layout);
                         sheet.pictures = layout.drawings;
                     }
-                    sheet.pivots = pivots.remove(&sheet.name).unwrap_or_default();
+                    let (tables, kept) = pivots::model_pivots(
+                        carried_pivots.remove(&sheet.name).unwrap_or_default(),
+                        &sheet.name,
+                        locale,
+                    );
+                    sheet.pivots = kept;
+                    sheet.pivot_tables = tables;
                 }
             }
             sheets
@@ -135,6 +142,11 @@ pub fn read_spreadsheet(
             }
         }
     }
+    if format == DocumentFormat::Ods {
+        let pending = crate::ods::read_data_pilots(bytes, limits);
+        crate::ods::place_data_pilots(&mut workbook, pending, locale);
+    }
+    workbook.snapshot_pivot_tables();
     workbook.holds_macros = match format {
         DocumentFormat::Xlsx => workbook.macro_project.is_some(),
         DocumentFormat::Xls => holds_macros(bytes, limits),
@@ -537,6 +549,10 @@ pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
 }
 
 /// The package of a workbook, its macros aside.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the parts of a package are written in the order the content types list them"
+)]
 fn write_package(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
     let differentials = Differentials::new(workbook);
     let styles = Styles::new(workbook, &differentials);
@@ -552,7 +568,8 @@ fn write_package(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
             .map_err(|error| OfficeError::DamagedContainer(error.to_string()))
     };
     let count = workbook.sheets.len();
-    let carried = carried_parts(workbook);
+    let pivots = pivots::written_pivots(workbook);
+    let carried = carried_parts(workbook, &pivots);
     let spills = workbook.spills.iter().any(|spills| !spills.is_empty());
     let commented: Vec<usize> = (0..count)
         .filter(|index| !workbook.sheets[*index].comments.is_empty())
@@ -574,13 +591,16 @@ fn write_package(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
         .as_bytes(),
     )?;
     add("_rels/.rels", PACKAGE_RELATIONSHIPS.as_bytes())?;
-    add("xl/workbook.xml", workbook_part(workbook).as_bytes())?;
+    add(
+        "xl/workbook.xml",
+        workbook_part(workbook, &pivots).as_bytes(),
+    )?;
     add(
         "xl/_rels/workbook.xml.rels",
         workbook_relationships(
             count,
             workbook.theme.is_some(),
-            &pivot_caches(workbook),
+            &pivot_caches(&pivots),
             spills,
             !persons.is_empty(),
         )
@@ -608,10 +628,10 @@ fn write_package(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
             &format!("xl/worksheets/sheet{}.xml", index + 1),
             xml.as_bytes(),
         )?;
-        if sheet.drawing.is_some() || !sheet.pivots.is_empty() || !sheet.comments.is_empty() {
+        if sheet.drawing.is_some() || !pivots[index].is_empty() || !sheet.comments.is_empty() {
             add(
                 &format!("xl/worksheets/_rels/sheet{}.xml.rels", index + 1),
-                sheet_relationships(sheet, index).as_bytes(),
+                sheet_relationships(sheet, index, &pivots[index]).as_bytes(),
             )?;
         }
         if !sheet.comments.is_empty() {
@@ -1280,7 +1300,7 @@ fn write_cell(
     }
 }
 
-fn workbook_part(workbook: &Workbook) -> String {
+fn workbook_part(workbook: &Workbook, pivots: &[Vec<CarriedPivot>]) -> String {
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" "#,
@@ -1302,7 +1322,7 @@ fn workbook_part(workbook: &Workbook) -> String {
     xml.push_str("</sheets>");
     xml.push_str(&defined_names_xml(workbook));
     xml.push_str(r#"<calcPr calcId="191029" fullCalcOnLoad="1"/>"#);
-    let caches = pivot_caches(workbook);
+    let caches = pivot_caches(pivots);
     if !caches.is_empty() {
         xml.push_str("<pivotCaches>");
         for (index, (_, cache_id)) in caches.iter().enumerate() {
@@ -1319,9 +1339,9 @@ fn workbook_part(workbook: &Workbook) -> String {
 }
 
 /// The pivot caches the sheets' pivot tables read, each once with its id, in sheet order.
-fn pivot_caches(workbook: &Workbook) -> Vec<(&str, u32)> {
+fn pivot_caches(pivots: &[Vec<CarriedPivot>]) -> Vec<(&str, u32)> {
     let mut caches: Vec<(&str, u32)> = Vec::new();
-    for pivot in workbook.sheets.iter().flat_map(|sheet| &sheet.pivots) {
+    for pivot in pivots.iter().flatten() {
         if !caches.iter().any(|(part, _)| *part == pivot.cache_part) {
             caches.push((&pivot.cache_part, pivot.cache_id));
         }
@@ -1388,7 +1408,10 @@ fn workbook_relationships(
 
 /// The parts the drawings of the sheets carry, each once; none can take the place of a part the
 /// writer makes itself.
-fn carried_parts(workbook: &Workbook) -> Vec<&CarriedPart> {
+fn carried_parts<'w>(
+    workbook: &'w Workbook,
+    pivots: &'w [Vec<CarriedPivot>],
+) -> Vec<&'w CarriedPart> {
     let mut names = HashSet::new();
     workbook
         .sheets
@@ -1398,8 +1421,8 @@ fn carried_parts(workbook: &Workbook) -> Vec<&CarriedPart> {
                 .drawing
                 .iter()
                 .flat_map(|drawing| drawing.parts.iter())
-                .chain(sheet.pivots.iter().flat_map(|pivot| pivot.parts.iter()))
         })
+        .chain(pivots.iter().flatten().flat_map(|pivot| pivot.parts.iter()))
         .filter(|part| {
             let name = part.name.to_ascii_lowercase();
             !name.starts_with("xl/worksheets/")
@@ -1415,7 +1438,7 @@ fn carried_parts(workbook: &Workbook) -> Vec<&CarriedPart> {
 }
 
 /// The relationships of a worksheet: its drawing, its pivot tables and its comments.
-fn sheet_relationships(sheet: &Sheet, index: usize) -> String {
+fn sheet_relationships(sheet: &Sheet, index: usize, pivots: &[CarriedPivot]) -> String {
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
@@ -1427,7 +1450,7 @@ fn sheet_relationships(sheet: &Sheet, index: usize) -> String {
             escape(&target_from(1, &drawing.drawing_part))
         );
     }
-    for (index, pivot) in sheet.pivots.iter().enumerate() {
+    for (index, pivot) in pivots.iter().enumerate() {
         let _ = write!(
             xml,
             r#"<Relationship Id="rIdPivot{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable" Target="{}"/>"#,

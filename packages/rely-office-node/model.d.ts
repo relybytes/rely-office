@@ -764,6 +764,79 @@ export interface CommentReply {
   date?: string;
 }
 
+/** How a value field of a pivot table summarises the records of a cell. */
+export type PivotFunction =
+  | 'sum'
+  | 'count'
+  | 'average'
+  | 'max'
+  | 'min'
+  | 'product'
+  | 'countNumbers'
+  | 'stdDev'
+  | 'stdDevP'
+  | 'var'
+  | 'varP';
+
+/** A source column placed on a pivot table's rows, columns or filters, by its position. */
+export interface PivotFieldPlacement {
+  field: number;
+  /** The labels of the items left out: a number as a formula writes it, `TRUE`, or `""` for blanks. */
+  hidden?: string[];
+}
+
+/** A source column a pivot table summarises. */
+export interface PivotValueField {
+  field: number;
+  /** `sum` when left out. */
+  function?: PivotFunction;
+  /** The caption over its column; `Sum of Amount` when left out. */
+  name?: string;
+}
+
+/** A pivot table to make or change: a source with a header row, and where its cells start. */
+export interface PivotTableDefinition {
+  name?: string;
+  /** The sheet of the source, by position. */
+  sourceSheet: number;
+  source: CellWindow;
+  /** The top-left cell of the table on its sheet: the filters, a blank row, then the table. */
+  anchor: { row: number; column: number };
+  rows?: PivotFieldPlacement[];
+  columns?: PivotFieldPlacement[];
+  values?: PivotValueField[];
+  filters?: PivotFieldPlacement[];
+  /** Both shown when left out. */
+  rowGrandTotals?: boolean;
+  columnGrandTotals?: boolean;
+}
+
+/** A pivot table of a sheet, with the names of its source's fields. */
+export interface SheetPivotTable {
+  index: number;
+  name: string;
+  /** The sheet of the source by position; null when it is gone. */
+  sourceSheet: number | null;
+  sourceSheetName: string;
+  source: CellWindow;
+  anchor: { row: number; column: number };
+  /** The cells it filled when last computed. */
+  area?: CellWindow;
+  rows: Required<PivotFieldPlacement>[];
+  columns: Required<PivotFieldPlacement>[];
+  values: PivotValueField[];
+  filters: Required<PivotFieldPlacement>[];
+  rowGrandTotals: boolean;
+  columnGrandTotals: boolean;
+  fields: string[];
+}
+
+/** A column of a source a pivot table could read: its header and its items' labels, in order. */
+export interface PivotSourceField {
+  name: string;
+  items: string[];
+}
+
 /** A zero-based, inclusive rectangle of cells. */
 export interface CellWindow {
   top: number;
@@ -1006,6 +1079,20 @@ export interface SheetDocument {
   startCommentThread(sheet: number, row: number, column: number, text: string, author?: string, date?: string): void;
   /** Answer the comment of a cell; a note answered becomes a thread. */
   replyToComment(sheet: number, row: number, column: number, text: string, author?: string, date?: string): void;
+  /** The pivot tables of a sheet. */
+  pivotTables(sheet: number): SheetPivotTable[];
+  /** The fields of a range a pivot table could read: its header row's names and each column's items. */
+  pivotSourceFields(sheet: number, window: CellWindow): PivotSourceField[];
+  /** Add a pivot table to a sheet and compute it into its cells; the index it gets. */
+  addPivotTable(sheet: number, definition: PivotTableDefinition): number;
+  /** Change a pivot table and compute it again; its old cells are cleared. */
+  setPivotTable(sheet: number, index: number, definition: PivotTableDefinition): void;
+  /** Compute a pivot table again from its source, as Excel's refresh does. */
+  refreshPivotTable(sheet: number, index: number): void;
+  /** Compute every pivot table again; how many were. */
+  refreshPivotTables(): number;
+  /** Remove a pivot table and the cells it filled. */
+  removePivotTable(sheet: number, index: number): void;
   /** Mark the thread of a cell resolved, or open again. */
   setCommentResolved(sheet: number, row: number, column: number, resolved: boolean): void;
   /** Remove a reply of the thread of a cell, by its position. */
@@ -1070,7 +1157,7 @@ export interface SheetDocument {
   previewInput(text: string): 'number' | 'text' | 'bool' | 'formula' | 'empty' | 'invalid';
   /** The workbook as xlsx, each formula with its computed value. */
   save(): Uint8Array;
-  /** The workbook as ods; pictures, charts and pivot tables are kept by `save` only. */
+  /** The workbook as ods, its pivot tables as data pilot tables; pivot tables an xlsx carried unread are kept by `save` only. */
   saveOds(): Uint8Array;
   /**
    * One sheet as csv: each cell as it shows in the document's locale, a formula as its result,

@@ -20,8 +20,8 @@ editing a Word document goes through the document tree and the platform's own ri
 editing a spreadsheet goes through `rely-office-sheet` and the platform's own grid.
 
 What it deliberately does not do: collaboration, pixel-perfect Word layout (Typst lays pages out
-its own way; [rendering.md](rendering.md) measures how close), macros, editing pivot tables, and
-the functions that call outside the workbook.
+its own way; [rendering.md](rendering.md) measures how close), running macros (they are kept, see
+[editing.md](editing.md#macros)), and the functions that call outside the workbook.
 
 ## Crates and packages
 

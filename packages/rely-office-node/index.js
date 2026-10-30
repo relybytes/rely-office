@@ -385,6 +385,34 @@ class SheetDocument {
     call(() => this.document.replyToComment(sheet, row, column, author, text, date));
   }
 
+  pivotTables(sheet) {
+    return JSON.parse(call(() => this.document.pivotTablesJson(sheet)));
+  }
+
+  pivotSourceFields(sheet, { top, left, bottom, right }) {
+    return JSON.parse(call(() => this.document.pivotSourceFieldsJson(sheet, top, left, bottom, right)));
+  }
+
+  addPivotTable(sheet, definition) {
+    return call(() => this.document.addPivotTable(sheet, JSON.stringify(definition)));
+  }
+
+  setPivotTable(sheet, index, definition) {
+    call(() => this.document.setPivotTable(sheet, index, JSON.stringify(definition)));
+  }
+
+  refreshPivotTable(sheet, index) {
+    call(() => this.document.refreshPivotTable(sheet, index));
+  }
+
+  refreshPivotTables() {
+    return this.document.refreshPivotTables();
+  }
+
+  removePivotTable(sheet, index) {
+    call(() => this.document.removePivotTable(sheet, index));
+  }
+
   setCommentResolved(sheet, row, column, resolved) {
     call(() => this.document.setCommentResolved(sheet, row, column, resolved));
   }

@@ -30,6 +30,7 @@ mod history;
 mod looks;
 mod model;
 mod ods;
+mod pivots;
 mod rules;
 mod styling;
 mod value;
@@ -53,6 +54,10 @@ pub use model::{
     MAX_COMMENT_REPLIES, MAX_SHEETS, NumberFormat, Sheet, Workbook,
 };
 pub use ods::write_ods;
+pub use pivots::{
+    MAX_PIVOT_COLUMN_KEYS, MAX_PIVOT_FIELDS, MAX_PIVOT_ROW_KEYS, MAX_PIVOT_SOURCE_CELLS,
+    MAX_PIVOT_TABLES, PivotField, PivotFunction, PivotTable, PivotValue, SourceField, item_label,
+};
 pub use rely_office_core::{
     Border, BorderStyle, CellBorders, CellFont, CellRange, CellStyle, ChartSeriesSpec, ChartSpec,
     ChartType, ComparisonOperator, Condition, ConditionalFormat, ConditionalRule, DataValidation,

@@ -591,3 +591,80 @@ fn a_workbook_says_what_became_of_its_macros() {
     let document = SheetDocument::create("it").unwrap();
     assert_eq!(document.macros(), "none");
 }
+
+#[test]
+fn pivot_tables_are_made_listed_and_refused_as_json() {
+    let mut document = SheetDocument::create("en").unwrap();
+    for (row, line) in [
+        ["Regione", "Importo"],
+        ["Nord", "10"],
+        ["Sud", "5"],
+        ["Nord", "2"],
+    ]
+    .iter()
+    .enumerate()
+    {
+        for (column, text) in line.iter().enumerate() {
+            document
+                .workbook
+                .set_input(
+                    0,
+                    CellRef::new(u32::try_from(row).unwrap(), u32::try_from(column).unwrap()),
+                    text,
+                    Locale::English,
+                )
+                .unwrap();
+        }
+    }
+    assert_eq!(
+        parse(
+            &document
+                .pivot_source_fields_summary(0, (0, 0, 3, 1))
+                .unwrap()
+        ),
+        json!([
+            { "name": "Regione", "items": ["Nord", "Sud"] },
+            { "name": "Importo", "items": ["2", "5", "10"] }
+        ])
+    );
+    let table = document
+        .pivot_from_json(
+            r#"{"sourceSheet":0,"source":{"top":0,"left":0,"bottom":3,"right":1},"anchor":{"row":0,"column":3},"rows":[{"field":0}],"values":[{"field":1,"function":"max"}]}"#,
+        )
+        .unwrap();
+    assert_eq!(table.name, "PivotTable 1");
+    document.workbook.add_pivot_table(0, table).unwrap();
+    let listed = parse(&document.pivot_tables_summary(0).unwrap());
+    assert_eq!(listed[0]["fields"], json!(["Regione", "Importo"]));
+    assert_eq!(
+        listed[0]["values"],
+        json!([{ "field": 1, "function": "max" }])
+    );
+    assert_eq!(
+        listed[0]["area"],
+        json!({ "top": 0, "left": 3, "bottom": 3, "right": 4 })
+    );
+    assert_eq!(listed[0]["sourceSheetName"], json!("Foglio1"));
+    let unknown = document
+        .pivot_from_json(
+            r#"{"sourceSheet":0,"source":{"top":0,"left":0,"bottom":3,"right":1},"anchor":{"row":0,"column":3},"values":[{"field":1,"function":"median"}]}"#,
+        )
+        .unwrap_err();
+    assert_eq!(unknown.code, "INVALID_INPUT");
+    let missing = document
+        .pivot_from_json(
+            r#"{"sourceSheet":4,"source":{"top":0,"left":0,"bottom":3,"right":1},"anchor":{"row":0,"column":3}}"#,
+        )
+        .unwrap_err();
+    assert_eq!(missing.code, "NO_SUCH_SHEET");
+    let failure: Failure = document
+        .workbook
+        .refresh_pivot_table(0, 9)
+        .unwrap_err()
+        .into();
+    assert_eq!(failure.code, "INVALID_PIVOT");
+    assert_eq!(
+        document.pivot_tables_summary(3).unwrap_err().code,
+        "NO_SUCH_SHEET"
+    );
+}

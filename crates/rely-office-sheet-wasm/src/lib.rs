@@ -59,6 +59,7 @@ impl From<EditError> for Failure {
             EditError::InvalidName => "INVALID_NAME",
             EditError::InvalidChart => "INVALID_CHART",
             EditError::InvalidComment => "INVALID_COMMENT",
+            EditError::InvalidPivot => "INVALID_PIVOT",
         };
         Self::new(code, error.to_string())
     }
@@ -2108,6 +2109,8 @@ impl SheetDocument {
         kind.to_owned()
     }
 }
+
+mod pivots;
 
 #[cfg(test)]
 mod tests;
