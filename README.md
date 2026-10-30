@@ -74,6 +74,15 @@ a stranger cannot exhaust the process that opens it.
 
 ## Quick start
 
+```sh
+npm install @relybytes/rely-office        # the backend: Node 18 or later
+npm install @relybytes/rely-office-react  # the browser: the runtime and the editors
+```
+
+Both are published to the public npm registry and to GitHub Packages; the
+[backend README](packages/rely-office-node/README.md#install) says how to read them from
+GitHub Packages.
+
 ### On the backend
 
 ```js

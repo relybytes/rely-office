@@ -56,8 +56,5 @@
   },
   "scripts": {
     "test": "node test/smoke.cjs"
-  },
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
   }
 }

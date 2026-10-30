@@ -1,9 +1,10 @@
 name: Release
 
-# A tag v<version> publishes both packages at that version to GitHub Packages: @relybytes/rely-office
-# for the backend and @relybytes/rely-office-react for the frontend. The tag must match the version
-# of both package.json files and of the Cargo workspace. A manual run publishes the version on the
-# branch it runs from.
+# A tag v<version> publishes both packages at that version, @relybytes/rely-office for the backend
+# and @relybytes/rely-office-react for the frontend: first to GitHub Packages, then the same
+# tarballs to the public npm registry when the repository secret NPM_TOKEN is set. The tag must
+# match the version of both package.json files and of the Cargo workspace. A manual run publishes
+# the version on the branch it runs from.
 
 on:
   push:
@@ -52,5 +53,45 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           for tarball in ./dist/*.tgz; do
-            npm publish "$tarball"
+            npm publish "$tarball" --registry https://npm.pkg.github.com
+          done
+      - name: Keep the tarballs for the public registry
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarballs
+          path: dist/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-npmjs:
+    name: Publish the npm packages to the public npm registry
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - name: Skip without a token
+        if: env.NPM_TOKEN == ''
+        run: echo "::notice::NPM_TOKEN is not set, so the packages are published to GitHub Packages only"
+      - uses: actions/setup-node@v4
+        if: env.NPM_TOKEN != ''
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Take the tarballs published to GitHub Packages
+        if: env.NPM_TOKEN != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-tarballs
+          path: dist
+      - name: Publish with provenance
+        if: env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for tarball in ./dist/*.tgz; do
+            npm publish "$tarball" --registry https://registry.npmjs.org --access public --provenance
           done

@@ -3,6 +3,14 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## Unreleased
+
+### Changed
+
+- A release publishes both npm packages to the public npm registry as well, with provenance, when
+  the repository secret `NPM_TOKEN` is set; the packages lose their `publishConfig`, so each job
+  of `release.yml` names its registry and one tarball goes to both.
+
 ## 0.10.1
 
 ### Added

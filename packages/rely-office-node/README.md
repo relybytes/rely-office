@@ -17,20 +17,21 @@ spreadsheet grid and a slide editor in React) are the frontend package,
 
 ## Install
 
-The package is published to GitHub Packages, which asks for a token even to install a public
-package. Point the `@relybytes` scope at it and give it a token with `read:packages`:
+```sh
+npm install @relybytes/rely-office
+```
+
+Node 18 or later. Every release goes to two registries with the same tarball: the public npm
+registry, where a plain `npm install` needs no configuration, and GitHub Packages. Until a
+release reaches the public registry, or to read it from GitHub Packages, point the `@relybytes`
+scope there with a token holding `read:packages`, which GitHub asks for even to install a public
+package:
 
 ```ini
 # .npmrc
 @relybytes:registry=https://npm.pkg.github.com
 //npm.pkg.github.com/:_authToken=${NPM_GITHUB_TOKEN}
 ```
-
-```sh
-npm install @relybytes/rely-office
-```
-
-Node 18 or later. Publishing to the public npm registry is tracked in the issues.
 
 ## Use
 

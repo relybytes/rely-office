@@ -23,7 +23,9 @@ npm install react react-dom @tiptap/core @tiptap/pm @tiptap/react @tiptap/starte
 ```
 
 React 18 or later and TipTap 3 are peer dependencies, so an application that already has them
-keeps one copy. The package is published on GitHub Packages under the `@relybytes` scope.
+keeps one copy. Each release is published to the public npm registry and to GitHub Packages
+under the `@relybytes` scope; reading it from GitHub Packages needs the `.npmrc` of the
+[backend package](../rely-office-node/README.md#install).
 
 ## Load the WebAssembly
 

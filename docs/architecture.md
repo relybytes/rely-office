@@ -158,10 +158,15 @@ match the `wasm-bindgen` crate exactly, which is why the crate is pinned with `=
 the module would abort the instance, so the same rule as everywhere holds: malformed input is an
 error, never a panic.
 
-The npm package is published to GitHub Packages by `.github/workflows/release.yml` on a `v*` tag
-that matches its version, with the workflow's own `GITHUB_TOKEN`, so no secret is needed. GitHub
-Packages has no npm provenance and asks for a token even to install; the public npm registry is
-tracked in the issues.
+Both npm packages are published by `.github/workflows/release.yml` on a `v*` tag that matches
+their version. The first job builds and tests them and publishes the tarballs to GitHub Packages
+with the workflow's own `GITHUB_TOKEN`. The second publishes the same tarballs to the public npm
+registry with `--access public --provenance`, so the package page links the release run; it
+needs the repository secret `NPM_TOKEN`, an automation token of the `@relybytes` organisation on
+npmjs, and without it says so in a notice and publishes nothing. The packages carry no
+`publishConfig`: each job names its registry, so one tarball goes to both. A consumer that maps
+the `@relybytes` scope to GitHub Packages keeps resolving from there, which is fine since both
+registries hold the same versions.
 
 ## Licence and attribution
 
