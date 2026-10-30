@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [extract_text, read_workbook, read_document_tree, render, formula, spreadsheet]
+        target: [extract_text, read_workbook, read_document_tree, render, formula, spreadsheet, mtx]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly

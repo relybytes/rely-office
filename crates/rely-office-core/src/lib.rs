@@ -30,6 +30,7 @@ mod limits;
 mod macros;
 mod math;
 mod metafile;
+mod mtx;
 mod number_format;
 mod office_art;
 mod opendocument;
@@ -76,6 +77,7 @@ pub use limits::Limits;
 pub use macros::{MacroProject, holds_macros, insert_macro_project, read_macro_project};
 pub use math::latex_to_typst;
 pub use metafile::convert_metafile_to_svg;
+pub use mtx::decompress_mtx;
 pub use number_format::{
     FormattedNumber, NumberLocale, builtin_format_code, format_number, format_text, general_number,
     is_date_code,

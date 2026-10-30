@@ -9,7 +9,7 @@
 //! structure in the `WordDocument` stream.
 
 use crate::compound::{u16_at, u32_at};
-use crate::{FaceStyle, MAX_FONT_FILE_BYTES};
+use crate::{FaceStyle, MAX_FONT_FILE_BYTES, decompress_mtx};
 
 /// Where the name starts inside an `FFN`: the size byte, the family byte, the weight, the
 /// character set, the alternate name's index, the PANOSE number and the font signature.
@@ -64,7 +64,7 @@ pub(super) struct EmbeddedFace {
     /// The index of its family in the font table.
     pub(super) font: usize,
     pub(super) style: FaceStyle,
-    /// The font file; `None` when it cannot be read: compressed, cut short or too large.
+    /// The font file; `None` when it cannot be read: damaged, cut short or too large.
     pub(super) bytes: Option<Vec<u8>>,
 }
 
@@ -99,7 +99,8 @@ pub(super) fn embedded_faces(table: &[u8], word_document: &[u8]) -> Vec<Embedded
 }
 
 /// The font file inside an Embedded `OpenType` structure: its last member in every version,
-/// taken back from the `XOR` that may hide it. A compressed one is not read.
+/// taken back from the `XOR` that may hide it, then from `MicroType` Express when it is
+/// compressed.
 fn eot_font_data(eot: &[u8]) -> Option<Vec<u8>> {
     let size = u32_at(eot, 0)? as usize;
     let data_size = u32_at(eot, 4)?;
@@ -110,9 +111,6 @@ fn eot_font_data(eot: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     let flags = u32_at(eot, 12)?;
-    if flags & EOT_COMPRESSED != 0 {
-        return None;
-    }
     let start = size.checked_sub(data_size as usize)?;
     let mut data = eot.get(start.max(36)..size)?.to_vec();
     if data.len() != data_size as usize {
@@ -122,6 +120,9 @@ fn eot_font_data(eot: &[u8]) -> Option<Vec<u8>> {
         for byte in &mut data {
             *byte ^= EOT_XOR_KEY;
         }
+    }
+    if flags & EOT_COMPRESSED != 0 {
+        return decompress_mtx(&data, usize::try_from(MAX_FONT_FILE_BYTES).ok()?);
     }
     Some(data)
 }

@@ -55,8 +55,8 @@ structures.
   `svg:font-face-uri`; their face is read from the `macStyle` of their `head` table. A doc lists
   them in `SttbTtmbd`, each an Embedded OpenType structure in the `WordDocument` stream with its
   family's index in the font table and whether it is bold or italic: the font data is its last
-  member, taken back from the exclusive or with 0x50 that may hide it; one compressed with
-  MicroType Express is not read and is counted in `fontsLeftOut`. At most 32
+  member, taken back from the exclusive or with 0x50 that may hide it, then, when the structure
+  says it is compressed, from MicroType Express (`decompress_mtx`, below). At most 32
   files, 16 MB each and 48 MB together (`MAX_FONT_FILES`, `MAX_FONT_FILE_BYTES`,
   `MAX_TOTAL_FONT_BYTES`); a face past them, unreadable or not a font is counted in
   `fontsLeftOut` and its family kept without it.
@@ -330,6 +330,22 @@ rectangles, ellipses, arcs, polylines, groups, text boxes and callouts. An objec
 one `image/svg+xml` picture over their bounding box, anchored where the object stands; each text
 box becomes a frame with its text, from the text box story. The pairs of the File Information
 Block past the 38th stand after five words Word 97 moved elsewhere.
+
+The faces a doc embeds may be compressed with MicroType Express, the compression of Embedded
+OpenType (the W3C member submission of 2008). `decompress_mtx(bytes, maxBytes)`, public in
+`rely-office-core`, gives the TrueType font back: ten bytes of header, then three blocks each
+uncompressed by `LZCOMP` (LZ77 over three adaptive Huffman trees and 8,192 bytes both sides know,
+optionally behind a run-length layer), which hold the font in the Compact Table Format. The first
+block is the font with its `glyf` as triplets of coordinate changes, its `loca` left out, its
+`cvt ` as deltas and its `hdmx` and `VDMX` as the errors of a prediction; the second the values
+each glyph program pushes first, with the hop codes that repeat a value two back; the third the
+rest of the programs. The file rebuilt is not byte for byte the one compressed: `loca` is
+written again, a glyph program pushes its values with instructions of its own choosing, and the
+tables are written sorted with fresh checksums; every outline, metric and instruction is the same.
+An `hdmx` or `VDMX` table that cannot be read is left out, a damaged `glyf` or `cvt ` refuses the
+font, and every block and the font are capped at `maxBytes`. The decoder is checked against a
+writer built from the same submission for the tests, not against a file Word compressed. A Word 6
+or 95 file has no table of embedded fonts.
 
 ## Trying it
 

@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::doc::test_doc::{embedded_font_table, eot, font};
+use crate::mtx::test_mtx::{PACKED, compress};
 
 #[test]
 fn reads_each_font_name_in_order() {
@@ -49,6 +50,22 @@ fn reads_embedded_faces_plain_and_hidden_by_xor() {
     assert_eq!(faces[0].bytes.as_deref(), Some(REGULAR));
     assert_eq!(faces[1].style, FaceStyle::BoldItalic);
     assert_eq!(faces[1].bytes.as_deref(), Some(REGULAR));
+}
+
+#[test]
+fn reads_a_face_compressed_with_micro_type_express() {
+    let compressed = compress(REGULAR, PACKED);
+    let mut stream = vec![0_u8; 8];
+    stream.extend_from_slice(&eot(&compressed, "Carlito", 0x0000_0004));
+    let hidden_at = stream.len();
+    stream.extend_from_slice(&eot(&compressed, "Carlito", 0x1000_0004));
+    let table = embedded_font_table(&[(8, 0, true, false), (hidden_at, 0, false, false)]);
+    let faces = embedded_faces(&table, &stream);
+    let expected = decompress_mtx(&compressed, 1 << 24).unwrap();
+    assert!(crate::is_font_file(&expected));
+    assert_eq!(faces[0].style, FaceStyle::Bold);
+    assert_eq!(faces[0].bytes.as_deref(), Some(expected.as_slice()));
+    assert_eq!(faces[1].bytes.as_deref(), Some(expected.as_slice()));
 }
 
 #[test]
