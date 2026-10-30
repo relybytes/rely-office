@@ -3,6 +3,23 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## Unreleased
+
+### Added
+
+- `Workbook::pictures_in(sheet, locale)` draws the charts of a sheet with their numbers written as
+  the locale writes them; the sheet module's `pictures` uses the document's locale.
+
+### Fixed
+
+- `SheetGrid` showed a chart as an empty frame under React's strict mode: the picture addresses
+  were released by the effect's first cleanup and never made again. They are now made and
+  released in one effect, and a page without object URLs gets `data:` addresses.
+- A chart in the grid is named "Chart" and its title for assistive technology, in a read-only grid
+  too.
+- The formulas of a chart follow inserted and deleted rows and columns, and renamed and removed
+  sheets, as the cells' formulas do; a range whose cells are all deleted reads `#REF!`.
+
 ## 0.9.0
 
 ### Added

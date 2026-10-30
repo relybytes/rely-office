@@ -1093,9 +1093,17 @@ impl Workbook {
 
     /// The pictures and charts of a sheet, the charts drawn again from the values the cells hold
     /// now, so a chart follows an edit; a sheet whose drawing is not carried gives what it was
-    /// read with.
+    /// read with. The numbers of the charts are written as Italian writes them; see
+    /// [`Workbook::pictures_in`].
     #[must_use]
     pub fn pictures(&self, sheet: usize) -> Vec<SheetDrawing> {
+        self.pictures_in(sheet, Locale::Italian)
+    }
+
+    /// The pictures and charts of a sheet as [`Workbook::pictures`] gives them, the numbers of
+    /// the charts' axes and labels written as `locale` writes them.
+    #[must_use]
+    pub fn pictures_in(&self, sheet: usize, locale: Locale) -> Vec<SheetDrawing> {
         let Some(content) = self.sheets.get(sheet) else {
             return Vec::new();
         };
@@ -1133,6 +1141,7 @@ impl Workbook {
             &layout,
             &Limits::default(),
             &values,
+            locale.into(),
         );
         if drawn.is_empty() {
             content.pictures.clone()

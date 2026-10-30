@@ -20,7 +20,8 @@ use rely_office_core::{
 };
 
 use crate::address::{MAX_COLUMNS, MAX_ROWS};
-use crate::model::{EditError, Workbook};
+use crate::formula::{Expr, parse_formula, print_formula};
+use crate::model::{EditError, Sheet, Workbook};
 
 const DRAWING_TYPE: &str = "application/vnd.openxmlformats-officedocument.drawing+xml";
 const CHART_TYPE: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
@@ -868,6 +869,101 @@ pub(crate) fn drawing_of_pictures(
         drawing_part,
         parts,
     })
+}
+
+/// The text of an XML text node read back: the five named entities and character references.
+fn unescape(text: &str) -> Option<String> {
+    let mut plain = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find('&') {
+        plain.push_str(&rest[..start]);
+        let end = rest[start..].find(';')? + start;
+        let entity = &rest[start + 1..end];
+        let character = match entity {
+            "amp" => '&',
+            "lt" => '<',
+            "gt" => '>',
+            "quot" => '"',
+            "apos" => '\'',
+            _ => {
+                let code = if let Some(hex) = entity.strip_prefix("#x") {
+                    u32::from_str_radix(hex, 16).ok()?
+                } else {
+                    entity.strip_prefix('#')?.parse().ok()?
+                };
+                char::from_u32(code)?
+            }
+        };
+        plain.push(character);
+        rest = &rest[end + 1..];
+    }
+    plain.push_str(rest);
+    Some(plain)
+}
+
+/// A chart part with the formula of every `f` element, `<c:f>` and `<cx:f>`, rewritten by
+/// `rewrite`; `None` when no formula changes.
+fn rewritten_chart_part(xml: &str, rewrite: &mut dyn FnMut(&Expr) -> Expr) -> Option<String> {
+    let mut written = String::with_capacity(xml.len());
+    let mut copied = 0;
+    let mut changed = false;
+    let mut search = 0;
+    while let Some(found) = xml[search..].find('<') {
+        let open = search + found;
+        let Some(close) = xml[open..].find('>').map(|offset| open + offset) else {
+            break;
+        };
+        search = close + 1;
+        let tag = &xml[open + 1..close];
+        let name = tag
+            .split(char::is_whitespace)
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches('/');
+        let local = name.rsplit(':').next().unwrap_or_default();
+        if local != "f" || tag.starts_with('/') || tag.ends_with('/') {
+            continue;
+        }
+        let Some(end) = xml[search..].find('<').map(|offset| search + offset) else {
+            break;
+        };
+        let Some(expression) =
+            unescape(&xml[search..end]).and_then(|formula| parse_formula(formula.trim()).ok())
+        else {
+            continue;
+        };
+        let moved = rewrite(&expression);
+        if moved != expression {
+            written.push_str(&xml[copied..search]);
+            written.push_str(&escape(&print_formula(&moved)));
+            copied = end;
+            changed = true;
+        }
+        search = end;
+    }
+    changed.then(|| {
+        written.push_str(&xml[copied..]);
+        written
+    })
+}
+
+/// The formulas the charts of a sheet read, rewritten as the cells' own are, so a chart follows
+/// the rows, columns and sheets it plots: inserted, deleted, renamed or removed.
+pub(crate) fn rewrite_chart_formulas(sheet: &mut Sheet, rewrite: &mut dyn FnMut(&Expr) -> Expr) {
+    let Some(drawing) = sheet.drawing.as_mut() else {
+        return;
+    };
+    for part in drawing
+        .parts
+        .iter_mut()
+        .filter(|part| part.name.contains("/charts/"))
+    {
+        if let Ok(xml) = std::str::from_utf8(&part.bytes)
+            && let Some(moved) = rewritten_chart_part(xml, rewrite)
+        {
+            part.bytes = moved.into_bytes();
+        }
+    }
 }
 
 #[cfg(test)]

@@ -24,6 +24,7 @@ use crate::chart::{chart_picture, chart_reference, no_cells};
 use crate::document::{
     Alignment, Media, image_pixel_size, smart_art_drawing, smart_art_svg, sniff_image_type,
 };
+use crate::number_format::NumberLocale;
 use crate::presentation::slide_parts;
 use crate::relationships::{Relationship, main_part_path, read_relationships};
 use crate::theme::{Theme, colour_in};
@@ -944,7 +945,14 @@ impl Reader<'_, '_> {
         let xml = read_text_member(self.package, &target, self.limits)
             .ok()
             .flatten()?;
-        let (bytes, _) = chart_picture(&xml, &context.theme, frame.width, frame.height, &no_cells)?;
+        let (bytes, _) = chart_picture(
+            &xml,
+            &context.theme,
+            frame.width,
+            frame.height,
+            &no_cells,
+            NumberLocale::default(),
+        )?;
         if self.media.len() >= self.limits.max_images {
             self.truncated = true;
             return None;

@@ -34,6 +34,7 @@ import type {
   SheetCell,
   SheetChart,
   SheetDocument,
+  SheetPicture,
   SortKey,
   StylePatch,
 } from '../model.js';
@@ -56,6 +57,7 @@ import {
 } from './geometry.js';
 import { ENGLISH_SHEET_GRID_LABELS, type SheetGridLabels } from './labels.js';
 import { PivotPanel } from './pivot-panel.js';
+import { usePictureUrls } from './picture-urls.js';
 import {
   BorderMenu,
   ChartPanel,
@@ -374,18 +376,21 @@ export const SheetGrid = forwardRef(function SheetGrid(
 
   // A new `workbook` follows every edit, and a chart is drawn again from the values it changed.
   const pictures = useMemo(() => sheet.pictures(workbook.index), [sheet, workbook]);
-  const pictureUrls = useMemo(() => {
-    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return pictures.map(() => '');
-    return pictures.map((picture, position) =>
-      URL.createObjectURL(new Blob([new Uint8Array(sheet.pictureBytes(workbook.index, position))], { type: picture.contentType })),
+  const pictureUrls = usePictureUrls(pictures, (position) => sheet.pictureBytes(workbook.index, position));
+  // A chart is listed among the pictures, drawn, and among the charts, where it is named.
+  const pictureName = (picture: SheetPicture): string => {
+    const chart = workbook.charts.find(
+      ({ placement }) =>
+        placement.row === picture.row &&
+        placement.column === picture.column &&
+        placement.offsetX === picture.offsetXEmu &&
+        placement.offsetY === picture.offsetYEmu &&
+        placement.width === picture.widthEmu &&
+        placement.height === picture.heightEmu,
     );
-  }, [sheet, workbook.index, pictures]);
-  useEffect(
-    () => () => {
-      for (const url of pictureUrls) if (url) URL.revokeObjectURL(url);
-    },
-    [pictureUrls],
-  );
+    if (!chart) return picture.description ?? '';
+    return `${words.chartLabel} ${chart.spec?.title || picture.description || chart.index + 1}`;
+  };
 
   useLayoutEffect(() => {
     const element = viewport.current;
@@ -1446,7 +1451,7 @@ export const SheetGrid = forwardRef(function SheetGrid(
                 <img
                   key={position}
                   className="rely-sheet-picture"
-                  alt={picture.description ?? ''}
+                  alt={pictureName(picture)}
                   src={pictureUrls[position] || undefined}
                   style={{
                     top: rows.offset(picture.row) + picture.offsetYEmu / EMU_PER_PIXEL,
