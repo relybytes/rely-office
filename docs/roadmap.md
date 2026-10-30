@@ -146,7 +146,7 @@ autosave, and where an inserted image goes, all through the components' props.
 | 9.7 | The adjust values of the old arrows, ribbons and action buttons of ppt and doc | done (0.9.0) |
 | 9.8 | The fonts of a document: the font table, embedded faces, theme and default fonts read, written and drawn, the editor's font picker and substitutes | done (0.9.0) |
 
-## Phase 10: the limits closed (0.10.0)
+## Phase 10: the limits closed (0.10.0 - 0.10.2)
 
 | Step | Content | Status |
 | --- | --- | --- |
@@ -156,9 +156,11 @@ autosave, and where an inserted image goes, all through the components' props.
 | 10.4 | Every argument of `GROUPBY` and `PIVOTBY`, with `PERCENTOF` | done (0.10.0) |
 | 10.5 | The fonts a Word 97-2003 document embeds, read into the document tree | done (0.10.0) |
 | 10.6 | A README that shows the library at work, and a demo of two people on one document | done (0.10.0) |
-| 10.7 | Charts and pictures moved and sized with their rows and columns; several pivot values along the rows; empty pivot cells for blank records | done (0.10.1) |
-| 10.8 | Undo of a shared deletion puts back the formulas it broke; a structural edit follows a concurrent rename | done (0.10.1) |
-| 10.9 | The fonts a doc compresses with MicroType Express, read; pptx slides in the comparison with LibreOffice, their lines as tall as an office suite sets them | done |
+| 10.7 | Charts and pictures moved and sized with their rows and columns; several pivot values along the rows; empty pivot cells for blank records | done (0.10.2) |
+| 10.8 | Undo of a shared deletion puts back the formulas it broke; a structural edit follows a concurrent rename | done (0.10.2) |
+| 10.9 | The fonts a doc compresses with MicroType Express, read; pptx slides in the comparison with LibreOffice, their lines as tall as an office suite sets them | done (0.10.2) |
+| 10.10 | Undo of a shared sheet removal; `#REF!` chart series kept; anchors that keep their size across rows of other heights; pivot values placed among the column fields; pivots checked against LibreOffice | done (0.10.2) |
+| 10.11 | Licensed under Apache-2.0 with the attribution in `NOTICE` required; publishing to the public npm registry once its token is set | done (0.10.2) |
 
 ## Next
 
@@ -168,7 +170,7 @@ autosave, and where an inserted image goes, all through the components' props.
   encoder rather than one built from the same submission.
 - Documents made by Word and odp pages in the corpus, and the corpus figure as a CI gate once it
   is stable.
-- Publishing to the public npm registry (issue #1).
+- Publishing to the public npm registry: the release does it once the `NPM_TOKEN` secret is set (issue #1).
 
 ## Known risks
 

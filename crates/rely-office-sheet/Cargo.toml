@@ -19,7 +19,7 @@ workspace = true
 calamine = "0.37"
 quick-xml = "0.42"
 regex = { version = "1.13", default-features = false, features = ["std", "unicode-case", "unicode-gencat", "unicode-perl"] }
-rely-office-core = { path = "../rely-office-core", version = "0.10.1" }
+rely-office-core = { path = "../rely-office-core", version = "0.10.2" }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 thiserror = "2.0.21"
 zip = { version = "9", default-features = false, features = ["deflate"] }

@@ -3,7 +3,7 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
-## Unreleased
+## 0.10.2
 
 ### Added
 
@@ -26,6 +26,13 @@ below 1.0, a minor version may change the API.
 - Three slide decks in the comparison with LibreOffice (quarterly results, an agenda with a table,
   a process drawn with shapes), written as Flat ODP and turned into pptx by LibreOffice: 17 of 17
   pages pass, the slides at 0.014 at most.
+- Several values of a pivot table along the rows, Excel's `Σ Values` among the row fields:
+  `values_axis` (`PivotValuesAxis`) and `values_position` on a `PivotTable`, `valuesAxis` and
+  `valuesPosition` from JavaScript and in collaboration, and a "Values" control in the grid's pivot
+  panel. Each group gets a row per value, a group over a field below the values a total row per
+  value, and the grand total a row per value. They are written to and read from xlsx (the field
+  `-2` among `rowFields`, `dataOnRows`, `dataPosition`) and ods (the data layout field among the
+  row fields).
 
 ### Changed
 
@@ -47,6 +54,8 @@ below 1.0, a minor version may change the API.
   nothing there, as the workbook keeps it for a chart it holds; editing together, such a series is
   kept rather than dropped. An ods leaves the series out, and keeps a chart with none left as its
   picture.
+- A cell of a pivot table whose records hold only blanks for its field is empty, as in Excel,
+  rather than 0 or a count of 0; `GETPIVOTDATA` gives the same empty value.
 
 ### Fixed
 
@@ -56,26 +65,6 @@ below 1.0, a minor version may change the API.
 - The lines of a slide's text are as tall as PowerPoint and Impress make them: the first baseline
   of a frame or a paragraph stood the typographic ascender below its top, a third of a line short
   in Liberation Sans, and a paragraph closed up on the one before it.
-
-## 0.10.1
-
-### Added
-
-- Several values of a pivot table along the rows, Excel's `Σ Values` among the row fields:
-  `values_axis` (`PivotValuesAxis`) and `values_position` on a `PivotTable`, `valuesAxis` and
-  `valuesPosition` from JavaScript and in collaboration, and a "Values" control in the grid's pivot
-  panel. Each group gets a row per value, a group over a field below the values a total row per
-  value, and the grand total a row per value. They are written to and read from xlsx (the field
-  `-2` among `rowFields`, `dataOnRows`, `dataPosition`) and ods (the data layout field among the
-  row fields).
-
-### Changed
-
-- A cell of a pivot table whose records hold only blanks for its field is empty, as in Excel,
-  rather than 0 or a count of 0; `GETPIVOTDATA` gives the same empty value.
-
-### Fixed
-
 - Editing a spreadsheet together, undoing a deletion of rows or columns puts back what it broke
   elsewhere: the formulas of every sheet, the rules and validations, the defined names and the
   charts whose references became `#REF!` or shrank, as they were before. What another client
