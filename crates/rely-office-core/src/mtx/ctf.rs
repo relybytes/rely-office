@@ -1,8 +1,5 @@
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
-//
-// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
+// Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
+// SPDX-License-Identifier: Apache-2.0
 
 //! The Compact Table Format back to TrueType (sections 4 to 7 of the submission): the font's
 //! tables as they were, but for `glyf` (outlines as triplets, the initial pushes and the rest

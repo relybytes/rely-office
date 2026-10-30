@@ -1,8 +1,5 @@
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
-//
-// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
+// Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
+// SPDX-License-Identifier: Apache-2.0
 
 //! `rely-office-corpus`: render every document of a folder and compare each page with the page
 //! `LibreOffice` printed for it, as `scripts/corpus.mjs` prepares them.

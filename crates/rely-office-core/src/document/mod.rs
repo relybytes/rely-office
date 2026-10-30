@@ -1,8 +1,5 @@
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
-//
-// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
+// Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
+// SPDX-License-Identifier: Apache-2.0
 
 //! A structured reading of a docx for import into a rich-text editor: a neutral tree of blocks
 //! and inline runs, the embedded images, and a report of what the tree could not carry.

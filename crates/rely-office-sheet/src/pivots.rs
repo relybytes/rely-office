@@ -1,8 +1,5 @@
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
-//
-// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
+// Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
+// SPDX-License-Identifier: Apache-2.0
 
 //! Pivot tables: a range summarised by the values of some of its columns, computed into the
 //! cells of a sheet. A pivot table is refreshed on demand, as in Excel: its cells keep what the
