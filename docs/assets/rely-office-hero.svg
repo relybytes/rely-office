@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 380" width="1200" height="380" role="img" aria-labelledby="title desc">
+  <title id="title">rely-office</title>
+  <desc id="desc">rely-office reads, draws, edits and writes Word, Excel, PowerPoint and OpenDocument files in safe Rust compiled to WebAssembly, with React editors that several people can use together.</desc>
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1437"/>
+      <stop offset="0.55" stop-color="#1e2a78"/>
+      <stop offset="1" stop-color="#3b1d8f"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#60a5fa"/>
+      <stop offset="1" stop-color="#c084fc"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; }
+      .name { font-size: 64px; font-weight: 800; fill: #ffffff; letter-spacing: -0.02em; }
+      .tag { font-size: 22px; fill: #c7d2fe; }
+      .stat { font-size: 26px; font-weight: 800; fill: #ffffff; }
+      .unit { font-size: 13px; fill: #a5b4fc; letter-spacing: 0.04em; }
+      .chip { font-size: 13px; font-weight: 700; }
+      .paper { font-size: 11px; fill: #64748b; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="380" rx="24" fill="url(#ground)"/>
+  <circle cx="1010" cy="40" r="220" fill="#6366f1" opacity="0.18"/>
+  <circle cx="820" cy="380" r="160" fill="#38bdf8" opacity="0.12"/>
+
+  <text x="56" y="116" class="name">rely-office</text>
+  <rect x="58" y="134" width="132" height="5" rx="2.5" fill="url(#glow)"/>
+  <text x="56" y="182" class="tag">Office files without an office suite.</text>
+  <text x="56" y="212" class="tag">Safe Rust, WebAssembly, in process: read, draw, edit, save, together.</text>
+
+  <g transform="translate(56 248)">
+    <text x="0" y="28" class="stat">17</text><text x="0" y="50" class="unit">FORMATS</text>
+    <text x="118" y="28" class="stat">502</text><text x="118" y="50" class="unit">SHEET FUNCTIONS</text>
+    <text x="268" y="28" class="stat">4</text><text x="268" y="50" class="unit">REACT EDITORS</text>
+    <text x="398" y="28" class="stat">11/11</text><text x="398" y="50" class="unit">PAGES MATCH LIBREOFFICE</text>
+  </g>
+  <g transform="translate(56 330)" class="chip" text-anchor="middle">
+    <rect x="0" y="0" width="70" height="26" rx="13" fill="#1d4ed8"/><text x="35" y="18" fill="#dbeafe">docx</text>
+    <rect x="78" y="0" width="70" height="26" rx="13" fill="#1d4ed8"/><text x="113" y="18" fill="#dbeafe">doc</text>
+    <rect x="156" y="0" width="70" height="26" rx="13" fill="#1d4ed8"/><text x="191" y="18" fill="#dbeafe">odt</text>
+    <rect x="234" y="0" width="70" height="26" rx="13" fill="#15803d"/><text x="269" y="18" fill="#dcfce7">xlsx</text>
+    <rect x="312" y="0" width="70" height="26" rx="13" fill="#15803d"/><text x="347" y="18" fill="#dcfce7">ods</text>
+    <rect x="390" y="0" width="70" height="26" rx="13" fill="#15803d"/><text x="425" y="18" fill="#dcfce7">csv</text>
+    <rect x="468" y="0" width="70" height="26" rx="13" fill="#c2410c"/><text x="503" y="18" fill="#ffedd5">pptx</text>
+    <rect x="546" y="0" width="70" height="26" rx="13" fill="#c2410c"/><text x="581" y="18" fill="#ffedd5">odp</text>
+    <rect x="624" y="0" width="70" height="26" rx="13" fill="#475569"/><text x="659" y="18" fill="#e2e8f0">md</text>
+    <rect x="702" y="0" width="70" height="26" rx="13" fill="#475569"/><text x="737" y="18" fill="#e2e8f0">txt</text>
+  </g>
+
+  <!-- three pages, fanned -->
+  <g filter="url(#shadow)">
+    <g transform="translate(800 92) rotate(-11)">
+      <rect width="180" height="232" rx="10" fill="#ffffff"/>
+      <rect x="0" y="0" width="180" height="30" rx="10" fill="#c2410c"/>
+      <rect x="0" y="20" width="180" height="10" fill="#c2410c"/>
+      <rect x="18" y="52" width="96" height="12" rx="3" fill="#1e3a8a"/>
+      <rect x="18" y="78" width="80" height="7" rx="3" fill="#cbd5e1"/>
+      <rect x="18" y="92" width="64" height="7" rx="3" fill="#cbd5e1"/>
+      <rect x="104" y="80" width="56" height="34" rx="6" fill="#2563eb"/>
+      <circle cx="118" cy="140" r="14" fill="#f59e0b"/>
+      <circle cx="148" cy="140" r="14" fill="#10b981"/>
+    </g>
+    <g transform="translate(1000 52) rotate(9)">
+      <rect width="180" height="232" rx="10" fill="#ffffff"/>
+      <rect x="0" y="0" width="180" height="30" rx="10" fill="#15803d"/>
+      <rect x="0" y="20" width="180" height="10" fill="#15803d"/>
+      <g stroke="#e2e8f0" stroke-width="1">
+        <path d="M14 50 H166 M14 70 H166 M14 90 H166 M14 110 H166 M14 130 H166 M60 50 V130 M104 50 V130"/>
+      </g>
+      <rect x="14" y="50" width="152" height="20" fill="#dbeafe" opacity="0.8"/>
+      <rect x="24" y="200" width="18" height="14" fill="#4472c4"/>
+      <rect x="50" y="184" width="18" height="30" fill="#4472c4"/>
+      <rect x="76" y="172" width="18" height="42" fill="#4472c4"/>
+      <rect x="102" y="190" width="18" height="24" fill="#ed7d31"/>
+      <rect x="128" y="160" width="18" height="54" fill="#ed7d31"/>
+      <path d="M18 214 H160" stroke="#94a3b8"/>
+    </g>
+    <g transform="translate(912 118) rotate(-1) scale(0.84)">
+      <rect width="190" height="244" rx="10" fill="#ffffff"/>
+      <rect x="0" y="0" width="190" height="30" rx="10" fill="#1d4ed8"/>
+      <rect x="0" y="20" width="190" height="10" fill="#1d4ed8"/>
+      <rect x="20" y="50" width="120" height="13" rx="3" fill="#0f172a"/>
+      <rect x="20" y="74" width="150" height="6" rx="3" fill="#cbd5e1"/>
+      <rect x="20" y="86" width="140" height="6" rx="3" fill="#cbd5e1"/>
+      <rect x="20" y="98" width="150" height="6" rx="3" fill="#cbd5e1"/>
+      <rect x="60" y="96" width="62" height="10" rx="2" fill="#db2777" opacity="0.25"/>
+      <rect x="121" y="92" width="2" height="16" fill="#db2777"/>
+      <rect x="121" y="80" width="40" height="12" rx="2" fill="#db2777"/>
+      <text x="125" y="89" font-size="8" font-weight="700" fill="#ffffff">Marco</text>
+      <rect x="20" y="118" width="130" height="6" rx="3" fill="#cbd5e1"/>
+      <rect x="20" y="130" width="150" height="6" rx="3" fill="#cbd5e1"/>
+      <rect x="20" y="150" width="150" height="50" rx="4" fill="none" stroke="#cbd5e1"/>
+      <path d="M20 166 H170 M20 183 H170 M95 150 V200" stroke="#cbd5e1"/>
+      <rect x="20" y="212" width="110" height="6" rx="3" fill="#cbd5e1"/>
+      <rect x="40" y="132" width="2" height="16" fill="#2563eb"/>
+      <rect x="40" y="118" width="34" height="12" rx="2" fill="#2563eb"/>
+      <text x="44" y="127" font-size="8" font-weight="700" fill="#ffffff">Anna</text>
+    </g>
+  </g>
+</svg>
