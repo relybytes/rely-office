@@ -329,3 +329,57 @@ fn reads_other_sheets() {
     assert_eq!(book.value(second, cell("A1")), Value::Number(10.0));
     assert_eq!(book.value(0, cell("B1")), Value::Number(11.0));
 }
+
+#[test]
+fn answers_the_safe_questions_of_info_and_the_text_of_phonetic() {
+    assert_eq!(value(&[], "=INFO(\"numfile\")"), Value::Number(1.0));
+    assert_eq!(
+        value(&[], "=INFO(\"RECALC\")"),
+        Value::Text("Automatic".to_owned())
+    );
+    assert_eq!(
+        value(&[], "=INFO(\"release\")"),
+        Value::Text("16.0".to_owned())
+    );
+    assert_eq!(
+        value(&[], "=INFO(\"system\")"),
+        Value::Text("pcdos".to_owned())
+    );
+    assert!(matches!(value(&[], "=INFO(\"osversion\")"), Value::Text(_)));
+    for hidden in ["directory", "origin", "memavail", "totmem", "x"] {
+        assert_eq!(
+            value(&[], &format!("=INFO(\"{hidden}\")")),
+            Value::Error(ErrorKind::NotAvailable)
+        );
+    }
+    assert_eq!(value(&[], "=INFO()"), Value::Error(ErrorKind::Value));
+    assert_eq!(
+        value(&[("A1", "東京"), ("B1", "3")], "=PHONETIC(A1:B1)"),
+        Value::Text("東京".to_owned())
+    );
+    assert_eq!(
+        value(&[("B1", "3")], "=PHONETIC(B1)"),
+        Value::Text(String::new())
+    );
+    assert_eq!(
+        value(&[], "=PHONETIC(\"x\")"),
+        Value::Error(ErrorKind::Value)
+    );
+}
+
+#[test]
+fn never_calls_outside_the_workbook() {
+    for formula in [
+        "=WEBSERVICE(\"https://example.com\")",
+        "=STOCKHISTORY(\"MSFT\",TODAY())",
+        "=IMAGE(\"https://example.com/a.png\")",
+        "=TRANSLATE(\"ciao\",\"it\",\"en\")",
+        "=RTD(\"server\",,\"topic\")",
+    ] {
+        assert_eq!(
+            value(&[], formula),
+            Value::Error(ErrorKind::Value),
+            "{formula}"
+        );
+    }
+}

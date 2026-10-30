@@ -494,6 +494,33 @@ impl Evaluator<'_> {
                     _ => return Err(ErrorKind::Value),
                 })
             })(),
+            "INFO" => (|| {
+                if arguments.len() != 1 {
+                    return Err(ErrorKind::Value);
+                }
+                let key = self.text(sheet, argument(0))?.trim().to_lowercase();
+                Ok(match key.as_str() {
+                    "numfile" => count(self.workbook.sheets.len()),
+                    "recalc" => Value::Text("Automatic".to_owned()),
+                    "release" => Value::Text("16.0".to_owned()),
+                    "system" => Value::Text("pcdos".to_owned()),
+                    "osversion" => Value::Text("Windows (64-bit) NT 10.00".to_owned()),
+                    // The others name the host's folders and memory, which a file must not read.
+                    _ => return Err(ErrorKind::NotAvailable),
+                })
+            })(),
+            "PHONETIC" => (|| {
+                if arguments.len() != 1 {
+                    return Err(ErrorKind::Value);
+                }
+                let (target, cell) = self.referenced_cell(sheet, argument(0))?;
+                // No reading guide is stored with a cell, so the guide is the text itself.
+                Ok(Value::Text(match self.cell_value(target, cell) {
+                    Value::Text(text) => text,
+                    Value::Error(kind) => return Err(kind),
+                    _ => String::new(),
+                }))
+            })(),
             "XMATCH" => self.xmatch(sheet, arguments),
             "AGGREGATE" => self.aggregate(sheet, arguments),
             "RAND" => Ok(Value::Number(self.random())),

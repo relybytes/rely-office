@@ -1196,7 +1196,42 @@ const ITALIAN_FUNCTION_NAMES: &[(&str, &str)] = &[
     ("REND.SCAD", "YIELDMAT"),
     ("TESTZ", "Z.TEST"),
     ("TEST.Z", "ZTEST"),
+    ("BAHTTESTO", "BAHTTEXT"),
+    ("FURIGANA", "PHONETIC"),
+    ("FILTRO.XML", "FILTERXML"),
+    ("PREVISIONE.ETS", "FORECAST.ETS"),
+    ("PREVISIONE.ETS.INTCONF", "FORECAST.ETS.CONFINT"),
+    ("PREVISIONE.ETS.STAGIONALITÀ", "FORECAST.ETS.SEASONALITY"),
+    ("PREVISIONE.ETS.STAT", "FORECAST.ETS.STAT"),
+    ("PREZZO.PRIMO.IRR", "ODDFPRICE"),
+    ("REND.PRIMO.IRR", "ODDFYIELD"),
+    ("PREZZO.ULTIMO.IRR", "ODDLPRICE"),
+    ("REND.ULTIMO.IRR", "ODDLYIELD"),
+    ("AMBIENTE.INFO", "INFO"),
+    ("SERVIZIO.WEB", "WEBSERVICE"),
 ];
+
+/// Whether a formula calls a function that reaches outside the workbook.
+pub(crate) fn calls_external(expression: &Expr) -> bool {
+    match expression {
+        Expr::Call(name, arguments) => {
+            EXTERNAL_FUNCTIONS.contains(&name.as_str()) || arguments.iter().any(calls_external)
+        }
+        Expr::Unary(_, inner) | Expr::Percent(inner) | Expr::Group(inner) => calls_external(inner),
+        Expr::Binary(_, left, right) => calls_external(left) || calls_external(right),
+        Expr::Array(rows) => rows.iter().flatten().any(calls_external),
+        Expr::Invoke(callee, arguments) => {
+            calls_external(callee) || arguments.iter().any(calls_external)
+        }
+        Expr::Number(_)
+        | Expr::Text(_)
+        | Expr::Bool(_)
+        | Expr::Error(_)
+        | Expr::Cell(_)
+        | Expr::Range(_)
+        | Expr::Name(_) => false,
+    }
+}
 
 /// The English name of a function typed in Italian or English, in capitals.
 /// A name as a formula keeps it: as typed, without the `_xlpm.` files put before the names a
@@ -1221,7 +1256,9 @@ fn canonical_function_name(name: &str) -> String {
         .iter()
         .find(|(italian, _)| *italian == upper)
         .map_or(upper.clone(), |(_, english)| (*english).to_owned());
-    if FUNCTION_NAMES.binary_search(&english.as_str()).is_ok() {
+    if FUNCTION_NAMES.binary_search(&english.as_str()).is_ok()
+        || EXTERNAL_FUNCTIONS.contains(&english.as_str())
+    {
         return english;
     }
     // A function the grid does not know is a name a formula defines: kept as typed.
@@ -1395,6 +1432,28 @@ pub(crate) const PREFIXED_FUNCTIONS: &[&str] = &[
     "REGEXREPLACE",
     "TRIMRANGE",
     "PERCENTOF",
+    "FILTERXML",
+    "WEBSERVICE",
+    "STOCKHISTORY",
+    "IMAGE",
+    "TRANSLATE",
+    "FORECAST.ETS",
+    "FORECAST.ETS.CONFINT",
+    "FORECAST.ETS.SEASONALITY",
+    "FORECAST.ETS.STAT",
+];
+
+/// The functions that reach outside the workbook: a web service, market data, a picture by
+/// address, a translation service, a real-time server or code. They are kept in a formula and
+/// written back as they were, never called.
+pub const EXTERNAL_FUNCTIONS: &[&str] = &[
+    "CALL",
+    "IMAGE",
+    "REGISTER.ID",
+    "RTD",
+    "STOCKHISTORY",
+    "TRANSLATE",
+    "WEBSERVICE",
 ];
 
 /// Every function the evaluator computes, by its English name.
@@ -1425,6 +1484,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "AVERAGEA",
     "AVERAGEIF",
     "AVERAGEIFS",
+    "BAHTTEXT",
     "BASE",
     "BESSELI",
     "BESSELJ",
@@ -1544,6 +1604,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "ERFC",
     "ERFC.PRECISE",
     "ERROR.TYPE",
+    "EUROCONVERT",
     "EVEN",
     "EXACT",
     "EXP",
@@ -1560,6 +1621,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "FALSE",
     "FDIST",
     "FILTER",
+    "FILTERXML",
     "FIND",
     "FINDB",
     "FINV",
@@ -1570,6 +1632,10 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "FLOOR.MATH",
     "FLOOR.PRECISE",
     "FORECAST",
+    "FORECAST.ETS",
+    "FORECAST.ETS.CONFINT",
+    "FORECAST.ETS.SEASONALITY",
+    "FORECAST.ETS.STAT",
     "FORECAST.LINEAR",
     "FORMULATEXT",
     "FREQUENCY",
@@ -1629,6 +1695,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "IMTAN",
     "INDEX",
     "INDIRECT",
+    "INFO",
     "INT",
     "INTERCEPT",
     "INTRATE",
@@ -1720,6 +1787,10 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "OCT2DEC",
     "OCT2HEX",
     "ODD",
+    "ODDFPRICE",
+    "ODDFYIELD",
+    "ODDLPRICE",
+    "ODDLYIELD",
     "OFFSET",
     "OR",
     "PDURATION",
@@ -1734,6 +1805,7 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "PERMUT",
     "PERMUTATIONA",
     "PHI",
+    "PHONETIC",
     "PI",
     "PMT",
     "POISSON",

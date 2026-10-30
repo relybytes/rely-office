@@ -201,6 +201,13 @@ impl<'a> Evaluator<'a> {
                 stack.pop();
                 continue;
             };
+            if let Some(value) =
+                self.workbook.sheets[current_sheet].stored_value(current, expression)
+            {
+                self.finish(current_sheet, current, value.clone());
+                stack.pop();
+                continue;
+            }
             self.states[current_sheet].insert(current, State::Visiting);
             let mut dependencies = Vec::new();
             self.dependencies(current_sheet, expression, &mut dependencies);
@@ -475,6 +482,7 @@ impl<'a> Evaluator<'a> {
                 match self
                     .array_call(sheet, name, arguments)
                     .or_else(|| self.matrix_call(sheet, name, arguments))
+                    .or_else(|| self.xml_call(sheet, name, arguments))
                 {
                     Some(Ok(grid)) => Operand::Array(grid),
                     Some(Err(kind)) => Operand::Value(Value::Error(kind)),
@@ -1368,6 +1376,7 @@ fn wildcard(pattern: &[char], text: &[char]) -> bool {
 
 mod arrays;
 mod complex;
+mod currency;
 mod database;
 mod functions;
 mod lambda;
@@ -1376,7 +1385,9 @@ mod more;
 mod probability;
 mod reference;
 mod securities;
+mod smoothing;
 mod strings;
+mod xml_path;
 
 #[cfg(test)]
 mod tests;

@@ -246,6 +246,10 @@ pub(crate) fn shift(
         .into_iter()
         .filter_map(|(cell, comment)| shift.cell(cell).map(|cell| (cell, comment)))
         .collect();
+    sheets[target].stored = std::mem::take(&mut sheets[target].stored)
+        .into_iter()
+        .filter_map(|(cell, stored)| shift.cell(cell).map(|cell| (cell, stored)))
+        .collect();
 
     let target_name = sheets[target].name.to_lowercase();
     for (index, sheet) in sheets.iter_mut().enumerate() {
@@ -258,6 +262,7 @@ pub(crate) fn shift(
             }
         }
         rewrite_rule_formulas(sheet, &mut moved);
+        rewrite_stored(sheet, &mut moved);
     }
     for defined in names.iter_mut() {
         let local = defined.sheet == Some(target);
@@ -342,9 +347,18 @@ pub(crate) fn break_references_to_sheet(
             }
         }
         rewrite_rule_formulas(sheet, &mut broken);
+        rewrite_stored(sheet, &mut broken);
     }
     for defined in workbook_names.iter_mut() {
         defined.expression = broken(&defined.expression);
+    }
+}
+
+/// The formulas a stored value was kept for, rewritten as the cells' own are, so the value
+/// stays with its formula.
+fn rewrite_stored(sheet: &mut Sheet, rewrite: &mut dyn FnMut(&Expr) -> Expr) {
+    for (expression, _) in sheet.stored.values_mut() {
+        *expression = rewrite(expression);
     }
 }
 
@@ -390,6 +404,7 @@ fn rewrite_named(
             }
         }
         rewrite_rule_formulas(sheet, &mut renamed);
+        rewrite_stored(sheet, &mut renamed);
     }
     for defined in workbook_names.iter_mut() {
         defined.expression = renamed(&defined.expression);
