@@ -8,7 +8,18 @@
 // and every client applies the same ones in the same order to the same file; `transformSheetOperation`
 // is what makes an operation made before another apply where its author meant it to.
 
-import type { CellRange, CellWindow, ChartPlacement, PivotTableDefinition, SheetRegion } from '../model.js';
+import type {
+  CellRange,
+  CellWindow,
+  ChartPlacement,
+  Condition,
+  ConditionalFormat,
+  DataValidation,
+  PivotTableDefinition,
+  ScaleValue,
+  SheetRegion,
+} from '../model.js';
+import { removeFormulaSheet, renameFormulaSheet, shiftFormula } from './formula-references.js';
 
 /** The calls of a `SheetDocument` that change it, and so travel between clients. */
 export const SHEET_MUTATORS = [
@@ -63,7 +74,22 @@ export interface SheetOperation {
   method: SheetMutator;
   args: unknown[];
   locale: 'it' | 'en';
+  /**
+   * The name the sheet of a row or column insertion or deletion, a rename or a removal had when
+   * the change was made, so the formulas of the others that name that sheet move with it.
+   */
+  sheetName?: string;
 }
+
+/** The calls whose sheet the formulas of others may name, and so carry its name. */
+export const SHEET_NAMED_MUTATORS: ReadonlySet<SheetMutator> = new Set<SheetMutator>([
+  'insertRows',
+  'deleteRows',
+  'insertColumns',
+  'deleteColumns',
+  'renameSheet',
+  'removeSheet',
+]);
 
 const MUTATOR_SET: ReadonlySet<string> = new Set(SHEET_MUTATORS);
 
@@ -77,6 +103,7 @@ type Axis = 'row' | 'column';
 /** A structural change: rows or columns inserted or deleted on a sheet. */
 interface Shift {
   sheet: number;
+  sheetName?: string;
   axis: Axis;
   at: number;
   count: number;
@@ -85,15 +112,16 @@ interface Shift {
 
 function structural(operation: SheetOperation): Shift | null {
   const [sheet, at, count = 1] = operation.args as [number, number, number | undefined];
+  const named = operation.sheetName === undefined ? {} : { sheetName: operation.sheetName };
   switch (operation.method) {
     case 'insertRows':
-      return { sheet, axis: 'row', at, count, inserted: true };
+      return { sheet, ...named, axis: 'row', at, count, inserted: true };
     case 'deleteRows':
-      return { sheet, axis: 'row', at, count, inserted: false };
+      return { sheet, ...named, axis: 'row', at, count, inserted: false };
     case 'insertColumns':
-      return { sheet, axis: 'column', at, count, inserted: true };
+      return { sheet, ...named, axis: 'column', at, count, inserted: true };
     case 'deleteColumns':
-      return { sheet, axis: 'column', at, count, inserted: false };
+      return { sheet, ...named, axis: 'column', at, count, inserted: false };
     default:
       return null;
   }
@@ -167,14 +195,42 @@ function shiftRegion(region: SheetRegion, shift: Shift): SheetRegion | null {
   };
 }
 
+function shiftRanges(ranges: CellRange[], shift: Shift): CellRange[] {
+  return ranges.flatMap((range) => {
+    const moved = shiftWindow(
+      { top: range.firstRow, left: range.firstColumn, bottom: range.lastRow, right: range.lastColumn },
+      shift,
+    );
+    return moved ? [{ firstRow: moved.top, firstColumn: moved.left, lastRow: moved.bottom, lastColumn: moved.right }] : [];
+  });
+}
+
+/** Conditional formats or validations moved past a shift; those left with no cells go. */
+function shiftRuleRanges<T extends { ranges: CellRange[] }>(items: T[], shift: Shift): T[] {
+  return items.flatMap((item) => {
+    const ranges = shiftRanges(item.ranges, shift);
+    return ranges.length === 0 ? [] : [{ ...item, ranges }];
+  });
+}
+
 function shiftPlacement(placement: ChartPlacement, shift: Shift): ChartPlacement {
   const point = shiftPoint(placement.row, placement.column, shift);
   if (point) return { ...placement, row: point[0], column: point[1] };
   return { ...placement, row: shift.axis === 'row' ? shift.at : placement.row, column: shift.axis === 'column' ? shift.at : placement.column };
 }
 
-/** The operation moved past rows or columns another one inserted or deleted on the same sheet. */
+/** The operation moved past rows or columns another one inserted or deleted: its cells, then its formulas. */
 function pastShift(operation: SheetOperation, shift: Shift): SheetOperation | null {
+  const moved = positionsPastShift(operation, shift);
+  if (!moved) return null;
+  const target = shift.sheetName === undefined ? {} : { sheetName: shift.sheetName };
+  return mapFormulas(moved, (formula, home) =>
+    shiftFormula(formula, shift, { ...target, ownSheet: home === shift.sheet }),
+  );
+}
+
+/** The cells, ranges, rows and columns an operation names, moved past a shift on the same sheet. */
+function positionsPastShift(operation: SheetOperation, shift: Shift): SheetOperation | null {
   const args = operation.args;
   const sheet = args[0] as number;
   const same = (index: number) => index === shift.sheet;
@@ -276,6 +332,11 @@ function pastShift(operation: SheetOperation, shift: Shift): SheetOperation | nu
       const moved = pivotPastShift(args[position] as PivotTableDefinition, sheet, shift);
       return moved ? replace(position, moved) : null;
     }
+    case 'setConditionalFormats':
+    case 'setValidations': {
+      if (!same(sheet)) return operation;
+      return replace(1, shiftRuleRanges(args[1] as { ranges: CellRange[] }[], shift));
+    }
     case 'insertRows':
     case 'deleteRows':
     case 'insertColumns':
@@ -317,8 +378,17 @@ function pivotPastShift(definition: PivotTableDefinition, sheet: number, shift: 
   return next;
 }
 
-/** The operation moved past the removal of a sheet: later sheets move up, the removed one's operations go. */
-function pastRemovedSheet(operation: SheetOperation, removed: number): SheetOperation | null {
+/**
+ * The operation moved past the removal of a sheet: later sheets move up, the removed one's
+ * operations go, and references to it in formulas become `#REF!`.
+ */
+function pastRemovedSheet(operation: SheetOperation, removed: number, name: string | undefined): SheetOperation | null {
+  const moved = indexesPastRemovedSheet(operation, removed);
+  if (!moved || name === undefined) return moved;
+  return mapFormulas(moved, (formula) => removeFormulaSheet(formula, name));
+}
+
+function indexesPastRemovedSheet(operation: SheetOperation, removed: number): SheetOperation | null {
   const move = (index: number): number | null => (index === removed ? null : index > removed ? index - 1 : index);
   const args = [...operation.args];
   switch (operation.method) {
@@ -388,9 +458,96 @@ function pastRemovedChart(operation: SheetOperation, sheet: number, index: numbe
   return { ...operation, args };
 }
 
+/** A cell's input with its references moved, when it is a formula; other text as it is. */
+function mapInput(input: string, map: (formula: string) => string): string {
+  return input.startsWith('=') ? map(input) : input;
+}
+
+function mapScaleValue(value: ScaleValue, map: (formula: string) => string): ScaleValue {
+  return value.kind === 'formula' ? { ...value, value: map(value.value) } : value;
+}
+
+function mapCondition(condition: Condition, map: (formula: string) => string): Condition {
+  switch (condition.kind) {
+    case 'cellIs':
+      return { ...condition, formulas: condition.formulas.map(map) };
+    case 'expression':
+      return { ...condition, formula: map(condition.formula) };
+    case 'colorScale':
+      return { ...condition, points: condition.points.map((point) => ({ ...point, value: mapScaleValue(point.value, map) })) };
+    case 'dataBar':
+      return { ...condition, min: mapScaleValue(condition.min, map), max: mapScaleValue(condition.max, map) };
+    case 'iconSet':
+      return { ...condition, thresholds: condition.thresholds.map((threshold) => mapScaleValue(threshold, map)) };
+    default:
+      return condition;
+  }
+}
+
+/**
+ * The operation with every formula it carries passed through `map`, given the sheet the formula
+ * belongs to: cell inputs, a region put back, the rules of conditional formats and validations,
+ * and a defined name. The same operation when none changes. Chart ranges are left as they are,
+ * as the workbook leaves those of a chart it holds.
+ */
+function mapFormulas(operation: SheetOperation, map: (formula: string, home: number) => string): SheetOperation {
+  const args = operation.args;
+  const sheet = args[0] as number;
+  const own = (formula: string) => map(formula, sheet);
+  let changed: unknown[] | null = null;
+  const replace = (index: number, value: unknown) => {
+    if (JSON.stringify(value) === JSON.stringify(args[index])) return;
+    changed ??= [...args];
+    changed[index] = value;
+  };
+  switch (operation.method) {
+    case 'setInput':
+      if (typeof args[3] === 'string') replace(3, mapInput(args[3], own));
+      break;
+    case 'setInputs':
+      replace(
+        1,
+        (args[1] as [number, number, string][]).map(([row, column, text]) => [row, column, mapInput(text, own)]),
+      );
+      break;
+    case 'restoreRegion': {
+      const region = args[1] as SheetRegion;
+      replace(1, { ...region, cells: region.cells.map((cell) => ({ ...cell, input: mapInput(cell.input, own) })) });
+      break;
+    }
+    case 'setConditionalFormats':
+      replace(
+        1,
+        (args[1] as ConditionalFormat[]).map((format) => ({
+          ...format,
+          rules: format.rules.map((rule) => ({ ...rule, condition: mapCondition(rule.condition, own) })),
+        })),
+      );
+      break;
+    case 'setValidations':
+      replace(
+        1,
+        (args[1] as DataValidation[]).map((validation) =>
+          validation.formulas ? { ...validation, formulas: validation.formulas.map(own) } : validation,
+        ),
+      );
+      break;
+    case 'setDefinedName': {
+      // A name without a sheet writes its unqualified references on the first sheet.
+      const home = typeof args[2] === 'number' ? args[2] : 0;
+      if (typeof args[1] === 'string') replace(1, map(args[1], home));
+      break;
+    }
+    default:
+      break;
+  }
+  return changed ? { ...operation, args: changed } : operation;
+}
+
 /**
  * An operation moved past one the room ordered before it: rows, columns, sheets and charts
- * shifted by insertions and removals, and null when what it changes no longer exists. Every
+ * shifted by insertions and removals, the references of its formulas moved and renamed the way
+ * the workbook moves those it holds, and null when what it changes no longer exists. Every
  * other pair is left as it is, the later one winning where both change the same cell.
  */
 export function transformSheetOperation(operation: SheetOperation, earlier: SheetOperation): SheetOperation | null {
@@ -398,7 +555,12 @@ export function transformSheetOperation(operation: SheetOperation, earlier: Shee
   if (shift) return pastShift(operation, shift);
   if (earlier.method === 'removeSheet') {
     if (operation.method === 'removeSheet' && operation.args[0] === earlier.args[0]) return null;
-    return pastRemovedSheet(operation, earlier.args[0] as number);
+    return pastRemovedSheet(operation, earlier.args[0] as number, earlier.sheetName);
+  }
+  if (earlier.method === 'renameSheet' && earlier.sheetName !== undefined) {
+    const from = earlier.sheetName;
+    const to = earlier.args[1] as string;
+    return mapFormulas(operation, (formula) => renameFormulaSheet(formula, from, to));
   }
   if (earlier.method === 'removeChart') {
     return pastRemovedChart(operation, earlier.args[0] as number, earlier.args[1] as number);

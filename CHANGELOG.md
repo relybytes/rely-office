@@ -12,6 +12,15 @@ below 1.0, a minor version may change the API.
   pages are drawn with them. A face compressed with MicroType Express is counted in
   `fontsLeftOut`.
 
+### Fixed
+
+- Editing a spreadsheet together, a formula written while another client inserted or deleted rows
+  or columns, renamed or removed a sheet now points where the workbook would have moved it:
+  references shift, ranges grow and shrink, what was deleted becomes `#REF!`, and a renamed sheet
+  is written with its new name. The same holds for the rules of conditional formats and
+  validations, whose ranges also move, and for defined names (`shiftFormula`,
+  `renameFormulaSheet`, `removeFormulaSheet`, and `sheetName` on a `SheetOperation`).
+
 ## 0.9.0
 
 ### Added

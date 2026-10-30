@@ -10,6 +10,7 @@ import { encodeJsonFrame, CollabFrame, sameStateVector, fromBase64, toBase64 } f
 import { CollabRoom, claimedStateVector, type CollabRoomState } from '../src/collab/room.js';
 import { collabPeers, type CollabSession } from '../src/collab/session.js';
 import { SheetCollaboration } from '../src/collab/sheet-collab.js';
+import { removeFormulaSheet, renameFormulaSheet, shiftFormula, type ReferenceShift } from '../src/collab/formula-references.js';
 import { shiftIndex, shiftSpan, transformSheetOperation, type SheetOperation } from '../src/collab/sheet-operations.js';
 import { SharedPresentation, applyKeyChanges, matchKeys } from '../src/collab/slides-collab.js';
 import type { EditorDocument } from '../src/document/editor-document.js';
@@ -197,6 +198,210 @@ describe('sheet operations', () => {
   });
 });
 
+describe('the references of a formula', () => {
+  const rows = (at: number, count: number, inserted: boolean): ReferenceShift => ({ axis: 'row', at, count, inserted });
+  const columns = (at: number, count: number, inserted: boolean): ReferenceShift => ({ axis: 'column', at, count, inserted });
+  const own = { ownSheet: true, sheetName: 'Uno' };
+
+  it('moves cells, ranges and whole columns past inserted rows and columns', () => {
+    expect(shiftFormula('=A1+A3+$A$5+A$3+SUM(A2:A4)+SUM(A3:A4)+SUM(A:A)', rows(2, 1, true), own)).toBe(
+      '=A1+A4+$A$6+A$4+SUM(A2:A5)+SUM(A4:A5)+SUM(A:A)',
+    );
+    expect(shiftFormula('=B2+$A1+SUM(A:C)+SUM(C:D)', columns(1, 2, true), own)).toBe('=D2+$A1+SUM(A:E)+SUM(E:F)');
+    expect(shiftFormula('=SUM(2:4)+SUM(5:5)', rows(3, 1, true), own)).toBe('=SUM(2:5)+SUM(6:6)');
+    expect(shiftFormula('=a3+$b$4', rows(0, 1, true), own)).toBe('=A4+$B$5');
+  });
+
+  it('shrinks ranges and writes #REF! for what deleted rows took', () => {
+    expect(shiftFormula('=A1+A3+$A$5+A$3+SUM(A1:A10)+SUM(A2:A4)+SUM(A3:A4)', rows(2, 2, false), own)).toBe(
+      '=A1+#REF!+$A$3+#REF!+SUM(A1:A8)+SUM(A2:A2)+SUM(#REF!)',
+    );
+    expect(shiftFormula('=Uno!C1+Uno!B1:B3', columns(1, 2, false), own)).toBe('=#REF!+#REF!');
+    expect(shiftFormula('=SUM(A4:A2)', rows(1, 1, false), own)).toBe('=SUM(A3:A2)');
+  });
+
+  it('writes #REF! for a reference pushed past the last row or column', () => {
+    expect(shiftFormula('=A1048576+XFD1+A1', rows(0, 1, true), own)).toBe('=#REF!+XFD2+A2');
+    expect(shiftFormula('=XFD1', columns(0, 1, true), own)).toBe('=#REF!');
+  });
+
+  it('follows the sheet a reference names', () => {
+    const elsewhere = { ownSheet: false, sheetName: 'Due' };
+    expect(shiftFormula("=A3+Due!A3+'Due'!$B$3:$B$9+due!A3+Tre!A3", rows(0, 1, true), elsewhere)).toBe(
+      '=A3+Due!A4+Due!$B$4:$B$10+due!A4+Tre!A3',
+    );
+    expect(shiftFormula("='My Sheet'!A3+A3", rows(0, 1, true), { ownSheet: true, sheetName: 'My Sheet' })).toBe(
+      "='My Sheet'!A4+A4",
+    );
+    expect(shiftFormula('=Due!A3+A3', rows(0, 1, true), { ownSheet: true })).toBe('=Due!A3+A4');
+  });
+
+  it('leaves texts, functions, names, numbers, tables and errors alone', () => {
+    const untouched = [
+      '=LEN("A3")&"B2:B9"',
+      '=LOG10(4)+ATAN2(1;2)+LOG10 (5)',
+      '=Tax+TAX2023x+_A3',
+      '=Uno!Total+Uno!TotalA3',
+      '=SOMMA(2,5;1E5;1e-3)+CONTA.VALORI(Tab[A3])',
+      '=Tab[[#Headers],[A3]]',
+      '=#REF!+#N/A+#DIV/0!',
+      '=[Book2]Uno!A3',
+      "=IF(A1=\"x\";'Tre'!Nome;1)",
+    ];
+    for (const formula of untouched) {
+      const moved = shiftFormula(formula, rows(0, 1, true), { ownSheet: false, sheetName: 'Uno' });
+      expect(moved).toBe(formula);
+    }
+    expect(shiftFormula('=SOMMA(A1:A3;2,5)+CONTA.VALORI(B2:B4)', rows(1, 1, true), own)).toBe(
+      '=SOMMA(A1:A4;2,5)+CONTA.VALORI(B3:B5)',
+    );
+    expect(shiftFormula('=SUM( A2 : A4 )', rows(0, 1, true), own)).toBe('=SUM( A3:A5 )');
+  });
+
+  it('renames and removes the sheet references name', () => {
+    expect(renameFormulaSheet("=Due!A3+'Due'!B2:B9+A3+Duet!A1", 'Due', "It's new")).toBe(
+      "='It''s new'!A3+'It''s new'!B2:B9+A3+Duet!A1",
+    );
+    expect(renameFormulaSheet("='My Sheet'!B3", 'my sheet', 'Plain')).toBe('=Plain!B3');
+    expect(renameFormulaSheet('=Old!A1', 'Old', 'A1')).toBe("='A1'!A1");
+    expect(renameFormulaSheet('=Old!A1', 'Old', '2024')).toBe("='2024'!A1");
+    expect(removeFormulaSheet("=Due!A3+'Due'!B2:B9+A3+\"Due!A3\"", 'Due')).toBe('=#REF!+#REF!+A3+"Due!A3"');
+  });
+});
+
+describe('formulas carried past structure, against the workbook', () => {
+  type Workbook = Awaited<ReturnType<typeof createSheet>>;
+
+  async function workbook(locale: 'it' | 'en'): Promise<Workbook> {
+    const sheet = await createSheet({ locale });
+    sheet.renameSheet(0, 'Uno');
+    sheet.addSheet('Due');
+    sheet.addSheet('My Sheet');
+    return sheet;
+  }
+
+  const named = (operation: SheetOperation, sheet: Workbook): SheetOperation =>
+    ['insertRows', 'deleteRows', 'insertColumns', 'deleteColumns', 'renameSheet', 'removeSheet'].includes(operation.method)
+      ? { ...operation, sheetName: sheet.sheets()[operation.args[0] as number]!.name }
+      : operation;
+
+  function apply(sheet: Workbook, operation: SheetOperation): void {
+    (sheet as unknown as Record<string, (...args: unknown[]) => unknown>)[operation.method]!(...operation.args);
+  }
+
+  /**
+   * What the workbook does to an edit made first and then moved by a structural change, against
+   * the edit moved by the transform and made after it: the two must leave the same workbook.
+   */
+  async function bothWays(
+    locale: 'it' | 'en',
+    edit: SheetOperation,
+    change: SheetOperation,
+    read: (sheet: Workbook) => unknown,
+  ): Promise<[unknown, unknown]> {
+    const first = await workbook(locale);
+    apply(first, edit);
+    apply(first, named(change, first));
+    const second = await workbook(locale);
+    const sent = named(change, second);
+    apply(second, sent);
+    const moved = transformSheetOperation(edit, sent);
+    if (moved) apply(second, moved);
+    const result: [unknown, unknown] = [read(first), read(second)];
+    first.free();
+    second.free();
+    return result;
+  }
+
+  const changes = (sheet: number): SheetOperation[] => [
+    { method: 'insertRows', args: [sheet, 0, 1], locale: 'en' },
+    { method: 'insertRows', args: [sheet, 2, 3], locale: 'en' },
+    { method: 'insertRows', args: [sheet, 9, 1], locale: 'en' },
+    { method: 'deleteRows', args: [sheet, 2, 1], locale: 'en' },
+    { method: 'deleteRows', args: [sheet, 1, 3], locale: 'en' },
+    { method: 'deleteRows', args: [sheet, 0, 12], locale: 'en' },
+    { method: 'insertColumns', args: [sheet, 0, 2], locale: 'en' },
+    { method: 'insertColumns', args: [sheet, 1, 1], locale: 'en' },
+    { method: 'deleteColumns', args: [sheet, 1, 1], locale: 'en' },
+    { method: 'deleteColumns', args: [sheet, 0, 3], locale: 'en' },
+  ];
+
+  const formulas: Record<'it' | 'en', string[]> = {
+    en: [
+      '=A1+A3+$A$5+A$3+$B4',
+      '=SUM(A2:A4)+SUM(A3:A4)+SUM($A$3:$B$4)+SUM(B:B)+SUM(A:C)',
+      "=Uno!A3+Due!B3+'My Sheet'!C3:C9+Due!$A$1:$C$12",
+      '=LOG10(4)+ATAN2(1,2)+LEN("A3")+IF(A1>0,B2,C3)',
+      '=SUM(A1:J10)+INDEX(B2:D20,2,2)',
+    ],
+    it: [
+      '=SOMMA(A1:A3;2,5)+CONTA.VALORI(B2:B4)+SE(A1>0;B2;C3)',
+      "=MEDIA(Uno!A2:A9;'My Sheet'!$B$3)+Due!C2",
+    ],
+  };
+
+  it('moves cell formulas as the workbook moves those it holds', async () => {
+    for (const locale of ['en', 'it'] as const) {
+      for (const formula of formulas[locale]) {
+        for (const home of [0, 1]) {
+          for (const change of [...changes(0), { method: 'renameSheet', args: [1, "It's new"], locale: 'en' } as SheetOperation, { method: 'removeSheet', args: [2], locale: 'en' } as SheetOperation]) {
+            const edit: SheetOperation = { method: 'setInput', args: [home, 20, 12, formula], locale };
+            const read = (sheet: Workbook) =>
+              sheet
+                .cells(home, { top: 0, left: 0, bottom: 40, right: 20 })
+                .filter((cell) => cell.input !== '')
+                .map((cell) => [cell.row, cell.column, cell.input]);
+            const [made, moved] = await bothWays(locale, edit, change, read);
+            expect(moved, `${formula} on ${home} past ${JSON.stringify(change)}`).toEqual(made);
+          }
+        }
+      }
+    }
+  });
+
+  it('moves the ranges and formulas of rules and validations, and defined names', async () => {
+    const formats = [
+      {
+        ranges: [{ firstRow: 2, firstColumn: 0, lastRow: 4, lastColumn: 0 }, { firstRow: 1, firstColumn: 2, lastRow: 1, lastColumn: 2 }],
+        rules: [
+          { condition: { kind: 'expression', formula: 'A3>B$1+Due!C3' } },
+          { condition: { kind: 'cellIs', operator: 'greater', formulas: ['$B$2'] } },
+        ],
+      },
+    ];
+    const validations = [
+      { ranges: [{ firstRow: 2, firstColumn: 1, lastRow: 3, lastColumn: 1 }], kind: 'custom', formulas: ['B3>$A$1'] },
+      { ranges: [{ firstRow: 5, firstColumn: 3, lastRow: 6, lastColumn: 3 }], kind: 'list', formulas: ['$A$1:$A$4'] },
+    ];
+    for (const change of [...changes(0), ...changes(1).slice(0, 2), { method: 'renameSheet', args: [1, 'Nuovo foglio'], locale: 'en' } as SheetOperation, { method: 'removeSheet', args: [1], locale: 'en' } as SheetOperation]) {
+      const label = JSON.stringify(change);
+      const [madeRules, movedRules] = await bothWays(
+        'en',
+        { method: 'setConditionalFormats', args: [0, formats], locale: 'en' },
+        change,
+        (sheet) => sheet.conditionalFormats(0),
+      );
+      expect(movedRules, label).toEqual(madeRules);
+      const [madeValidations, movedValidations] = await bothWays(
+        'en',
+        { method: 'setValidations', args: [0, validations], locale: 'en' },
+        change,
+        (sheet) => sheet.validations(0),
+      );
+      expect(movedValidations, label).toEqual(madeValidations);
+      for (const scope of [undefined, 0, 1]) {
+        const [madeNames, movedNames] = await bothWays(
+          'en',
+          { method: 'setDefinedName', args: ['Totale', '=$A$3:$B$9', scope], locale: 'en' },
+          change,
+          (sheet) => sheet.definedNames(),
+        );
+        expect(movedNames, `${label} scope ${scope}`).toEqual(madeNames);
+      }
+    }
+  });
+});
+
 describe('a shared workbook', () => {
   function sheetRoom(): CollabRoomState<SheetOperation> {
     return { kind: 'spreadsheet', baseVersionId: 'v1', baseSequence: -1, sequence: -1, seeded: true, dirty: false, operations: [] };
@@ -247,10 +452,54 @@ describe('a shared workbook', () => {
     await network.flush();
     expect(contents(a.sheet)).toEqual(contents(b.sheet));
     expect(contents(b.sheet)).toEqual([
-      [2, 0, '=A6'],
+      [2, 0, '=A8'],
       [5, 0, 'below'],
       [5, 1, 'beside'],
     ]);
+  });
+
+  it('moves the references of a formula written while another inserted rows', async () => {
+    const network = new CollabNetwork<SheetOperation>(sheetRoom(), { transform: transformSheetOperation });
+    const a = await client(network);
+    const b = await client(network, bea);
+    a.grid.setInputs(0, [
+      [0, 0, '1'],
+      [1, 0, '2'],
+      [2, 0, '3'],
+    ]);
+    await network.flush();
+    a.grid.insertRows(0, 1, 2);
+    b.grid.setInput(0, 5, 1, '=SOMMA(A1:A3)+A3*$A$2');
+    b.grid.setInput(0, 6, 1, '=A1');
+    await network.flush();
+    expect(contents(a.sheet)).toEqual(contents(b.sheet));
+    const engine = await createSheet({ locale: 'it' });
+    engine.setInputs(0, [
+      [0, 0, '1'],
+      [1, 0, '2'],
+      [2, 0, '3'],
+      [5, 1, '=SOMMA(A1:A3)+A3*$A$2'],
+      [6, 1, '=A1'],
+    ]);
+    engine.insertRows(0, 1, 2);
+    expect(contents(b.sheet)).toEqual(contents(engine));
+    expect(contents(b.sheet)).toContainEqual([7, 1, '=SOMMA(A1:A5)+A5*$A$4']);
+    expect(a.sheet.cells(0, { top: 7, left: 1, bottom: 7, right: 1 })[0]!.display).toEqual(b.sheet.cells(0, { top: 7, left: 1, bottom: 7, right: 1 })[0]!.display);
+    engine.free();
+  });
+
+  it('writes #REF! for a reference to rows another deleted, and follows a renamed sheet', async () => {
+    const network = new CollabNetwork<SheetOperation>(sheetRoom(), { transform: transformSheetOperation });
+    const a = await client(network);
+    const b = await client(network, bea);
+    a.grid.addSheet('Dati');
+    await network.flush();
+    a.grid.deleteRows(0, 2, 1);
+    a.grid.renameSheet(1, 'Dati 2026');
+    b.grid.setInput(0, 0, 3, '=A3+A4+Dati!B2');
+    await network.flush();
+    expect(contents(a.sheet)).toEqual(contents(b.sheet));
+    expect(contents(a.sheet)).toEqual([[0, 3, "=#REF!+A3+'Dati 2026'!B2"]]);
   });
 
   it('undoes only its own edits', async () => {

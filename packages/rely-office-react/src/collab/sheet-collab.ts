@@ -8,6 +8,7 @@ import type { CellWindow, PivotTableDefinition, SheetDocument } from '../model.j
 import type { SequencedOperation, SubmittedOperation } from './protocol.js';
 import type { CollabSession } from './session.js';
 import {
+  SHEET_NAMED_MUTATORS,
   isSheetMutator,
   transformSheetOperation,
   type SheetMutator,
@@ -283,9 +284,15 @@ export class SheetCollaboration {
    * Apply an operation made against `base` and send it: moved past what the others did since,
    * as the room will move it, and kept until the room gives it its turn.
    */
-  private submit(operation: SheetOperation, base: number): unknown {
-    const moved = base < this.confirmed ? this.movedSince(operation, base, this.session.sessionKey) : operation;
-    if (!moved) return undefined;
+  private submit(made: SheetOperation, base: number): unknown {
+    const found = base < this.confirmed ? this.movedSince(made, base, this.session.sessionKey) : made;
+    if (!found) return undefined;
+    // The others' formulas name the sheet, so a change to its rows, its name or its place carries it.
+    const sheetName = SHEET_NAMED_MUTATORS.has(found.method)
+      ? this.sheet.sheets()[found.args[0] as number]?.name
+      : undefined;
+    const operation = sheetName === undefined ? made : { ...made, sheetName };
+    const moved = sheetName === undefined ? found : { ...found, sheetName };
     if (this.pending.length === 0) this.sheet.checkpoint();
     let result: unknown;
     try {

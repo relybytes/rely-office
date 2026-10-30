@@ -11,7 +11,15 @@ export * from './protocol.js';
 export { CollabRoom, claimedStateVector, type CollabPeer, type CollabRoomEvents, type CollabRoomOptions, type CollabRoomState, type OperationTransform } from './room.js';
 export { CollabSession, collabPeers, type CollabSessionOptions, type CollabSocket, type CollabStatus, type CollabUser } from './session.js';
 export {
+  removeFormulaSheet,
+  renameFormulaSheet,
+  shiftFormula,
+  type ReferenceShift,
+  type ReferenceTarget,
+} from './formula-references.js';
+export {
   SHEET_MUTATORS,
+  SHEET_NAMED_MUTATORS,
   isSheetMutator,
   shiftIndex,
   shiftSpan,
