@@ -62,11 +62,14 @@ pub(super) fn data_pilot_tables_xml(workbook: &Workbook) -> String {
                     .unwrap_or_default()
             };
             let on_rows = table.values.len() > 1 && table.values_axis == PivotValuesAxis::Rows;
-            let data_row = on_rows.then(|| {
+            let place = |fields: usize| {
                 table
                     .values_position
-                    .map_or(table.rows.len(), |position| position.min(table.rows.len()))
-            });
+                    .map_or(fields, |position| position.min(fields))
+            };
+            let data_row = on_rows.then(|| place(table.rows.len()));
+            let data_column =
+                (table.values.len() > 1 && !on_rows).then(|| place(table.columns.len()));
             for (fields, orientation) in [
                 (&table.rows, "row"),
                 (&table.columns, "column"),
@@ -75,6 +78,9 @@ pub(super) fn data_pilot_tables_xml(workbook: &Workbook) -> String {
                 for (place, field) in fields.iter().enumerate() {
                     if orientation == "row" && data_row == Some(place) {
                         xml.push_str(DATA_LAYOUT_ROW);
+                    }
+                    if orientation == "column" && data_column == Some(place) {
+                        xml.push_str(DATA_LAYOUT_COLUMN);
                     }
                     let mut attributes = String::new();
                     if orientation == "page" {
@@ -139,6 +145,9 @@ pub(super) fn data_pilot_tables_xml(workbook: &Workbook) -> String {
                 if orientation == "row" && data_row == Some(fields.len()) {
                     xml.push_str(DATA_LAYOUT_ROW);
                 }
+                if orientation == "column" && data_column == Some(fields.len()) {
+                    xml.push_str(DATA_LAYOUT_COLUMN);
+                }
             }
             for value in &table.values {
                 let _ = write!(
@@ -147,9 +156,6 @@ pub(super) fn data_pilot_tables_xml(workbook: &Workbook) -> String {
                     escape(&name_of(value.field)),
                     value.function.odf()
                 );
-            }
-            if table.values.len() > 1 && !on_rows {
-                xml.push_str(r#"<table:data-pilot-field table:source-field-name="" table:is-data-layout-field="true" table:orientation="column"/>"#);
             }
             xml.push_str("</table:data-pilot-table>");
         }
@@ -163,6 +169,9 @@ pub(super) fn data_pilot_tables_xml(workbook: &Workbook) -> String {
 
 /// `Σ Values` as a row field of a data pilot table.
 const DATA_LAYOUT_ROW: &str = r#"<table:data-pilot-field table:source-field-name="" table:is-data-layout-field="true" table:orientation="row"/>"#;
+
+/// `Σ Values` as a column field of a data pilot table.
+const DATA_LAYOUT_COLUMN: &str = r#"<table:data-pilot-field table:source-field-name="" table:is-data-layout-field="true" table:orientation="column"/>"#;
 
 /// A range as `OpenDocument` writes it: `'Vendite'.A1:'Vendite'.C10`.
 fn range_address(sheet: &str, range: CellRange) -> String {

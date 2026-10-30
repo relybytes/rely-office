@@ -15,8 +15,9 @@ use rely_office_core::{Limits, OfficeError, SheetDrawing};
 use rely_office_sheet::{
     Border, BorderPlacement, CellLook, CellRange, CellRef, ChartPlacement, ChartSpec, ChartType,
     ConditionalFormat, DataValidation, EditError, EditHistory, Input, Locale, MAX_COLUMNS,
-    MAX_ROWS, NumberFormat, Region, SortKey, StylePatch, Value, Workbook, default_separator,
-    function_names, print_formula_in, read_spreadsheet, write_csv, write_ods, write_xlsx,
+    MAX_ROWS, NumberFormat, Region, SheetSnapshot, SortKey, StylePatch, Value, Workbook,
+    default_separator, function_names, print_formula_in, read_spreadsheet, write_csv, write_ods,
+    write_xlsx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -73,6 +74,30 @@ impl From<OfficeError> for Failure {
 
 fn throw(failure: &Failure) -> JsError {
     JsError::new(&failure.error_message())
+}
+
+fn locale_name(locale: Locale) -> &'static str {
+    match locale {
+        Locale::Italian => "it",
+        Locale::English => "en",
+    }
+}
+
+/// A sheet to put back, as a page keeps it: the xlsx of the sheet alone in base64.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SnapshotJson {
+    xlsx: String,
+    #[serde(default)]
+    pivot_locales: Vec<String>,
+    #[serde(default)]
+    styles: Vec<rely_office_core::CellStyle>,
+    #[serde(default)]
+    cell_styles: Vec<(u32, u32, u32)>,
+    #[serde(default)]
+    conditional_formats: Vec<ConditionalFormat>,
+    #[serde(default)]
+    validations: Vec<DataValidation>,
 }
 
 fn parse_locale(locale: &str) -> Result<Locale, Failure> {
@@ -390,6 +415,56 @@ impl SheetDocument {
         let region: Region = serde_json::from_str(region_json)
             .map_err(|error| Failure::new("INVALID_INPUT", error.to_string()))?;
         self.workbook.restore_region(sheet, &region)?;
+        Ok(())
+    }
+
+    /// A whole sheet as JSON, to give back to `restore_sheet_json`.
+    ///
+    /// # Errors
+    ///
+    /// The workbook's error for the sheet, `OUT_OF_BOUNDS` past the snapshot's limit.
+    pub fn sheet_snapshot_summary(&self, sheet: usize) -> Result<String, Failure> {
+        let snapshot = self.workbook.sheet_snapshot(sheet)?;
+        serde_json::to_string(&SnapshotJson {
+            xlsx: rely_office_core::encode_base64(&snapshot.xlsx),
+            pivot_locales: snapshot
+                .pivot_locales
+                .iter()
+                .map(|locale| locale_name(*locale).to_owned())
+                .collect(),
+            styles: snapshot.styles,
+            cell_styles: snapshot.cell_styles,
+            conditional_formats: snapshot.conditional_formats,
+            validations: snapshot.validations,
+        })
+        .map_err(|error| Failure::new("INTERNAL", error.to_string()))
+    }
+
+    /// Put back at `index` a sheet `sheet_snapshot_summary` gave.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_INPUT` for JSON that is not a snapshot, else the workbook's error.
+    pub fn restore_sheet_json(&mut self, index: usize, snapshot_json: &str) -> Result<(), Failure> {
+        let read: SnapshotJson = serde_json::from_str(snapshot_json).map_err(invalid_input)?;
+        let xlsx = rely_office_core::decode_base64(&read.xlsx)
+            .ok_or_else(|| Failure::new("INVALID_INPUT", "the sheet is not base64"))?;
+        let pivot_locales = read
+            .pivot_locales
+            .iter()
+            .map(|name| parse_locale(name))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.workbook.restore_sheet(
+            index,
+            &SheetSnapshot {
+                xlsx,
+                pivot_locales,
+                styles: read.styles,
+                cell_styles: read.cell_styles,
+                conditional_formats: read.conditional_formats,
+                validations: read.validations,
+            },
+        )?;
         Ok(())
     }
 
@@ -1512,11 +1587,7 @@ impl SheetDocument {
     #[wasm_bindgen]
     #[must_use]
     pub fn locale(&self) -> String {
-        match self.locale {
-            Locale::Italian => "it",
-            Locale::English => "en",
-        }
-        .to_owned()
+        locale_name(self.locale).to_owned()
     }
 
     /// Type and show in another locale from now on: a collaborative editor applies another
@@ -1560,6 +1631,32 @@ impl SheetDocument {
         self.recorded(|document| {
             document
                 .restore_region_json(sheet, region_json)
+                .map_err(|failure| throw(&failure))
+        })
+    }
+
+    /// A whole sheet as it is, as JSON, for `restoreSheet`: what undoing its removal needs.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = sheetSnapshotJson)]
+    pub fn sheet_snapshot_json(&self, sheet: usize) -> Result<String, JsError> {
+        self.sheet_snapshot_summary(sheet)
+            .map_err(|failure| throw(&failure))
+    }
+
+    /// Put back at `index` a sheet `sheetSnapshotJson` gave; the sheets from `index` on move one
+    /// place right.
+    ///
+    /// # Errors
+    ///
+    /// An `Error` whose message starts with the failure code.
+    #[wasm_bindgen(js_name = restoreSheet)]
+    pub fn restore_sheet(&mut self, index: usize, snapshot_json: &str) -> Result<(), JsError> {
+        self.recorded(|document| {
+            document
+                .restore_sheet_json(index, snapshot_json)
                 .map_err(|failure| throw(&failure))
         })
     }

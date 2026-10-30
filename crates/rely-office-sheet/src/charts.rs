@@ -216,6 +216,14 @@ fn anchor_xml(placement: ChartPlacement, frame: &str) -> String {
     )
 }
 
+/// Whether a chart formula is a range whose cells were deleted, `#REF!`.
+fn is_broken_range(formula: &str) -> bool {
+    formula
+        .trim()
+        .trim_start_matches('=')
+        .eq_ignore_ascii_case("#REF!")
+}
+
 fn chart_frame(id: u32, relationship: &str) -> String {
     format!(
         concat!(
@@ -403,12 +411,15 @@ impl Workbook {
     }
 
     fn check_chart(&self, spec: &ChartSpec) -> Result<(), EditError> {
+        // A range of the workbook, or one whose cells are gone: a chart keeps `#REF!` for what
+        // was deleted under it and draws nothing there, as the workbook keeps it for its own.
         let reads_a_range = |formula: &str| {
-            chart_formula_range(formula).is_some_and(|(sheet, range)| {
-                self.sheet_index(&sheet).is_some()
-                    && range.last_row < MAX_ROWS
-                    && range.last_column < MAX_COLUMNS
-            })
+            is_broken_range(formula)
+                || chart_formula_range(formula).is_some_and(|(sheet, range)| {
+                    self.sheet_index(&sheet).is_some()
+                        && range.last_row < MAX_ROWS
+                        && range.last_column < MAX_COLUMNS
+                })
         };
         let valid = !spec.series.is_empty()
             && spec.series.len() <= MAX_SERIES

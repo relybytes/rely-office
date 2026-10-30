@@ -1286,3 +1286,159 @@ fn the_values_axes_have_stable_names() {
     }
     assert_eq!(PivotValuesAxis::parse("diagonal"), None);
 }
+
+#[test]
+fn the_values_along_the_columns_sit_where_their_position_puts_them() {
+    let mut workbook = sales();
+    let mut table = by_region("F1");
+    table.layout = PivotLayout::Compact;
+    table.locale = Locale::Italian;
+    table.columns = vec![PivotField {
+        field: 2,
+        hidden: Vec::new(),
+    }];
+    table.values.push(PivotValue {
+        field: 3,
+        function: PivotFunction::Count,
+        name: Some("Righe".to_owned()),
+    });
+    table.values_position = Some(0);
+    workbook.add_pivot_table(0, table).unwrap();
+    let e = || Value::Empty;
+    let expected = vec![
+        vec![e(), text("Etichette di colonna"), e(), e(), e(), e(), e()],
+        vec![
+            e(),
+            text("Somma di Importo"),
+            e(),
+            text("Righe"),
+            e(),
+            text("Totale Somma di Importo"),
+            text("Totale Righe"),
+        ],
+        vec![
+            text("Etichette di riga"),
+            text("Feb"),
+            text("Gen"),
+            text("Feb"),
+            text("Gen"),
+            e(),
+            e(),
+        ],
+        vec![text("Centro"), e(), e(), e(), e(), e(), e()],
+        vec![
+            text("Nord"),
+            number(3.0),
+            number(30.0),
+            number(1.0),
+            number(2.0),
+            number(33.0),
+            number(3.0),
+        ],
+    ];
+    assert_eq!(
+        grid(&workbook, "F1:L5"),
+        expected,
+        "the values outside the months"
+    );
+
+    for (bytes, name) in [
+        (crate::xlsx::write_xlsx(&workbook).unwrap(), "values.xlsx"),
+        (crate::ods::write_ods(&workbook).unwrap(), "values.ods"),
+    ] {
+        let reopened = crate::xlsx::read_spreadsheet(
+            &bytes,
+            Some(name),
+            &rely_office_core::Limits::default(),
+            Locale::Italian,
+        )
+        .unwrap();
+        let table = &reopened.sheets()[0].pivot_tables()[0];
+        assert_eq!(table.values_position, Some(0), "{name}");
+        assert_eq!(grid(&reopened, "F1:L5"), expected, "{name}");
+    }
+}
+
+#[test]
+fn the_values_between_two_column_fields_give_each_group_a_total_per_value() {
+    let mut workbook = sales();
+    let mut table = by_region("F1");
+    table.layout = PivotLayout::Compact;
+    table.columns = vec![
+        PivotField {
+            field: 2,
+            hidden: Vec::new(),
+        },
+        PivotField {
+            field: 1,
+            hidden: Vec::new(),
+        },
+    ];
+    table.values.push(PivotValue {
+        field: 3,
+        function: PivotFunction::Count,
+        name: Some("Count".to_owned()),
+    });
+    table.values_position = Some(1);
+    table.column_grand_totals = false;
+    workbook.add_pivot_table(0, table).unwrap();
+    let e = || Value::Empty;
+    // Month, then the values, then the product: a month's subtotals after its blocks, one per
+    // value, labelled on the month's level.
+    let row = |cells: [&str; 13]| -> Vec<Value> {
+        cells
+            .iter()
+            .map(|cell| if cell.is_empty() { e() } else { text(cell) })
+            .collect()
+    };
+    assert_eq!(
+        grid(&workbook, "F2:R4"),
+        vec![
+            row([
+                "",
+                "Feb",
+                "",
+                "",
+                "",
+                "Feb Sum of Importo",
+                "Feb Count",
+                "Gen",
+                "",
+                "",
+                "",
+                "Gen Sum of Importo",
+                "Gen Count",
+            ]),
+            row([
+                "",
+                "Sum of Importo",
+                "",
+                "Count",
+                "",
+                "",
+                "",
+                "Sum of Importo",
+                "",
+                "Count",
+                "",
+                "",
+                "",
+            ]),
+            row([
+                "Row Labels",
+                "Mele",
+                "Pere",
+                "Mele",
+                "Pere",
+                "",
+                "",
+                "Mele",
+                "Pere",
+                "Mele",
+                "Pere",
+                "",
+                "",
+            ]),
+        ]
+    );
+}

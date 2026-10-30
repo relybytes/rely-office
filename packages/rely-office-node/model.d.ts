@@ -898,7 +898,7 @@ export interface PivotTableDefinition {
   repeatLabels?: boolean;
   /** The axis several values lay along, Excel's `Σ Values`: `columns` (the default) or `rows`. */
   valuesAxis?: PivotValuesAxis;
-  /** Where `Σ Values` sits among the fields of its axis, from 0 for the outermost; after the last when left out. On the columns the values are drawn innermost. */
+  /** Where `Σ Values` sits among the fields of its axis, from 0 for the outermost; after the last when left out. */
   valuesPosition?: number | null;
 }
 
@@ -1290,6 +1290,16 @@ export interface SheetDocument {
   region(sheet: number, window: CellWindow): SheetRegion;
   /** Put back a rectangle as `region` gave it: everything in it goes, then what it held returns. */
   restoreRegion(sheet: number, region: SheetRegion): void;
+  /**
+   * A whole sheet as it is, for `restoreSheet`: what undoing its removal needs. An opaque text,
+   * the sheet alone written as an xlsx in base64 with the looks of its cells, 16 MB at most.
+   */
+  sheetSnapshot(sheet: number): string;
+  /**
+   * Put a sheet back at `index` as `sheetSnapshot` took it; the sheets from `index` on move one
+   * place right. Parts of its drawing another sheet took the names of since get new names.
+   */
+  restoreSheet(index: number, snapshot: string): void;
   /** Keep the workbook as it is for `rollback`: a collaborative editor keeps what the room agreed. */
   checkpoint(): void;
   /** Return to the last checkpoint, which is used up; false when there is none. */

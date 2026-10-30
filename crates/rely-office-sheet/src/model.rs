@@ -832,7 +832,11 @@ impl Workbook {
         self.revision = NEXT_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    fn check_new_name(&self, name: &str, except: Option<usize>) -> Result<(), EditError> {
+    pub(crate) fn check_new_name(
+        &self,
+        name: &str,
+        except: Option<usize>,
+    ) -> Result<(), EditError> {
         let length = name.chars().count();
         if length == 0
             || length > 31

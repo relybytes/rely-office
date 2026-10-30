@@ -243,6 +243,14 @@ pub(crate) fn shift(
             return Err(EditError::OutOfBounds);
         }
     }
+    // The sizes along the axis before they move, for the anchors that keep their size.
+    let sizes_before = if sheets[target].drawing.is_none() {
+        BTreeMap::new()
+    } else if shift.rows() {
+        sheets[target].row_heights.clone()
+    } else {
+        sheets[target].column_widths.clone()
+    };
     let moved: BTreeMap<CellRef, _> = std::mem::take(&mut sheets[target].cells)
         .into_iter()
         .filter_map(|(cell, content)| shift.cell(cell).map(|cell| (cell, content)))
@@ -258,7 +266,7 @@ pub(crate) fn shift(
         .filter_map(|(cell, stored)| shift.cell(cell).map(|cell| (cell, stored)))
         .collect();
     move_pivot_tables(sheets, target, shift);
-    move_drawing_anchors(&mut sheets[target], shift);
+    move_drawing_anchors(&mut sheets[target], shift, &sizes_before);
 
     let target_name = sheets[target].name.to_lowercase();
     for (index, sheet) in sheets.iter_mut().enumerate() {

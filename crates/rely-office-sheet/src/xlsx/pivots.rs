@@ -389,14 +389,9 @@ pub(super) fn table_definition_xml(
     ] {
         let mut indexes: Vec<i64> = fields.iter().map(|field| i64::from(field.field)).collect();
         if data {
-            // The values sit on the column axis innermost, wherever the file put them.
-            let at = if on_rows {
-                table
-                    .values_position
-                    .map_or(indexes.len(), |position| position.min(indexes.len()))
-            } else {
-                indexes.len()
-            };
+            let at = table
+                .values_position
+                .map_or(indexes.len(), |position| position.min(indexes.len()));
             indexes.insert(at, -2);
         }
         if indexes.is_empty() {
