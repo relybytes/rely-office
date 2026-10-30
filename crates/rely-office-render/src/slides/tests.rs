@@ -75,7 +75,7 @@ fn presentation(slides: Vec<Slide>, media: Vec<Media>) -> Presentation {
         height_emu: 6_858_000,
         slides,
         media,
-        truncated: false,
+        ..Presentation::default()
     }
 }
 

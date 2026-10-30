@@ -58,6 +58,10 @@ const docx = editor.current!.saveDocx(); // Uint8Array
 const odt = saveDocumentAs(editor.current!.getDocument(), 'odt'); // or 'docx', 'markdown', 'html'
 ```
 
+The macros of a docm ride along unrun and `saveDocx` writes them back, so the bytes are a docm
+again (`report.macros` says the file held some); the same holds for a pptm in the slide editor
+and an xlsm in the grid, whose `sheet.macros()` answers `kept`, `dropped` or `none`.
+
 Beside the text, a panel edits what a document holds around it: the comments with their replies
 and their resolved state, the notes in the order the text refers to them, the headers and footers,
 a section's own included. Each is a small editor with the same schema as the page, so a header

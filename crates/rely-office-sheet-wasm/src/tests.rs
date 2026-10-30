@@ -585,3 +585,9 @@ fn makes_lists_changes_and_removes_charts_as_json() {
     document.workbook.remove_chart(0, 0).unwrap();
     assert_eq!(document.charts_summary(0).unwrap(), "[]");
 }
+
+#[test]
+fn a_workbook_says_what_became_of_its_macros() {
+    let document = SheetDocument::create("it").unwrap();
+    assert_eq!(document.macros(), "none");
+}

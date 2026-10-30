@@ -89,6 +89,7 @@ export function editorToDocumentTree(document: EditorDocument): DocumentTree {
     ...(sections === undefined ? {} : { sections }),
     ...(aside.comments === undefined ? {} : { comments: aside.comments }),
     ...(aside.objects === undefined ? {} : { objects: aside.objects }),
+    ...(aside.macroProject === undefined ? {} : { macroProject: aside.macroProject }),
   };
   return compactMedia(compactComments(compactNotes(tree)));
 }

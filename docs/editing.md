@@ -173,6 +173,29 @@ numbers in list styles. The speaker notes, hidden slides, transitions (type, dir
 how they advance) and animations (an `anim:par` tree with LibreOffice's presets, triggers and
 delays) are written too, and read back to the same slides.
 
+## Macros
+
+A docm, an xlsm and a pptm are read like a docx, an xlsx and a pptx, and their macros are kept
+as they are and never run: `read_macro_project` takes the VBA project, `vbaProject.bin`, with every
+part it relates to (the data Word keeps beside it, a signature) into a `MacroProject`, which the
+document tree (`DocumentTree::macro_project`), the slides (`Presentation::macro_project`) and the
+workbook (`Workbook::macro_project`) carry. `write_docx`, `write_pptx` and `write_xlsx` put it back
+with `insert_macro_project`: the main part relates to it again and takes the macro-enabled content
+type, so the file saved is a docm, a pptm or an xlsm again. An xlsm also keeps the `codeName` of
+the workbook and of each sheet, which its macros name them by.
+
+`holds_macros` tells whether a file holds macros in any format: the VBA project of an OOXML
+package, the `Macros` storage of a doc, `_VBA_PROJECT_CUR` of an xls, the VBA record of a ppt's
+document. Nothing writes the binary formats, so their macros are left out of what they are
+converted to; the import report says so (`ImportReport::macros`, `Presentation::holds_macros`,
+`Workbook::holds_macros`) for a host to tell the user. The OpenDocument writers leave macros out:
+ODF has its own Basic, not VBA.
+
+From JavaScript the project is an opaque `Uint8Array`: `readDocumentTree` and `readPresentation`
+give it as `macroProject`, which `writeDocx` and `writePptx` write back, `report.macros` and
+`holdsMacros` say the file held macros, and a sheet's `macros()` answers `kept`, `dropped` or
+`none`.
+
 ## The spreadsheet model
 
 `rely-office-sheet` holds a `Workbook` of up to 256 sheets and 2,000,000 cells with content, on

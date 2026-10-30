@@ -1058,6 +1058,18 @@ impl SheetDocument {
         self.workbook.delimiter().map(String::from)
     }
 
+    /// The macros of the file read, never run: `kept` for an xlsm, which `save` writes back as
+    /// an xlsm, `dropped` for an xls, `none` otherwise.
+    #[must_use]
+    pub fn macros(&self) -> String {
+        match (self.workbook.holds_macros(), self.workbook.macro_project()) {
+            (_, Some(_)) => "kept",
+            (true, None) => "dropped",
+            (false, None) => "none",
+        }
+        .to_owned()
+    }
+
     /// `[{ name, rows, columns, columnWidths: [[column, width]] }]`.
     ///
     /// # Errors

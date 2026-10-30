@@ -238,7 +238,11 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
     for (name, bytes) in &comment_parts {
         add(&format!("word/{name}"), bytes);
     }
-    zip_members(&members)
+    let package = zip_members(&members)?;
+    match &tree.macro_project {
+        Some(project) => crate::insert_macro_project(&package, project),
+        None => Ok(package),
+    }
 }
 
 /// The references of a section to its header and footer parts, and the relationships of the

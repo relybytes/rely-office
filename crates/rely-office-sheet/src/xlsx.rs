@@ -17,9 +17,10 @@ use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use rely_office_core::{
     Border, BorderStyle, CarriedPart, CellBorders, CellFont, CellRange, CellStyle, DocumentFormat,
     HorizontalAlignment, Limits, OfficeError, SheetLayout, VerticalAlignment, WorkbookName,
-    delimited_separator, detect_format, excel_formula_from_odf, read_ods_sheet_layouts,
-    read_workbook, read_workbook_names, read_xlsx_drawing_parts, read_xlsx_layouts,
-    read_xlsx_pivot_parts, read_xlsx_theme_part,
+    delimited_separator, detect_format, excel_formula_from_odf, holds_macros, insert_macro_project,
+    read_macro_project, read_ods_sheet_layouts, read_workbook, read_workbook_names,
+    read_xlsx_code_names, read_xlsx_drawing_parts, read_xlsx_layouts, read_xlsx_pivot_parts,
+    read_xlsx_theme_part,
 };
 use zip::write::SimpleFileOptions;
 
@@ -125,7 +126,20 @@ pub fn read_spreadsheet(
     }
     if format == DocumentFormat::Xlsx {
         workbook.theme = read_xlsx_theme_part(bytes, limits);
+        workbook.macro_project = read_macro_project(bytes, limits);
+        if workbook.macro_project.is_some() {
+            let mut code_names = read_xlsx_code_names(bytes, limits);
+            workbook.code_name = code_names.workbook;
+            for sheet in &mut workbook.sheets {
+                sheet.code_name = code_names.sheets.remove(&sheet.name);
+            }
+        }
     }
+    workbook.holds_macros = match format {
+        DocumentFormat::Xlsx => workbook.macro_project.is_some(),
+        DocumentFormat::Xls => holds_macros(bytes, limits),
+        _ => false,
+    };
     Ok(workbook)
 }
 
@@ -515,6 +529,15 @@ fn delimited_sheet(rows: &[Vec<String>], locale: Locale) -> Result<Sheet, Office
 /// [`OfficeError::DamagedContainer`] when the zip cannot be written, which only a failing
 /// allocator causes.
 pub fn write_xlsx(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
+    let package = write_package(workbook)?;
+    match &workbook.macro_project {
+        Some(project) => insert_macro_project(&package, project),
+        None => Ok(package),
+    }
+}
+
+/// The package of a workbook, its macros aside.
+fn write_package(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
     let differentials = Differentials::new(workbook);
     let styles = Styles::new(workbook, &differentials);
 
@@ -902,6 +925,9 @@ fn sheet_part(
         r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" "#,
         r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#
     ));
+    if let Some(code_name) = &sheet.code_name {
+        let _ = write!(xml, r#"<sheetPr codeName="{}"/>"#, escape(code_name));
+    }
     xml.push_str(&sheet_views_xml(sheet));
     if !sheet.column_widths.is_empty() {
         xml.push_str("<cols>");
@@ -1258,8 +1284,12 @@ fn workbook_part(workbook: &Workbook) -> String {
     let mut xml = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" "#,
-        r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>"#
+        r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#
     ));
+    if let Some(code_name) = &workbook.code_name {
+        let _ = write!(xml, r#"<workbookPr codeName="{}"/>"#, escape(code_name));
+    }
+    xml.push_str("<sheets>");
     for (index, sheet) in workbook.sheets.iter().enumerate() {
         let _ = write!(
             xml,

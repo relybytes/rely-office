@@ -13,6 +13,13 @@ below 1.0, a minor version may change the API.
   `startCommentThread`, `replyToComment`, `setCommentResolved` and `removeCommentReply` from
   JavaScript, and replies, resolving and reopening in the grid's comments panel. An ods writes a
   thread as one annotation with its replies.
+- Macros kept and never run: a docm, an xlsm and a pptm are read with their VBA project
+  (`read_macro_project`, `MacroProject`) and written back as a docm, an xlsm and a pptm
+  (`insert_macro_project`), an xlsm with its code names; `holds_macros` tells a doc, an xls or a
+  ppt whose macros a conversion leaves out, reported as `ImportReport::macros`,
+  `Presentation::holds_macros` and `Workbook::holds_macros`. From JavaScript, `macroProject` on
+  the tree and the slides, and `macros()` on a sheet. A docm and a pptm are now detected as Word
+  and PowerPoint files.
 
 ## 0.8.0
 

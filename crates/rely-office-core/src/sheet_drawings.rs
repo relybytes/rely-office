@@ -130,7 +130,7 @@ impl ContentTypes {
         types
     }
 
-    fn of(&self, name: &str) -> String {
+    pub(crate) fn of(&self, name: &str) -> String {
         let lower = name.to_ascii_lowercase();
         self.overrides
             .get(&lower)
@@ -145,7 +145,7 @@ impl ContentTypes {
 }
 
 /// The relationships part of a part, `xl/drawings/_rels/drawing1.xml.rels`.
-fn relationships_part(name: &str) -> String {
+pub(crate) fn relationships_part(name: &str) -> String {
     match name.rsplit_once('/') {
         Some((folder, file)) => format!("{folder}/_rels/{file}.rels"),
         None => format!("_rels/{name}.rels"),
@@ -218,7 +218,7 @@ pub(crate) fn carried_pivots(
 
 /// A part with every part its relationships lead to, and those relationships; `None` past the
 /// carrying limits or when a part cannot be read.
-fn carried_tree(
+pub(crate) fn carried_tree(
     package: &mut ZipPackage<'_>,
     start: &str,
     limits: &Limits,

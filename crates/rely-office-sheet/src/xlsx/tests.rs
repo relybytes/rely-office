@@ -572,3 +572,36 @@ fn guids_are_braced_version_four() {
     assert!("89AB".contains(&id[20..21]));
     assert_ne!(id, guid("thread:0:1:2"));
 }
+
+#[test]
+fn an_xlsm_keeps_its_macros_and_code_names() {
+    let mut book = sample();
+    book.macro_project = Some(rely_office_core::MacroProject {
+        project_part: "xl/vbaProject.bin".to_owned(),
+        parts: vec![rely_office_core::CarriedPart {
+            name: "xl/vbaProject.bin".to_owned(),
+            content_type: "application/vnd.ms-office.vbaProject".to_owned(),
+            bytes: b"vba".to_vec(),
+        }],
+    });
+    book.code_name = Some("ThisWorkbook".to_owned());
+    book.sheets[0].code_name = Some("Foglio1".to_owned());
+    let bytes = write_xlsx(&book).unwrap();
+    assert!(member(&bytes, "[Content_Types].xml").contains("ms-excel.sheet.macroEnabled.main+xml"));
+    assert!(member(&bytes, "xl/workbook.xml").contains(r#"<workbookPr codeName="ThisWorkbook"/>"#));
+    assert!(
+        member(&bytes, "xl/worksheets/sheet1.xml").contains(r#"<sheetPr codeName="Foglio1"/>"#)
+    );
+    let read =
+        read_spreadsheet(&bytes, Some("a.xlsm"), &Limits::default(), Locale::English).unwrap();
+    assert!(read.holds_macros());
+    assert_eq!(read.macro_project(), book.macro_project.as_ref());
+    assert_eq!(read.code_name.as_deref(), Some("ThisWorkbook"));
+    assert_eq!(read.sheets[0].code_name.as_deref(), Some("Foglio1"));
+    // Without macros nothing of them is written.
+    let plain = write_xlsx(&sample()).unwrap();
+    assert!(!member(&plain, "[Content_Types].xml").contains("macroEnabled"));
+    let read =
+        read_spreadsheet(&plain, Some("a.xlsx"), &Limits::default(), Locale::English).unwrap();
+    assert!(!read.holds_macros() && read.macro_project().is_none());
+}

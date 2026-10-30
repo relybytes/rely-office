@@ -204,6 +204,11 @@ Italian `=SOMMA(A1;0,5)`, and it reads back the same through `setInput`. `undo()
 go back and forth over the edits, up to 100 of them, with `canUndo()` and `canRedo()` for the
 buttons.
 
+`macros()` says what became of the macros of the file read: `kept` for an xlsm, which `save`
+writes back as an xlsm, `dropped` for an xls, `none` otherwise. They are never run; a docm and a
+pptm keep theirs the same way, as the `macroProject` that `readDocumentTree` and
+`readPresentation` give and `writeDocx` and `writePptx` write back.
+
 `definedNames()`, `setDefinedName(name, formula, sheet?)` and `removeDefinedName(name, sheet?)`
 manage the names formulas read, a `LAMBDA` among them; `comments(sheet)` and
 `setComment(sheet, row, column, text, author?)` the comments of the cells, and

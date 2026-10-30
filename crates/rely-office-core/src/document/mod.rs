@@ -79,6 +79,9 @@ pub struct DocumentTree {
     pub comments: Vec<Comment>,
     /// The objects embedded in the text, each shown by the image of its picture.
     pub objects: Vec<EmbeddedObject>,
+    /// The macros of a docm, carried as they are and written back by [`write_docx`], which then
+    /// writes a docm; never run.
+    pub macro_project: Option<crate::MacroProject>,
 }
 
 /// A comment on a stretch of the document, or a reply to one.
@@ -566,6 +569,10 @@ pub struct ImportReport {
     pub tracked_deletions: usize,
     /// Runs formatted as hidden text, left out.
     pub hidden_runs: usize,
+    /// The file holds macros: kept in [`DocumentTree::macro_project`] for a docm, left out of a
+    /// doc, never run.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub macros: bool,
 }
 
 /// Read a docx as a tree of blocks for an editor, with its images and an import report.
@@ -666,10 +673,6 @@ pub(crate) fn append_tree_text(blocks: &[Block], buffer: &mut crate::text::TextB
 /// # Errors
 ///
 /// As [`read_document_tree`].
-#[expect(
-    clippy::too_many_lines,
-    reason = "the parts of a docx are read in the order the tree needs them"
-)]
 pub fn read_document_tree_with(
     bytes: &[u8],
     limits: &Limits,
@@ -686,12 +689,29 @@ pub fn read_document_tree_with(
         return crate::opendocument::read_odt_tree(bytes, limits, *options);
     }
     if format == DocumentFormat::Doc {
-        return crate::doc::read_doc_tree(bytes, limits, *options);
+        let mut tree = crate::doc::read_doc_tree(bytes, limits, *options)?;
+        tree.report.macros = crate::holds_macros(bytes, limits);
+        return Ok(tree);
     }
     if format != DocumentFormat::Docx {
         return Err(OfficeError::UnsupportedFormat(format));
     }
+    let mut tree = read_docx_tree(bytes, limits, *options)?;
+    tree.macro_project = crate::read_macro_project(bytes, limits);
+    tree.report.macros = tree.macro_project.is_some();
+    Ok(tree)
+}
 
+/// A docx read as a tree, its macros aside.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the parts of a docx are read in the order the tree needs them"
+)]
+fn read_docx_tree(
+    bytes: &[u8],
+    limits: &Limits,
+    options: TreeOptions,
+) -> Result<DocumentTree, OfficeError> {
     let mut package = open_package(bytes)?;
     let main_part = main_part_path(&mut package, limits, MAIN_PART)?;
     let xml = read_text_member(&mut package, &main_part, limits)?.ok_or_else(|| {
@@ -838,6 +858,7 @@ pub fn read_document_tree_with(
         sections,
         comments,
         objects,
+        macro_project: None,
     })
 }
 

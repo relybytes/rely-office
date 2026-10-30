@@ -125,7 +125,11 @@ pub fn write_pptx(presentation: &Presentation) -> Result<Vec<u8>, OfficeError> {
         &presentation_relationships,
     );
     parts.append(&mut members);
-    zip_members(&parts)
+    let package = zip_members(&parts)?;
+    match &presentation.macro_project {
+        Some(project) => crate::insert_macro_project(&package, project),
+        None => Ok(package),
+    }
 }
 
 /// The parts every written pptx has besides its slides and media.

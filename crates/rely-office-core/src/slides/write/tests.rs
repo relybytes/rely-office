@@ -237,6 +237,7 @@ fn presentation() -> Presentation {
             },
         ],
         truncated: false,
+        ..Presentation::default()
     }
 }
 
@@ -389,6 +390,7 @@ fn writes_one_blank_slide_for_an_empty_presentation_within_the_sizes_powerpoint_
         slides: Vec::new(),
         media: Vec::new(),
         truncated: false,
+        ..Presentation::default()
     };
     let written = write_pptx(&empty).unwrap();
     let presentation_xml = member(&written, "ppt/presentation.xml");
@@ -463,6 +465,7 @@ fn writes_gradients_and_pictures_that_read_back_as_they_were() {
             },
         ],
         truncated: false,
+        ..Presentation::default()
     };
     let written = write_pptx(&deck).unwrap();
     let read = read_presentation(&written, &Limits::default()).unwrap();
@@ -551,6 +554,7 @@ fn writes_notes_ids_and_the_show_and_reads_them_back() {
         ],
         media: Vec::new(),
         truncated: false,
+        ..Presentation::default()
     };
     let written = write_pptx(&presentation).unwrap();
     let read = read_presentation(&written, &Limits::default()).unwrap();

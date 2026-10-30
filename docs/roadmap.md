@@ -138,6 +138,7 @@ autosave, and where an inserted image goes, all through the components' props.
 | Step | Content | Status |
 | --- | --- | --- |
 | 9.1 | The threaded comments of Excel 365: replies, dates and resolved state, read, edited and written in xlsx, one annotation in ods | done |
+| 9.2 | Macros kept and never run: the VBA project of a docm, an xlsm and a pptm written back, the macros of a doc, an xls and a ppt reported when a conversion leaves them out | done |
 
 ## Next
 

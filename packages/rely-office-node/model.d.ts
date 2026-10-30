@@ -304,6 +304,11 @@ export interface ImportReport {
   /** Tracked deletions, accepted (their text is gone). */
   trackedDeletions: number;
   hiddenRuns: number;
+  /**
+   * The file holds macros: kept in `DocumentTree.macroProject` for a docm and written back by
+   * `writeDocx`, left out of a doc; never run.
+   */
+  macros?: boolean;
 }
 
 export interface Note {
@@ -357,6 +362,8 @@ export interface DocumentTree {
   comments?: Comment[];
   /** The objects embedded in the text, when there are any. */
   objects?: EmbeddedObject[];
+  /** The macros of a docm, an opaque value `writeDocx` writes back as they were. */
+  macroProject?: Uint8Array;
 }
 
 /**
@@ -422,6 +429,8 @@ export interface DocxInput {
   comments?: Comment[];
   /** The objects the images of the blocks show, as `readDocumentTree` gives them. */
   objects?: EmbeddedObject[];
+  /** The macros `readDocumentTree` gave; the file written is then a docm. */
+  macroProject?: Uint8Array;
 }
 
 /** A point of a path, in EMU from the top-left corner of its frame. */
@@ -596,6 +605,10 @@ export interface Presentation {
   media: MediaItem[];
   /** The file held more than the limits let through. */
   truncated: boolean;
+  /** The file holds macros: kept in `macroProject` for a pptm, left out of a ppt; never run. */
+  holdsMacros?: boolean;
+  /** The macros of a pptm, an opaque value `writePptx` writes back as they were. */
+  macroProject?: Uint8Array;
 }
 
 /** Slides to write as a pptx; `media` holds the bytes, or the items `readPresentation` gave. */
@@ -604,6 +617,8 @@ export interface PptxInput {
   heightEmu: number;
   slides: Slide[];
   media?: (DocumentBytes | MediaItem)[];
+  /** The macros `readPresentation` gave; the file written is then a pptm. */
+  macroProject?: Uint8Array;
 }
 
 /** How a cell's number is shown. */
@@ -1065,6 +1080,11 @@ export interface SheetDocument {
   saveCsv(sheet: number, separator?: string): Uint8Array;
   /** The separator of the csv or tsv the document was read from; null for any other file. */
   delimiter(): string | null;
+  /**
+   * The macros of the file read, never run: `kept` for an xlsm, whose `save` writes them back
+   * as an xlsm, `dropped` for an xls, `none` otherwise.
+   */
+  macros(): 'none' | 'kept' | 'dropped';
   /**
    * Put back the workbook as it was before the last edit; false when there is none. Every call
    * that changes the workbook is a step, up to 100 steps and 2,000,000 cells held together.

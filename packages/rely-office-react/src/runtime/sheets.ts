@@ -364,6 +364,10 @@ class BrowserSheetDocument implements SheetDocument {
     return this.document.delimiter() ?? null;
   }
 
+  macros(): 'none' | 'kept' | 'dropped' {
+    return this.document.macros() as 'none' | 'kept' | 'dropped';
+  }
+
   undo(): boolean {
     return this.document.undo();
   }

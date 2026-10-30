@@ -11,7 +11,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use rely_office_core::{
     CarriedDrawing, CarriedPart, CarriedPivot, CellRange, CellStyle, ChartValue, ConditionalFormat,
-    DataValidation, Limits, SheetDrawing, chart_formula_range, redraw_carried_drawing,
+    DataValidation, Limits, MacroProject, SheetDrawing, chart_formula_range,
+    redraw_carried_drawing,
 };
 
 use crate::arrange::AutoFilter;
@@ -95,6 +96,8 @@ pub struct Sheet {
     /// The pictures and charts of the file, drawn as it was opened, for an editor to show.
     pub(crate) pictures: Vec<SheetDrawing>,
     pub(crate) comments: BTreeMap<CellRef, Comment>,
+    /// The name the macros of an xlsm know the sheet by, its `codeName`.
+    pub(crate) code_name: Option<String>,
 }
 
 impl Sheet {
@@ -280,6 +283,12 @@ pub struct Workbook {
     /// The separator of the delimited file the workbook was read from.
     pub(crate) delimiter: Option<char>,
     pub(crate) names: Vec<DefinedName>,
+    /// The macros of an xlsm, written back as they are and never run.
+    pub(crate) macro_project: Option<MacroProject>,
+    /// Whether the file read held macros, kept or, from an xls, left out.
+    pub(crate) holds_macros: bool,
+    /// The name the macros know the workbook by, its `codeName`.
+    pub(crate) code_name: Option<String>,
 }
 
 impl Default for Workbook {
@@ -324,6 +333,9 @@ impl Workbook {
             theme: None,
             delimiter: None,
             names: Vec::new(),
+            macro_project: None,
+            holds_macros: false,
+            code_name: None,
         };
         workbook.recalculate();
         workbook
@@ -332,6 +344,20 @@ impl Workbook {
     #[must_use]
     pub fn sheets(&self) -> &[Sheet] {
         &self.sheets
+    }
+
+    /// Whether the file the workbook was read from held macros. They are never run: an xlsm
+    /// keeps them in [`Workbook::macro_project`] and [`crate::write_xlsx`] writes them back,
+    /// which makes the saved file an xlsm; an xls loses them, as nothing writes its format.
+    #[must_use]
+    pub fn holds_macros(&self) -> bool {
+        self.holds_macros
+    }
+
+    /// The macros an xlsm carried, as they are.
+    #[must_use]
+    pub fn macro_project(&self) -> Option<&MacroProject> {
+        self.macro_project.as_ref()
     }
 
     /// The index of a sheet by name, case-insensitive as formulas name sheets.

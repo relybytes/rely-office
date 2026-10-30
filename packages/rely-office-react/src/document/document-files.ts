@@ -51,6 +51,7 @@ export function saveDocument(document: EditorDocument): Uint8Array {
     ...(tree.sections === undefined ? {} : { sections: tree.sections }),
     ...(tree.comments === undefined ? {} : { comments: tree.comments }),
     ...(tree.objects === undefined ? {} : { objects: tree.objects }),
+    ...(tree.macroProject === undefined ? {} : { macroProject: tree.macroProject }),
   });
 }
 
