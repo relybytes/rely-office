@@ -1,4 +1,4 @@
-# Licences a dependency may carry: each is compatible with distributing rely-office under MPL-2.0.
+# Licences a dependency may carry: each is compatible with distributing rely-office under Apache-2.0.
 [licenses]
 allow = [
   "MIT",

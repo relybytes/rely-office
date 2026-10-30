@@ -11,7 +11,7 @@ The Drive of the Rely Platform previewed office files through a LibreOffice cont
 or not at all, and imported Word files into its editor with a JavaScript converter. A library in
 Rust, called in process from the Drive service, reads untrusted uploads with a memory-safe parser
 and gives one implementation of text extraction, sheet tables, the import tree, and later previews
-and thumbnails. It is published under MPL-2.0 so improvements to it stay public.
+and thumbnails. It is published under Apache-2.0, with an attribution every distribution must carry.
 
 The user's decision of 2026-10-25 is that the Drive depends on rely-office alone for office
 files: no LibreOffice container for previews, no JavaScript docx library for export, no third-party
@@ -170,8 +170,10 @@ registries hold the same versions.
 
 ## Licence and attribution
 
-MPL-2.0: file-level copyleft. Software of any licence may use the library; a change to one of its
-files is published under MPL-2.0. Every source file carries the MPL header and the RelyBytes
-copyright line; `NOTICE` holds the attribution and is shipped in the npm package with the licence.
-Contributions come under the Developer Certificate of Origin, without a CLA, so the licence cannot
-be changed behind contributors' backs.
+Apache-2.0. Software of any licence, open or closed, free or paid, may use, change and ship the
+library; whoever distributes it keeps `LICENSE` and `NOTICE` with it and shows the attribution of
+`NOTICE` where the work shows its third-party notices (section 4(d)). Every source file starts with
+the RelyBytes copyright line and `SPDX-License-Identifier: Apache-2.0`, except
+`geometry/enhanced_presets.rs`, generated from a LibreOffice table and kept under MPL-2.0. Both npm
+packages ship `LICENSE` and `NOTICE`. Contributions come under the Developer Certificate of
+Origin, without a CLA. Releases before 0.10.2 were published under MPL-2.0.

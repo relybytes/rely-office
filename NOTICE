@@ -1,28 +1,40 @@
 rely-office
-Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
+Copyright 2026 RelyBytes S.r.l. (https://relybytes.com)
 
-This product is developed and maintained by RelyBytes S.r.l. as part of the
-Rely Platform (https://relyplatform.app) and is licensed under the Mozilla
-Public License, v. 2.0 (see LICENSE).
+This product includes software developed by RelyBytes S.r.l.
+(https://relybytes.com) as part of the Rely Platform (https://relyplatform.app):
+rely-office, https://github.com/relybytes/rely-office
 
-Redistributions of the source code must keep the copyright and licence notices
-at the top of every source file. A modified version of a file of rely-office
-must be made available under the same licence, as the Mozilla Public License
-requires.
+Licensed under the Apache License, Version 2.0 (see LICENSE).
 
-Third-party components used as dependencies keep their own licences, all of
-them compatible with the Mozilla Public License 2.0: MIT, Apache-2.0, BSD-3-Clause,
-Zlib, Unicode-3.0, Unlicense, MPL-2.0, 0BSD and Apache-2.0 WITH LLVM-exception.
-The list a release ships with is checked by `cargo deny check licenses` (see
-deny.toml). Rendering is done by Typst (https://typst.app, Apache-2.0).
+Attribution is required. Anyone who distributes rely-office, or a work that
+includes or derives from it, in source or compiled form, open source or
+closed, free or paid, must keep this NOTICE file with it and show the
+attribution above where the work shows its third-party notices: its
+documentation, its "About" or credits screen, or its licences page, as
+section 4(d) of the Apache License 2.0 requires. For example:
 
-The fonts in fonts/, shipped with both npm packages (in dist/fonts of the React one), are licensed under the SIL
-Open Font License 1.1; their licence texts sit next to them:
-- Carlito: Copyright 2013 The Carlito Project Authors (OFL-Carlito.txt)
-- Caladea: Copyright 2012 The Caladea Project Authors (OFL-Caladea.txt)
-- Liberation Sans, Serif and Mono: Copyright (c) 2010 Google Corporation,
-  Copyright (c) 2012 Red Hat, Inc. (OFL-Liberation.txt)
+    Office files powered by rely-office, by RelyBytes S.r.l.
+    https://github.com/relybytes/rely-office
 
-DejaVu Math TeX Gyre, the font equations are set in, is (c) Bitstream with the DejaVu
-changes and math extensions in the public domain, under the licence of Bitstream Vera
-Fonts (LICENSE-DejaVu.txt).
+Third-party material inside rely-office:
+
+- crates/rely-office-core/src/geometry/enhanced_presets.rs is generated from
+  the oox-drawingml-cs-presets table of LibreOffice and stays under the
+  Mozilla Public License 2.0 (https://mozilla.org/MPL/2.0/), as its header says.
+
+- The fonts in fonts/, shipped with both npm packages (in dist/fonts of the
+  React one), are licensed under the SIL Open Font License 1.1; their licence
+  texts sit next to them:
+  - Carlito: Copyright 2013 The Carlito Project Authors (OFL-Carlito.txt)
+  - Caladea: Copyright 2012 The Caladea Project Authors (OFL-Caladea.txt)
+  - Liberation Sans, Serif and Mono: Copyright (c) 2010 Google Corporation,
+    Copyright (c) 2012 Red Hat, Inc. (OFL-Liberation.txt)
+  DejaVu Math TeX Gyre, the font equations are set in, is (c) Bitstream with
+  the DejaVu changes and math extensions in the public domain, under the
+  licence of Bitstream Vera Fonts (LICENSE-DejaVu.txt).
+
+Dependencies keep their own licences: MIT, Apache-2.0, BSD-3-Clause, Zlib,
+Unicode-3.0, Unlicense, MPL-2.0, 0BSD and Apache-2.0 WITH LLVM-exception, as
+`cargo deny check licenses` checks for every release (see deny.toml).
+Rendering is done by Typst (https://typst.app, Apache-2.0).

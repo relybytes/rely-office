@@ -320,13 +320,13 @@ docx, a doc and an odt give the same tree; `writeDocx` writes it back as a docx.
 }
 ```
 
-## Free to use
+## Free to use, with credit
 
-Use it in any project, open source or commercial, free or paid, at no cost. All we ask is a
-mention: "Office files powered by [rely-office](https://github.com/relybytes/rely-office), by
-[RelyBytes S.r.l.](https://relybytes.com)".
+Use it in any project, open source or commercial, free or paid, at no cost. Whoever ships it, or a
+product built on it, shows "Office files powered by [rely-office](https://github.com/relybytes/rely-office),
+by [RelyBytes S.r.l.](https://relybytes.com)" where the product lists the software it uses, and keeps
+`NOTICE` with it.
 
 ## Licence
 
-Mozilla Public License 2.0, see `LICENSE` and `NOTICE` in the package. Built and maintained by
-[RelyBytes S.r.l.](https://relybytes.com).
+[Apache License 2.0](LICENSE), with the attribution of [NOTICE](NOTICE) required (section 4(d)).
