@@ -629,6 +629,14 @@ class SheetDocument {
     return JSON.parse(call(() => this.document.regionJson(sheet, top, left, bottom, right)));
   }
 
+  sheetSnapshot(sheet) {
+    return call(() => this.document.sheetSnapshotJson(sheet));
+  }
+
+  restoreSheet(index, snapshot) {
+    call(() => this.document.restoreSheet(index, snapshot));
+  }
+
   restoreRegion(sheet, region) {
     call(() => this.document.restoreRegion(sheet, JSON.stringify(region)));
   }

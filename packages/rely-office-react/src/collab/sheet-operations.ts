@@ -66,6 +66,7 @@ export const SHEET_MUTATORS = [
   'refreshPivotTable',
   'refreshPivotTables',
   'removePivotTable',
+  'restoreSheet',
 ] as const;
 
 export type SheetMutator = (typeof SHEET_MUTATORS)[number];
@@ -90,6 +91,11 @@ export interface SheetOperation {
    * already count: the others' changes are moved around them before this one moves past them.
    */
   follows?: RestoredBand;
+  /**
+   * The place of the sheet an undo puts back just before this operation, which its sheet indexes
+   * already count: the others' changes, made without that sheet, are moved past it first.
+   */
+  restoredSheet?: number;
 }
 
 /** Rows or columns an undo inserts again, as the operations after it in the same undo see them. */
@@ -432,6 +438,12 @@ function indexesPastRemovedSheet(operation: SheetOperation, removed: number): Sh
     case 'addSheet':
     case 'refreshPivotTables':
       return operation;
+    case 'restoreSheet': {
+      // A place between sheets: one removed before it moves it left, one at it leaves it.
+      const at = args[0] as number;
+      args[0] = at > removed ? at - 1 : at;
+      return { ...operation, args };
+    }
     case 'addPivotTable':
     case 'setPivotTable': {
       const position = operation.method === 'addPivotTable' ? 1 : 2;
@@ -706,9 +718,75 @@ function pastGuarded(operation: SheetOperation, earlier: SheetOperation): SheetO
  * other pair is left as it is, the later one winning where both change the same cell.
  */
 export function transformSheetOperation(operation: SheetOperation, earlier: SheetOperation): SheetOperation | null {
+  if (operation.restoredSheet !== undefined) return pastAroundSheet(operation, earlier, operation.restoredSheet);
   if (operation.follows) return pastAroundBand(operation, earlier, operation.follows);
   const moved = movedPast(operation, earlier);
   return moved?.guarded ? pastGuarded(moved, earlier) : moved;
+}
+
+/**
+ * An operation that follows a sheet its undo puts back at `at`, moved past another client's
+ * change made without that sheet: the change is first moved to where it falls once the sheet is
+ * back, then the operation moves past it, and the sheet's place moves as the change moves it.
+ */
+function pastAroundSheet(operation: SheetOperation, earlier: SheetOperation, at: number): SheetOperation | null {
+  const lifted =
+    earlier.method === 'restoreSheet'
+      ? (earlier.args[0] as number) > at
+        ? { ...earlier, args: [(earlier.args[0] as number) + 1, ...earlier.args.slice(1)] }
+        : earlier
+      : (indexesPastInsertedSheet(earlier, at) ?? earlier);
+  const { restoredSheet: _at, ...plain } = operation;
+  const passed = plain.follows ? pastAroundBand(plain, lifted, plain.follows) : movedPast(plain, lifted);
+  const moved = passed?.guarded && !plain.follows ? pastGuarded(passed, lifted) : passed;
+  if (!moved) return null;
+  let place = at;
+  if (earlier.method === 'removeSheet' && (earlier.args[0] as number) < at) place -= 1;
+  if (earlier.method === 'restoreSheet' && (earlier.args[0] as number) <= at) place += 1;
+  return { ...moved, restoredSheet: place };
+}
+
+/**
+ * The operation moved past a sheet put back at `inserted`: the sheets from there on are one
+ * place further right, a sheet put back at the same place included.
+ */
+function indexesPastInsertedSheet(operation: SheetOperation, inserted: number): SheetOperation | null {
+  const move = (index: number): number => (index >= inserted ? index + 1 : index);
+  const args = [...operation.args];
+  let moved: SheetOperation;
+  switch (operation.method) {
+    case 'addSheet':
+    case 'refreshPivotTables':
+      moved = operation;
+      break;
+    case 'addPivotTable':
+    case 'setPivotTable': {
+      const position = operation.method === 'addPivotTable' ? 1 : 2;
+      const definition = args[position] as PivotTableDefinition;
+      args[0] = move(args[0] as number);
+      args[position] = { ...definition, sourceSheet: move(definition.sourceSheet) };
+      moved = { ...operation, args };
+      break;
+    }
+    case 'setDefinedName':
+    case 'removeDefinedName': {
+      const position = operation.method === 'setDefinedName' ? 2 : 1;
+      if (typeof args[position] === 'number') args[position] = move(args[position] as number);
+      moved = { ...operation, args };
+      break;
+    }
+    case 'copyRange':
+      args[0] = move(args[0] as number);
+      args[2] = move(args[2] as number);
+      moved = { ...operation, args };
+      break;
+    default:
+      if (typeof args[0] === 'number') args[0] = move(args[0]);
+      moved = { ...operation, args };
+  }
+  if (moved.follows) moved = { ...moved, follows: { ...moved.follows, sheet: move(moved.follows.sheet) } };
+  if (moved.restoredSheet !== undefined) moved = { ...moved, restoredSheet: move(moved.restoredSheet) };
+  return moved;
 }
 
 /**
@@ -724,7 +802,7 @@ function pastAroundBand(operation: SheetOperation, earlier: SheetOperation, band
       if (moved === null) break;
       moved = pastShift(moved, piece);
     }
-    if (moved && (moved.method === 'addChart' || moved.method === 'setChart')) moved = withoutBrokenSeries(moved);
+    if (moved && (moved.method === 'addChart' || moved.method === 'setChart')) moved = withBrokenRanges(moved);
     return moved && { ...moved, follows: { ...band, at: bandPastShift(band, shift) } };
   }
   const moved = movedPast(operation, earlier);
@@ -760,34 +838,36 @@ function bandPastShift(band: RestoredBand, shift: Shift): number {
 
 function movedPast(operation: SheetOperation, earlier: SheetOperation): SheetOperation | null {
   const moved = movedPastAny(operation, earlier);
-  return moved && (moved.method === 'addChart' || moved.method === 'setChart') ? withoutBrokenSeries(moved) : moved;
+  return moved && (moved.method === 'addChart' || moved.method === 'setChart') ? withBrokenRanges(moved) : moved;
 }
 
 /**
- * A chart operation without the ranges its data's removal made `#REF!`, which the workbook does
- * not take: those series and labels go, and the chart goes when no series is left.
+ * A chart operation whose ranges another client's deletion broke, each such range written
+ * `#REF!` as the workbook keeps it for a chart it holds: the series stays, drawn empty, so an
+ * undo of the deletion can put its range back.
  */
-function withoutBrokenSeries(operation: SheetOperation): SheetOperation | null {
+function withBrokenRanges(operation: SheetOperation): SheetOperation {
   const position = operation.method === 'addChart' ? 1 : 2;
   const change = operation.args[position] as ChartDefinition | { chart?: ChartDefinition; placement?: ChartPlacement };
   const chart = operation.method === 'addChart' ? (change as ChartDefinition) : (change as { chart?: ChartDefinition }).chart;
   if (!chart) return operation;
-  const broken = (formula: string | null | undefined) => typeof formula === 'string' && formula.includes('#REF!');
-  const series = chart.series.filter((each) => !broken(each.values)).map((each) => (broken(each.name) ? { ...each, name: null } : each));
-  if (series.length === chart.series.length && series.every((each, index) => each === chart.series[index]) && !broken(chart.categories)) {
-    return operation;
-  }
-  const kept: ChartDefinition | null =
-    series.length === 0 ? null : { ...chart, series, ...(broken(chart.categories) ? { categories: null } : {}) };
+  const broken = (formula: string) => formula.includes('#REF!');
+  const whole = (formula: string | null | undefined) => (typeof formula === 'string' && broken(formula) ? '#REF!' : formula);
+  const kept: ChartDefinition = {
+    ...chart,
+    ...(chart.categories === undefined ? {} : { categories: whole(chart.categories) }),
+    series: chart.series.map((each) => ({
+      ...each,
+      values: whole(each.values) as string,
+      ...(each.name === undefined ? {} : { name: whole(each.name) }),
+    })),
+  };
+  const same =
+    kept.categories === chart.categories &&
+    kept.series.every((each, index) => each.values === chart.series[index]!.values && each.name === chart.series[index]!.name);
+  if (same) return operation;
   const args = [...operation.args];
-  if (operation.method === 'addChart') {
-    if (!kept) return null;
-    args[position] = kept;
-  } else {
-    const { chart: _chart, ...rest } = change as { chart?: ChartDefinition; placement?: ChartPlacement };
-    if (!kept && !rest.placement) return null;
-    args[position] = kept ? { ...rest, chart: kept } : rest;
-  }
+  args[position] = operation.method === 'addChart' ? kept : { ...(change as object), chart: kept };
   return { ...operation, args };
 }
 
@@ -799,6 +879,7 @@ function movedPastAny(operation: SheetOperation, earlier: SheetOperation): Sheet
     return pastRemovedSheet(operation, earlier.args[0] as number, earlier.sheetName);
   }
   if (earlier.method === 'renameSheet') return pastRenamedSheet(operation, earlier);
+  if (earlier.method === 'restoreSheet') return indexesPastInsertedSheet(operation, earlier.args[0] as number);
   if (earlier.method === 'removeChart') {
     return pastRemovedChart(operation, earlier.args[0] as number, earlier.args[1] as number);
   }

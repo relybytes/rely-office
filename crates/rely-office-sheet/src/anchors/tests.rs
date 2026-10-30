@@ -4,6 +4,8 @@
 //
 // Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
+use std::collections::BTreeMap;
+
 use rely_office_core::{ChartSeriesSpec, ChartSpec, ChartType};
 
 use super::*;
@@ -119,7 +121,28 @@ fn an_anchor_whose_cells_are_all_deleted_moves_to_the_edge_with_its_size() {
     let xml = drawing(&[two_cell(None, (1, 10, 4, 20), (3, 30, 6, 40))]);
     assert_eq!(
         after(&xml, Shift::DeleteRows { at: 3, count: 6 }),
-        vec![vec![(1, 10, 3, 0), (3, 30, 5, 40)]]
+        vec![vec![(1, 10, 3, 0), (3, 30, 5, 20)]],
+        "the top corner loses its offset into the deleted row, the height stays"
+    );
+}
+
+#[test]
+fn an_anchor_that_keeps_its_size_keeps_it_over_rows_of_other_heights() {
+    // From row 4 to row 6 over default rows: two rows of 15 points.
+    let xml = drawing(&[two_cell(Some("oneCell"), (1, 0, 4, 0), (3, 0, 6, 0))]);
+    let before = BTreeMap::new();
+    // Two rows inserted above it; the rows it now sits on are 30 points high.
+    let after = BTreeMap::from([(6, 30.0), (7, 30.0)]);
+    let sizes = Sizes {
+        before: Some(&before),
+        after: Some(&after),
+    };
+    let moved =
+        moved_drawing_over(&xml, Shift::InsertRows { at: 0, count: 2 }, &sizes).expect("it moves");
+    assert_eq!(
+        corners(&moved),
+        vec![vec![(1, 0, 6, 0), (3, 0, 7, 0)]],
+        "30 points end after one row of 30"
     );
 }
 

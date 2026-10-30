@@ -126,8 +126,9 @@ same calls with the edits shared, and the binding itself as `SheetGrid`'s `colla
   a removed one becomes `#REF!` (`shiftFormula`, `renameFormulaSheet`, `removeFormulaSheet` in
   `formula-references.ts`). Formulas are read as the engine reads them, in either locale: texts,
   function names such as `LOG10(`, defined names, tables and external references are left alone.
-  A chart added or changed with ranges whose cells another client deleted loses those series, as
-  the workbook takes no `#REF!` range from a call, and is not made when none is left.
+  A chart added or changed with ranges whose cells another client deleted keeps those series as
+  `#REF!`, as the workbook keeps them for a chart it holds, so an undo of the deletion can put the
+  ranges back.
 - The placement a chart is added or moved to follows inserted and deleted rows and columns as the
   workbook moves the corner of a chart it placed: pushed by an insertion at or before its cell,
   moved to the edge of a deletion with no offset into it.
@@ -153,8 +154,15 @@ same calls with the edits shared, and the binding itself as `SheetGrid`'s `colla
   they made it. They also carry the band their undo inserts again (`follows`, a `RestoredBand`), so
   the others' rows and columns, made without it, are moved around it before the restore moves past
   them. Redoing deletes the band again and keeps nothing of the restores.
-- Removing a sheet clears this client's undo and redo: the workbook cannot put a sheet back at its
-  place.
+- Undoing a sheet's removal puts it back at its place with all it held (`restoreSheet` with the
+  `sheetSnapshot` taken before the removal: cells, looks, rules, comments, charts, pivot tables,
+  its own names) and puts back the formulas, rules, validations, names and charts of the other
+  sheets that named it and became `#REF!`, `guarded` like the restores of a deletion. Those carry
+  the sheet's place (`restoredSheet`), so the others' changes, made without the sheet, are moved
+  past it first; another client's removal of a sheet before it moves the place left, and a sheet
+  another client put back at or before it moves it right. Redoing removes the sheet again. A sheet
+  past the snapshot's 16 MB cannot be kept, and removing it clears this client's undo and redo; an
+  undo of a removal is given up, with the undo and redo, when another sheet took the name since.
 - `whenIdle()` resolves once every waiting edit has its turn, so a save writes what the room has
   and nothing it does not.
 - `setSelection` and `remoteSelections` share where each client's selection is; the grid draws

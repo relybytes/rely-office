@@ -34,6 +34,7 @@ mod ods;
 mod pivots;
 mod region;
 mod rules;
+mod snapshot;
 mod styling;
 mod value;
 mod xlsx;
@@ -69,6 +70,7 @@ pub use rely_office_core::{
     ValidationKind, VerticalAlignment,
 };
 pub use rules::MAX_RULES;
+pub use snapshot::{MAX_SNAPSHOT_BYTES, SheetSnapshot};
 pub use styling::{
     BorderPlacement, MAX_MERGES, MAX_ROW_HEIGHT, MAX_STYLED_AREA, MAX_STYLED_CELLS, StylePatch,
 };

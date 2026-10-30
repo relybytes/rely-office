@@ -493,8 +493,13 @@ column of its own headed `Values`. A group over a field below `Σ Values` totals
 row of its own below the group, `Nord Sum of Importo` (where else its total would be its own row,
 which cannot hold several values), and the grand total is a row per value, `Total Sum of Importo`.
 A group with nothing but the values below it has no total: its value rows are its totals. With one
-value the axis makes no difference. On the columns the values are always the innermost level;
-`values_position` is kept there for the file, not drawn.
+value the axis makes no difference. On the columns `Σ Values` sits at `values_position` among
+the column fields the same way: outermost, the header shows each value's caption over a block of
+the column labels (`Sum of Importo` over `Feb`, `Gen`, then `Count of Importo` over them again);
+between two fields, each group of the outer field gets a block per value and, when a field lies
+below the values, a subtotal column per value after its blocks (`Feb Sum of Importo`). An xlsx
+lists it as the field `-2` among `colFields`, an ods as the data layout field among the column
+fields.
 
 A cell shows a value's function over the records that fall in it, and stays **empty** when none
 does, or when every value those records hold for the field is blank, whatever the function, as
@@ -515,19 +520,31 @@ field, without records and marked to refresh on load, and a pivot table definiti
 fields, hidden items, page fields and data fields, and its form: `compact`, `outline` and
 `compactData` on the definition, `compact`, `outline`, `subtotalTop` and `defaultSubtotal` on each
 placed field, `fillDownLabels` in the field's `x14` extension for repeated labels, and the values'
-axis: the field `-2` among `rowFields` (or last among `colFields`), `dataOnRows` and
-`dataPosition`. Excel
-rebuilds the cache when it opens the file and LibreOffice reads the table as it is. Reading an xlsx
+axis: the field `-2` among `rowFields` or `colFields`, where it sits, `dataOnRows` and
+`dataPosition`. Excel rebuilds the cache when it opens the file, and LibreOffice builds the table
+again from its source. Reading an xlsx
 takes each pivot table whose source is a range of the workbook into the model, its form from the
 first row field (else the first column field), and carries any other (a source that is a named
 table or another workbook) unchanged, as before. An ods writes and reads the tables as
 `table:data-pilot-tables`, each field named by its header, with `table:data-pilot-layout-info`
 (`tabular-layout`, `outline-subtotals-top`, `outline-subtotals-bottom`), automatic
 `table:data-pilot-subtotals`, `calcext:repeat-item-labels`, and the data layout field
-(`table:is-data-layout-field`) among the row fields, where it sits, or last among the column
-fields. An ods has no compact form: a
+(`table:is-data-layout-field`) among the row or column fields, where it sits. An ods has no
+compact form: a
 compact table is written, and read back, in outline form, and a tabular table reads back with its
 subtotals at the top, where it draws them below all the same.
+
+The numbers are checked against LibreOffice, which builds a pivot table again from its source when
+it opens an xlsx: `node scripts/pivot-check.mjs` (after `node scripts/build-npm.mjs`, with
+`SOFFICE` naming LibreOffice) writes sixty sales records, some with a blank amount, and three
+tables, an outline one over two row fields, a tabular one with a column field and a sum and a
+count, and one nesting two column fields with an average; LibreOffice opens the xlsx and saves it
+as ods, and every number of each table must be the same, captions and order aside, since each
+program writes its own. A wrong number planted in a table's cells must be gone, or LibreOffice kept
+the file's cells and the check proves nothing. Run with LibreOffice 24.2 on 30 October 2026, the
+three tables, 13, 40 and 22 numbers, are the same. `GROUPBY` and `PIVOTBY` cannot be checked this
+way: LibreOffice 24.2 does not know them and shows the value the file stored, so they follow
+Excel's documentation.
 
 ### Charts
 
@@ -556,6 +573,21 @@ drawer that draws a chart in a rendered page. `Workbook::pictures_in(sheet, loca
 numbers of the axes and labels as the locale writes them, `0,5` or `0.5`; `pictures` writes them
 in Italian.
 
+### A sheet put back
+
+`sheet_snapshot(sheet)` keeps a whole sheet as it is, to put back with `restore_sheet(index,
+&snapshot)`: what undoing a sheet's removal needs. A `SheetSnapshot` is the xlsx of a workbook
+holding the sheet alone, with its own defined names, plus what a file does not say exactly: the
+look of each cell as the workbook kept it, and the language of each pivot table's captions. Through
+the xlsx everything a file keeps comes back: cells and formulas, looks, merges, rules, validations,
+comments and threads, charts, pictures, pivot tables, sizes, frozen panes and the filter. The sheet
+returns at `index`, the sheets from there moving right, and the formulas of the workbook that name
+it read it again; a part of its drawing or pivot tables whose name another sheet took since gets a
+new one, the relationships following, and a pivot cache an id no other uses. A snapshot is at most
+16 MB (`MAX_SNAPSHOT_BYTES`); a restore is refused when a sheet took the name since. The
+`SheetDocument` of both packages has `sheetSnapshot(sheet)`, an opaque text, and
+`restoreSheet(index, snapshot)`.
+
 ### Edits that move cells
 
 Inserting and deleting rows and columns move the cells and every formula of the workbook follows:
@@ -563,7 +595,10 @@ references after the edit shift, ranges grow or shrink, a reference to a deleted
 `#REF!`, and an insertion that would push content off the grid is refused. Renaming a sheet
 rewrites the formulas that name it; removing one turns them into `#REF!`; the last sheet stays.
 The formulas the charts read, every `<c:f>` and `<cx:f>` of their parts, follow the same way, so a
-chart keeps plotting the cells it plotted, and one whose cells are all deleted reads `#REF!`.
+chart keeps plotting the cells it plotted, and one whose cells are all deleted reads `#REF!`. A
+chart made or changed by a call takes `#REF!` for such a range too and draws nothing there; an ods,
+which has no address for it, leaves that series out, and keeps a chart with none left as its
+picture.
 
 The anchors of the sheet's drawing, its charts and pictures, move with the rows and columns as
 Excel moves them:
@@ -571,14 +606,15 @@ Excel moves them:
 | Anchor | Inserted or deleted rows and columns |
 | --- | --- |
 | `twoCellAnchor`, moving and sizing with its cells (the default) | both corners follow the cells under them: rows inserted inside it make it taller, rows deleted inside it make it shorter |
-| `oneCellAnchor`, or a `twoCellAnchor` with `editAs="oneCell"`, moving but keeping its size | its top-left corner follows its cell; a chart made or placed here is one |
+| `oneCellAnchor`, or a `twoCellAnchor` with `editAs="oneCell"`, moving but keeping its size | its top-left corner follows its cell, and its width and height stay: a `twoCellAnchor` has its bottom-right corner put back where they end over the rows and columns as they are after the edit; a chart made or placed here is a `oneCellAnchor` |
 | `absoluteAnchor`, or `editAs="absolute"` | stays where it is |
 
 Rows inserted where an anchor ends, flush with the top of the row, fall below it. A corner on a
 deleted row or column goes to the edge of the deletion with no offset into it, and an anchor whose
 cells are all deleted moves there keeping its size rather than going. A corner pushed past the last
-row or column stays on the grid. With rows of different heights, an anchor that keeps its size
-keeps the number of rows it spans, which Excel would recompute from their heights.
+row or column stays on the grid. Lengths are measured as Excel places drawings: a row its height
+in points (15 when it has none), a column its width in characters as Excel's pixels, 7 a character
+plus 5 (64 when it has none).
 `copy_range` pastes a rectangle with relative references moved by the offset and absolute ones
 kept, clearing the target first, as a spreadsheet's paste does.
 

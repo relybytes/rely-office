@@ -52,6 +52,7 @@ mod xml_tree;
 #[cfg(test)]
 mod test_support;
 
+pub use base64::{decode as decode_base64, encode as encode_base64};
 pub use chart_spec::{
     ChartSeriesSpec, ChartSpec, ChartType, chart_part_xml, chart_range_formula,
     odf_chart_object_xml, read_chart_spec, read_odf_chart_spec,

@@ -411,12 +411,8 @@ describe('formulas carried past structure, against the workbook', () => {
         change,
         (sheet) => sheet.charts(1).map((each) => each.spec),
       );
-      if (JSON.stringify(made).includes('#REF!')) {
-        // The workbook keeps a chart whose data went as #REF!; one added after is made without it.
-        expect(JSON.stringify(moved), JSON.stringify(change)).not.toContain('#REF!');
-      } else {
-        expect(moved, JSON.stringify(change)).toEqual(made);
-      }
+      // A series whose data went reads #REF!, in a chart the workbook holds and in one added after.
+      expect(moved, JSON.stringify(change)).toEqual(made);
     }
   });
 
@@ -735,6 +731,81 @@ describe('a shared workbook', () => {
     a.grid.undo();
     await network.flush();
     expect(everything(a.sheet)).toEqual(before);
+  });
+
+  it('undoes a sheet removal with all it held and the formulas elsewhere it broke', async () => {
+    const network = new CollabNetwork<SheetOperation>(sheetRoom(), { transform: transformSheetOperation });
+    const a = await client(network);
+    const b = await client(network, bea);
+    fill(a.grid);
+    const first = a.grid.sheets()[0]!.name;
+    a.grid.addSheet('Fine');
+    a.grid.setInput(2, 0, 0, `=${first}!A1*2`);
+    a.grid.setStyle(0, { top: 0, left: 0, bottom: 0, right: 0 }, { bold: true });
+    await network.flush();
+    const before = everything(a.sheet);
+    const look = a.sheet.styles()[a.sheet.cells(0, { top: 0, left: 0, bottom: 0, right: 0 })[0]!.style];
+    a.grid.removeSheet(0);
+    await network.flush();
+    expect(b.sheet.sheets().map((summary) => summary.name)).toEqual(['Dati', 'Fine']);
+    expect(b.sheet.input(1, 0, 0)).toBe('=#REF!*2');
+    const removed = everything(b.sheet);
+    expect(a.grid.undo()).toBe(true);
+    await network.flush();
+    expect(everything(a.sheet)).toEqual(before);
+    expect(everything(b.sheet)).toEqual(before);
+    expect(b.sheet.styles()[b.sheet.cells(0, { top: 0, left: 0, bottom: 0, right: 0 })[0]!.style]).toEqual(look);
+    expect(a.grid.redo()).toBe(true);
+    await network.flush();
+    expect(everything(b.sheet)).toEqual(removed);
+    expect(a.grid.undo()).toBe(true);
+    await network.flush();
+    expect(everything(b.sheet)).toEqual(before);
+  });
+
+  it('puts a removed sheet back past sheets the others added and removed since', async () => {
+    const network = new CollabNetwork<SheetOperation>(sheetRoom(), { transform: transformSheetOperation });
+    const a = await client(network);
+    const b = await client(network, bea);
+    a.grid.addSheet('Dati');
+    a.grid.addSheet('Fine');
+    a.grid.setInput(1, 0, 0, '7');
+    a.grid.setInput(2, 0, 0, '=Dati!A1+1');
+    await network.flush();
+    a.grid.removeSheet(1);
+    await network.flush();
+    // Made without the sheet: the first sheet goes, a new one comes, and a cell of the last.
+    b.grid.removeSheet(0);
+    b.grid.addSheet('Nuovo');
+    b.grid.setInput(0, 1, 1, 'scritto');
+    await network.flush();
+    expect(a.grid.undo()).toBe(true);
+    await network.flush();
+    const names = ['Dati', 'Fine', 'Nuovo'];
+    expect(a.sheet.sheets().map((summary) => summary.name)).toEqual(names);
+    expect(b.sheet.sheets().map((summary) => summary.name)).toEqual(names);
+    expect(everything(b.sheet)).toEqual(everything(a.sheet));
+    expect(b.sheet.input(0, 0, 0)).toBe('7');
+    expect(b.sheet.input(1, 0, 0)).toBe('=Dati!A1+1');
+    expect(b.sheet.input(1, 1, 1)).toBe('scritto');
+  });
+
+  it('gives up an undo of a removal when another sheet took the name', async () => {
+    const network = new CollabNetwork<SheetOperation>(sheetRoom(), { transform: transformSheetOperation });
+    const a = await client(network);
+    const b = await client(network, bea);
+    a.grid.addSheet('Dati');
+    a.grid.setInput(0, 0, 0, '1');
+    await network.flush();
+    a.grid.removeSheet(1);
+    await network.flush();
+    b.grid.addSheet('Dati');
+    await network.flush();
+    expect(a.grid.undo()).toBe(false);
+    expect(a.grid.canUndo()).toBe(false);
+    await network.flush();
+    expect(everything(b.sheet)).toEqual(everything(a.sheet));
+    expect(a.sheet.sheets().map((summary) => summary.name)).toHaveLength(2);
   });
 
   it('undoes a deletion past what others did since, keeping a cell they wrote', async () => {

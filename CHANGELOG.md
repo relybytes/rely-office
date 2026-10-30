@@ -5,6 +5,20 @@ below 1.0, a minor version may change the API.
 
 ## Unreleased
 
+### Added
+
+- A sheet kept whole and put back where it was: `Workbook::sheet_snapshot` and
+  `Workbook::restore_sheet` (`SheetSnapshot`, at most 16 MB), `sheetSnapshot` and `restoreSheet`
+  on the `SheetDocument` of both packages. The sheet travels as an xlsx of its own with the looks
+  of its cells and the language of its pivot tables; parts another sheet took the names of since
+  are renamed. `encode_base64` and `decode_base64` in `rely-office-core`.
+- Editing a spreadsheet together, a sheet's removal is undone: the sheet comes back at its place
+  with all it held, and the formulas, rules, validations, names and charts of the other sheets
+  that named it are put back, guarded and moved past what the others did since
+  (`restoreSheet`, `restoredSheet` on a `SheetOperation`). Redoing removes it again.
+- `scripts/pivot-check.mjs` compares the pivot tables of a workbook with the ones LibreOffice
+  builds from the same definitions.
+
 ### Changed
 
 - rely-office is licensed under the Apache License 2.0 from this release, with the attribution in
@@ -13,12 +27,24 @@ below 1.0, a minor version may change the API.
   lists the software it uses. Every source file carries `SPDX-License-Identifier: Apache-2.0`,
   except `geometry/enhanced_presets.rs`, generated from a LibreOffice table and kept under
   MPL-2.0. Releases before this one were published under the Mozilla Public License 2.0.
-
-### Changed
-
 - A release publishes both npm packages to the public npm registry as well, with provenance, when
   the repository secret `NPM_TOKEN` is set; the packages lose their `publishConfig`, so each job
   of `release.yml` names its registry and one tarball goes to both.
+- Several values of a pivot table along the columns sit at `values_position` among the column
+  fields, as along the rows: outermost, the header shows each value over a block of the column
+  labels; between two fields, each group of the outer one gets a block per value and a subtotal
+  column per value. Written to and read from xlsx (`-2` among `colFields`) and ods (the data layout
+  field among the column fields).
+- A chart made or changed by a call takes `#REF!` for a range whose cells are gone and draws
+  nothing there, as the workbook keeps it for a chart it holds; editing together, such a series is
+  kept rather than dropped. An ods leaves the series out, and keeps a chart with none left as its
+  picture.
+
+### Fixed
+
+- A chart or picture anchored to move but keep its size, a `twoCellAnchor` with
+  `editAs="oneCell"`, keeps its width and height over rows and columns of other heights and widths
+  when rows or columns are inserted or deleted, rather than the number of rows it spans.
 
 ## 0.10.1
 

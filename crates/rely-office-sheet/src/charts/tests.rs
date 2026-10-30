@@ -522,3 +522,53 @@ fn draws_the_numbers_of_a_chart_in_the_locale_asked() {
         workbook.pictures_in(0, Locale::Italian)
     );
 }
+
+#[test]
+fn keeps_a_series_whose_cells_were_deleted() {
+    let mut workbook = sales();
+    let mut broken = spec(ChartType::Column);
+    broken.series.push(ChartSeriesSpec {
+        name: Some("#REF!".to_owned()),
+        values: "#REF!".to_owned(),
+    });
+    let index = workbook.add_chart(0, &broken, PLACEMENT).unwrap();
+    let read = workbook.charts(0)[index].spec.clone().unwrap();
+    assert_eq!(read.series[1].values, "#REF!");
+    assert_eq!(read.series[1].name.as_deref(), Some("#REF!"));
+    assert_eq!(
+        workbook.pictures(0).len(),
+        1,
+        "it is drawn with what is left"
+    );
+
+    let only_broken = ChartSpec {
+        categories: Some("#REF!".to_owned()),
+        series: vec![ChartSeriesSpec {
+            name: None,
+            values: "#REF!".to_owned(),
+        }],
+        ..spec(ChartType::Line)
+    };
+    workbook
+        .set_chart(0, index, Some(&only_broken), None)
+        .unwrap();
+    assert_eq!(
+        workbook.pictures(0).len(),
+        1,
+        "a chart of nothing is still a chart"
+    );
+    let xlsx = reopened(&write_xlsx(&workbook).unwrap(), "kept.xlsx");
+    assert_eq!(
+        xlsx.charts(0)[0]
+            .spec
+            .as_ref()
+            .map(|spec| spec.series[0].values.as_str()),
+        Some("#REF!")
+    );
+    let ods = reopened(&write_ods(&workbook).unwrap(), "kept.ods");
+    assert_eq!(
+        (ods.charts(0).len() + ods.pictures(0).len()).min(1),
+        1,
+        "an ods has no address for a deleted range: the chart is kept as it was drawn"
+    );
+}

@@ -341,7 +341,7 @@ pub struct PivotTable {
     /// The axis the values lay along when there are several.
     pub values_axis: PivotValuesAxis,
     /// Where `Σ Values` sits among the fields of its axis, from 0 for the outermost; after the
-    /// last field when `None` or past them. On the column axis the values are always innermost.
+    /// last field when `None` or past them; on the column axis likewise among the column fields.
     pub values_position: Option<usize>,
     /// The language of the captions the table writes: `Grand Total`, `Totale complessivo`.
     pub locale: Locale,
@@ -572,31 +572,6 @@ impl PivotTable {
         }
         let labels = self.label_columns();
         let column_area = !self.columns.is_empty() && !self.values.is_empty();
-        // The leaf of the column tree each record falls in, and the columns across.
-        let mut leaf_of = vec![0_usize; kept.len()];
-        let mut slots = Vec::new();
-        let leaves = if column_area {
-            let mut next = 0;
-            column_tree.number_leaves(&mut next, &mut leaf_of);
-            let mut next = 0;
-            let mut pending = vec![false; self.columns.len()];
-            self.column_slots(&column_tree, &mut next, &mut pending, &mut slots);
-            if self.column_grand_totals {
-                slots.push(Slot {
-                    leaves: 0..column_tree.leaves(),
-                    labels: Vec::new(),
-                    kind: SlotKind::Grand,
-                });
-            }
-            column_tree.leaves()
-        } else {
-            slots.push(Slot {
-                leaves: 0..1,
-                labels: Vec::new(),
-                kind: SlotKind::Leaf,
-            });
-            1
-        };
         let entries = self.row_entries();
         let in_rows = self.values_in_rows();
         let row_headers: Vec<Value> = if entries.is_empty() {
@@ -619,12 +594,69 @@ impl PivotTable {
             .iter()
             .map(|value| self.value_caption(value, header))
             .collect();
-        // The captions across each slot: one column per value, or one column when the values
-        // lay along the rows.
-        let across: Vec<String> = if in_rows {
-            vec![String::new()]
+        // The leaf of the column tree each record falls in, and the columns of values across.
+        let mut leaf_of = vec![0_usize; kept.len()];
+        let several = captions.len() > 1 && !in_rows;
+        let (columns, leaves) = if column_area {
+            let mut next = 0;
+            column_tree.number_leaves(&mut next, &mut leaf_of);
+            let column_entries = self.column_entries(several);
+            let mut walk = ColumnWalk {
+                entries: &column_entries,
+                captions: &captions,
+                fresh: vec![false; column_entries.len()],
+                path: Vec::new(),
+                next_leaf: 0,
+                columns: Vec::new(),
+            };
+            self.value_columns(&column_tree, None, &mut walk);
+            let mut columns = walk.columns;
+            if self.column_grand_totals {
+                let all = 0..column_tree.leaves();
+                let heading = |text: String| {
+                    let mut heading = vec![Value::Empty; column_entries.len()];
+                    heading[0] = Value::Text(text);
+                    heading
+                };
+                if several {
+                    columns.extend(captions.iter().enumerate().map(|(index, caption)| {
+                        ValueColumn {
+                            leaves: all.clone(),
+                            value: Some(index),
+                            heading: heading(format!(
+                                "{} {caption}",
+                                pick(self.italian(), "Totale", "Total")
+                            )),
+                        }
+                    }));
+                } else {
+                    columns.push(ValueColumn {
+                        leaves: all,
+                        value: None,
+                        heading: heading(self.grand_total().to_owned()),
+                    });
+                }
+            }
+            (columns, column_tree.leaves())
+        } else if in_rows {
+            // One column of values: each row says which value it shows.
+            (
+                vec![ValueColumn {
+                    leaves: 0..1,
+                    value: None,
+                    heading: Vec::new(),
+                }],
+                1,
+            )
         } else {
-            captions.clone()
+            let columns = (0..captions.len())
+                .map(|index| ValueColumn {
+                    leaves: 0..1,
+                    value: Some(index),
+                    heading: Vec::new(),
+                })
+                .collect();
+            (columns, 1)
         };
         if column_area {
             let mut top = vec![Value::Empty; labels];
@@ -643,7 +675,6 @@ impl PivotTable {
                 );
             }
             grid.cells.push(top);
-            let several = across.len() > 1;
             let levels = self.columns.len() + usize::from(several);
             for level in 0..levels {
                 let mut line = if level + 1 == levels {
@@ -652,11 +683,11 @@ impl PivotTable {
                     Vec::new()
                 };
                 line.resize(labels, Value::Empty);
-                for slot in &slots {
-                    for (index, caption) in across.iter().enumerate() {
-                        line.push(self.slot_heading(slot, level, index, caption, several));
-                    }
-                }
+                line.extend(
+                    columns
+                        .iter()
+                        .map(|column| column.heading.get(level).cloned().unwrap_or(Value::Empty)),
+                );
                 grid.cells.push(line);
             }
         } else {
@@ -721,32 +752,32 @@ impl PivotTable {
                 for row in rows {
                     buckets[if column_area { leaf_of[*row] } else { 0 }].push(kept[*row]);
                 }
-                let shown: Vec<&PivotValue> = match line.value {
-                    Some(index) => self.values.get(index).into_iter().collect(),
-                    None => self.values.iter().collect(),
-                };
-                for slot in &slots {
-                    let inside: Vec<&Vec<Value>> = buckets[slot.leaves.clone()]
+                for column in &columns {
+                    let Some(value) = self
+                        .values
+                        .get(column.value.or(line.value).unwrap_or_default())
+                    else {
+                        continue;
+                    };
+                    let inside: Vec<&Vec<Value>> = buckets[column.leaves.clone()]
                         .iter()
                         .flatten()
                         .copied()
                         .collect();
-                    for value in &shown {
-                        cells.push(if inside.is_empty() {
-                            Value::Empty
-                        } else {
-                            let column: Vec<Value> = inside
-                                .iter()
-                                .map(|record| {
-                                    record
-                                        .get(value.field as usize)
-                                        .cloned()
-                                        .unwrap_or(Value::Empty)
-                                })
-                                .collect();
-                            value.function.summarise_cell(&column)
-                        });
-                    }
+                    cells.push(if inside.is_empty() {
+                        Value::Empty
+                    } else {
+                        let figures: Vec<Value> = inside
+                            .iter()
+                            .map(|record| {
+                                record
+                                    .get(value.field as usize)
+                                    .cloned()
+                                    .unwrap_or(Value::Empty)
+                            })
+                            .collect();
+                        value.function.summarise_cell(&figures)
+                    });
                 }
             }
             if line.indent > 0 {
@@ -797,82 +828,93 @@ impl PivotTable {
         }
     }
 
-    /// The columns of a group of the column fields, its items then its subtotal; an item's
-    /// labels show over the first column of each group only.
-    fn column_slots(
-        &self,
-        group: &Group,
-        next: &mut usize,
-        pending: &mut [bool],
-        slots: &mut Vec<Slot>,
-    ) {
-        let depth = group.key.len();
-        if depth == self.columns.len() {
-            let labels = group
-                .key
-                .iter()
-                .enumerate()
-                .map(|(level, key)| {
-                    let shown = level + 1 == depth || pending[level];
-                    pending[level] = false;
-                    shown.then(|| self.shown(key))
-                })
-                .collect();
-            slots.push(Slot {
-                leaves: *next..*next + 1,
-                labels,
-                kind: SlotKind::Leaf,
-            });
-            *next += 1;
-            return;
+    /// What each level of the column axis holds, outermost first: a column field, or the values
+    /// when there are several across, at their place among the fields.
+    fn column_entries(&self, several: bool) -> Vec<RowEntry> {
+        let mut entries: Vec<RowEntry> = (0..self.columns.len()).map(RowEntry::Field).collect();
+        if several {
+            let at = self
+                .values_position
+                .map_or(entries.len(), |position| position.min(entries.len()));
+            entries.insert(at, RowEntry::Values);
         }
-        if depth > 0 {
-            pending[depth - 1] = true;
-        }
-        let first = *next;
-        for child in &group.children {
-            self.column_slots(child, next, pending, slots);
-        }
-        if depth > 0 && self.subtotals != PivotSubtotals::Off {
-            let mut labels = vec![None; self.columns.len()];
-            labels[depth - 1] = group.key.last().map(|key| self.shown(key));
-            slots.push(Slot {
-                leaves: first..*next,
-                labels,
-                kind: SlotKind::Subtotal,
-            });
-        }
+        entries
     }
 
-    /// The caption over one column of a slot at a level of the header.
-    fn slot_heading(
-        &self,
-        slot: &Slot,
-        level: usize,
-        value: usize,
-        caption: &str,
-        several: bool,
-    ) -> Value {
-        let values_level = several && level == self.columns.len();
-        match slot.kind {
-            SlotKind::Leaf if values_level => Value::Text(caption.to_owned()),
-            SlotKind::Leaf => match slot.labels.get(level) {
-                Some(Some(label)) if value == 0 => label.clone(),
-                _ => Value::Empty,
-            },
-            SlotKind::Subtotal => match slot.labels.get(level) {
-                Some(Some(label)) if several => {
-                    Value::Text(format!("{} {caption}", item_label(label)))
+    /// The columns of values under a node of the column axis, as the header shows them: a column
+    /// per item of the innermost level, each label over the first column of its group, then the
+    /// node's subtotals when a column field lies below it. `value` is the value the node shows
+    /// when `Σ Values` lies above it.
+    fn value_columns(&self, group: &Group, value: Option<usize>, walk: &mut ColumnWalk<'_>) {
+        let depth = walk.path.len();
+        if depth == walk.entries.len() {
+            let heading = walk
+                .path
+                .iter()
+                .zip(&walk.fresh)
+                .map(|(label, fresh)| if *fresh { label.clone() } else { Value::Empty })
+                .collect();
+            walk.fresh.fill(false);
+            walk.columns.push(ValueColumn {
+                leaves: walk.next_leaf..walk.next_leaf + 1,
+                value,
+                heading,
+            });
+            walk.next_leaf += 1;
+            return;
+        }
+        let first_leaf = walk.next_leaf;
+        match walk.entries[depth] {
+            RowEntry::Values => {
+                for (index, caption) in walk.captions.iter().enumerate() {
+                    // The leaves of the group again, under each value.
+                    walk.next_leaf = first_leaf;
+                    walk.path.push(Value::Text(caption.clone()));
+                    walk.fresh[depth] = true;
+                    self.value_columns(group, Some(index), walk);
+                    walk.path.pop();
                 }
-                Some(Some(label)) if value == 0 => Value::Text(self.total_of(&item_label(label))),
-                _ => Value::Empty,
-            },
-            SlotKind::Grand if level == 0 && several => Value::Text(format!(
-                "{} {caption}",
-                pick(self.italian(), "Totale", "Total")
-            )),
-            SlotKind::Grand if level == 0 => Value::Text(self.grand_total().to_owned()),
-            SlotKind::Grand => Value::Empty,
+            }
+            RowEntry::Field(_) => {
+                for child in &group.children {
+                    walk.path
+                        .push(child.key.last().map_or(Value::Empty, |key| self.shown(key)));
+                    walk.fresh[depth] = true;
+                    self.value_columns(child, value, walk);
+                    walk.path.pop();
+                }
+            }
+        }
+        let field_node = depth > 0 && matches!(walk.entries[depth - 1], RowEntry::Field(_));
+        let deeper = walk.entries[depth..]
+            .iter()
+            .any(|entry| matches!(entry, RowEntry::Field(_)));
+        if !field_node || !deeper || self.subtotals == PivotSubtotals::Off {
+            return;
+        }
+        let Some(label) = walk.path.last().map(item_label) else {
+            return;
+        };
+        let leaves = first_leaf..walk.next_leaf;
+        let several = walk.entries.contains(&RowEntry::Values);
+        let totals: Vec<(String, Option<usize>)> = if value.is_some() || !several {
+            vec![(self.total_of(&label), value)]
+        } else {
+            // `Σ Values` lies below: a subtotal column per value, `Nord Sum of Amount`.
+            walk.captions
+                .iter()
+                .enumerate()
+                .map(|(index, caption)| (format!("{label} {caption}"), Some(index)))
+                .collect()
+        };
+        for (text, value) in totals {
+            let mut heading = vec![Value::Empty; walk.entries.len()];
+            heading[depth - 1] = Value::Text(text);
+            walk.columns.push(ValueColumn {
+                leaves: leaves.clone(),
+                value,
+                heading,
+            });
         }
     }
 
@@ -1108,20 +1150,25 @@ impl Group {
     }
 }
 
-/// A column of the column area: an item of the last column field, a subtotal or the grand total,
-/// as the range of the column tree's leaves it sums; one cell across per value.
-struct Slot {
+/// A column of the value area: the range of the column tree's leaves it sums, the value it shows
+/// (`None` for the one of its row), and what the header shows over it at each level.
+struct ValueColumn {
     leaves: std::ops::Range<usize>,
-    /// The label at each level of the column fields, where the slot shows one.
-    labels: Vec<Option<Value>>,
-    kind: SlotKind,
+    value: Option<usize>,
+    heading: Vec<Value>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SlotKind {
-    Leaf,
-    Subtotal,
-    Grand,
+/// The walk of the column axis that lays out its columns of values.
+struct ColumnWalk<'w> {
+    entries: &'w [RowEntry],
+    captions: &'w [String],
+    /// Whether the next column is the first under the node at each level, which shows its label.
+    fresh: Vec<bool>,
+    /// The labels from the outermost level down to the node walked.
+    path: Vec<Value>,
+    /// The column tree's leaf the next column sums.
+    next_leaf: usize,
+    columns: Vec<ValueColumn>,
 }
 
 /// A row of the row area: its labels, the indent of its label in the compact form, the records

@@ -5,7 +5,7 @@
 // Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 import type { CellRange, CellWindow, ChartDefinition, ConditionalFormat, PivotTableDefinition, SheetDocument } from '../model.js';
-import { shiftFormula, type ReferenceShift } from './formula-references.js';
+import { removeFormulaSheet, shiftFormula, type ReferenceShift } from './formula-references.js';
 import type { SequencedOperation, SubmittedOperation } from './protocol.js';
 import type { CollabSession } from './session.js';
 import {
@@ -270,9 +270,21 @@ export class SheetCollaboration {
     for (const operation of step.operations) {
       const moved = this.movedSince(operation, step.base, this.session.sessionKey);
       if (!moved) continue;
-      // What an undo put back after the rows it inserted again goes with them: redoing deletes them.
-      const undo = moved.follows ? [] : this.inverseOf(moved);
-      const result = this.submit(operation, step.base);
+      // What an undo put back after the rows or the sheet it inserted again goes with them:
+      // redoing deletes them.
+      const undo = moved.follows || moved.restoredSheet !== undefined ? [] : this.inverseOf(moved);
+      let result: unknown;
+      try {
+        result = this.submit(operation, step.base);
+      } catch (error) {
+        if (operation.method !== 'restoreSheet') throw error;
+        // The sheet cannot come back (a sheet took its name since): the steps before it name
+        // sheets by places that no longer hold, so they go.
+        this.undoSteps = [];
+        this.redoSteps = [];
+        this.notify();
+        return false;
+      }
       inverse.unshift(...undo, ...this.creationInverse(moved, result));
     }
     if (inverse.length > 0) {
@@ -306,7 +318,8 @@ export class SheetCollaboration {
     const inverse = this.inverseOf(operation);
     const result = this.submit(operation, this.confirmed);
     inverse.push(...this.creationInverse(operation, result));
-    if (method === 'removeSheet') {
+    if (method === 'removeSheet' && inverse.length === 0) {
+      // The sheet was too large to keep: the steps before it name sheets by places that moved.
       this.undoSteps = [];
       this.redoSteps = [];
     } else if (inverse.length > 0) {
@@ -420,6 +433,20 @@ export class SheetCollaboration {
         const name = summary()?.name;
         return name === undefined ? [] : [{ method: 'renameSheet', args: [sheet, name], locale }];
       }
+      case 'restoreSheet':
+        return [{ method: 'removeSheet', args: [sheet], locale }];
+      case 'removeSheet': {
+        let snapshot: string;
+        try {
+          snapshot = this.sheet.sheetSnapshot(sheet);
+        } catch {
+          return [];
+        }
+        return [
+          { method: 'restoreSheet', args: [sheet, snapshot], locale },
+          ...this.brokenBySheetRemoval(sheet, locale).map((operation) => ({ ...operation, restoredSheet: sheet })),
+        ];
+      }
       case 'setColumnWidth': {
         const width = summary()?.columnWidths.find(([column]) => column === args[1])?.[1] ?? null;
         return [{ method: 'setColumnWidth', args: [sheet, args[1], width], locale }];
@@ -529,6 +556,47 @@ export class SheetCollaboration {
     });
     for (const defined of this.sheet.definedNames()) {
       if (!survives(defined.formula, defined.sheet ?? 0)) {
+        restores.push({ method: 'setDefinedName', args: [defined.name, defined.formula, defined.sheet], locale, guarded: true });
+      }
+    }
+    return restores;
+  }
+
+  /**
+   * What putting a removed sheet back would not restore: the formulas, rules, validations, names
+   * and charts of the other sheets that named it and became `#REF!`, as they are now. The sheet's
+   * own content and names come back with it.
+   */
+  private brokenBySheetRemoval(sheet: number, locale: SheetOperation['locale']): SheetOperation[] {
+    const sheets = this.sheet.sheets();
+    const name = sheets[sheet]?.name;
+    if (name === undefined) return [];
+    const survives = (formula: string): boolean => removeFormulaSheet(formula, name) === formula;
+    const restores: SheetOperation[] = [];
+    let kept = 0;
+    sheets.forEach((summary, index) => {
+      if (index === sheet) return;
+      const inputs = this.formulaCells(index, summary.rows, summary.columns).filter(([, , input]) => !survives(input));
+      if (inputs.length > 0 && kept + inputs.length <= MAX_UNDO_AREA) {
+        kept += inputs.length;
+        restores.push({ method: 'setInputs', args: [index, inputs], locale, guarded: true });
+      }
+      const formats = this.sheet.conditionalFormats(index);
+      if (formats.some((format) => !format.rules.every((rule) => conditionFormulas(rule.condition).every(survives)))) {
+        restores.push({ method: 'setConditionalFormats', args: [index, formats], locale, guarded: true });
+      }
+      const validations = this.sheet.validations(index);
+      if (validations.some((validation) => !(validation.formulas ?? []).every(survives))) {
+        restores.push({ method: 'setValidations', args: [index, validations], locale, guarded: true });
+      }
+      for (const chart of this.sheet.charts(index)) {
+        if (chart.spec && !chartFormulas(chart.spec).every(survives)) {
+          restores.push({ method: 'setChart', args: [index, chart.index, { chart: chart.spec }], locale, guarded: true });
+        }
+      }
+    });
+    for (const defined of this.sheet.definedNames()) {
+      if (defined.sheet !== sheet && !survives(defined.formula)) {
         restores.push({ method: 'setDefinedName', args: [defined.name, defined.formula, defined.sheet], locale, guarded: true });
       }
     }

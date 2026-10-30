@@ -4,12 +4,14 @@
 //
 // Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
-//! Standard base64, for the pictures a page carries in `data:` addresses.
+//! Standard base64, for the pictures a page carries in `data:` addresses and the bytes a message
+//! carries as text.
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Bytes in standard base64 with padding.
-pub(crate) fn encode(bytes: &[u8]) -> String {
+#[must_use]
+pub fn encode(bytes: &[u8]) -> String {
     let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for group in bytes.chunks(3) {
         let value = (u32::from(group[0]) << 16)
@@ -28,7 +30,8 @@ pub(crate) fn encode(bytes: &[u8]) -> String {
 
 /// The bytes of standard or URL-safe base64, whitespace and padding allowed; `None` for any
 /// other character or a length no encoder writes.
-pub(crate) fn decode(text: &str) -> Option<Vec<u8>> {
+#[must_use]
+pub fn decode(text: &str) -> Option<Vec<u8>> {
     let mut bytes = Vec::with_capacity(text.len() / 4 * 3);
     let mut value = 0u32;
     let mut bits = 0u32;

@@ -420,6 +420,14 @@ class BrowserSheetDocument implements SheetDocument {
     return parse(() => this.document.regionJson(sheet, top, left, bottom, right));
   }
 
+  sheetSnapshot(sheet: number): string {
+    return call(() => this.document.sheetSnapshotJson(sheet));
+  }
+
+  restoreSheet(index: number, snapshot: string): void {
+    call(() => this.document.restoreSheet(index, snapshot));
+  }
+
   restoreRegion(sheet: number, region: SheetRegion): void {
     call(() => this.document.restoreRegion(sheet, JSON.stringify(region)));
   }

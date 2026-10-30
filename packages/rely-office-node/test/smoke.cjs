@@ -440,6 +440,32 @@ test('edits a spreadsheet and saves it as xlsx', () => {
   }
 });
 
+test('puts a removed sheet back where it was', () => {
+  const sheet = office.createSheet({ locale: 'en' });
+  try {
+    sheet.addSheet('Dati');
+    sheet.addSheet('Fine');
+    sheet.setInputs(1, [
+      [0, 0, '2'],
+      [1, 0, '=A1*3'],
+    ]);
+    sheet.setStyle(1, { top: 0, left: 0, bottom: 0, right: 0 }, { bold: true });
+    const first = sheet.sheets()[0].name;
+    const snapshot = sheet.sheetSnapshot(1);
+    assert.equal(typeof snapshot, 'string');
+    sheet.removeSheet(1);
+    assert.deepEqual(sheet.sheets().map((summary) => summary.name), [first, 'Fine']);
+    sheet.restoreSheet(1, snapshot);
+    assert.deepEqual(sheet.sheets().map((summary) => summary.name), [first, 'Dati', 'Fine']);
+    const cells = sheet.cells(1, { top: 0, left: 0, bottom: 1, right: 0 });
+    assert.deepEqual(cells.map((cell) => cell.display), ['2', '6']);
+    assert.equal(sheet.styles()[cells[0].style].font.bold, true);
+    assert.throws(() => sheet.restoreSheet(0, snapshot), (error) => error.code === 'DUPLICATE_SHEET_NAME');
+  } finally {
+    sheet.free();
+  }
+});
+
 test('styles, merges and sizes the cells of a spreadsheet', () => {
   const sheet = office.createSheet({ locale: 'it' });
   try {

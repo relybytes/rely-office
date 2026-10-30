@@ -8,9 +8,13 @@
 //! chart or a picture that moves and sizes with its cells (`twoCellAnchor`, the default) has both
 //! corners follow the cells under them, so rows inserted inside it make it taller and rows deleted
 //! inside it make it shorter; one that moves but keeps its size (`oneCellAnchor`, or a
-//! `twoCellAnchor` with `editAs="oneCell"`) has its top-left corner follow its cell; one placed
-//! on the sheet (`absoluteAnchor`, or `editAs="absolute"`) stays where it is. An anchor whose
-//! cells are all deleted moves to the edge of the deletion and keeps its size.
+//! `twoCellAnchor` with `editAs="oneCell"`) has its top-left corner follow its cell and its
+//! bottom-right corner put back where the same width and height end, measured over the rows and
+//! columns as they are after the edit; one placed on the sheet (`absoluteAnchor`, or
+//! `editAs="absolute"`) stays where it is. An anchor whose cells are all deleted moves to the edge
+//! of the deletion and keeps its size.
+
+use std::collections::BTreeMap;
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -38,6 +42,76 @@ enum Follows {
     Corner,
     /// Placed on the sheet, not on cells.
     Nothing,
+}
+
+/// EMU in a point, the unit of row heights.
+const EMU_PER_POINT: i64 = 12_700;
+/// EMU in a pixel, the unit column widths are drawn in.
+const EMU_PER_PIXEL: i64 = 9_525;
+/// Excel's default row, 15 points.
+const DEFAULT_ROW_EMU: i64 = 15 * EMU_PER_POINT;
+/// Excel's default column, 8.43 characters, is 64 pixels.
+const DEFAULT_COLUMN_EMU: i64 = 64 * EMU_PER_PIXEL;
+/// The most rows or columns an extent is measured over.
+const MAX_SPAN: usize = 1 << 20;
+
+/// The sizes of the rows or columns along the shifted axis, before and after the edit: heights in
+/// points or widths in characters, as a sheet keeps them; one not listed has Excel's default.
+#[derive(Debug, Default)]
+pub(crate) struct Sizes<'a> {
+    pub(crate) before: Option<&'a BTreeMap<u32, f64>>,
+    pub(crate) after: Option<&'a BTreeMap<u32, f64>>,
+}
+
+/// The length in EMU of one row or column.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "heights and widths are bounded by the sheet's limits"
+)]
+fn length(sizes: Option<&BTreeMap<u32, f64>>, rows: bool, index: i64) -> i64 {
+    let size = u32::try_from(index)
+        .ok()
+        .and_then(|index| sizes.and_then(|sizes| sizes.get(&index)).copied());
+    match (size, rows) {
+        (None, true) => DEFAULT_ROW_EMU,
+        (None, false) => DEFAULT_COLUMN_EMU,
+        (Some(points), true) => (points.max(0.0) * 12_700.0).round() as i64,
+        (Some(characters), false) if characters <= 0.0 => 0,
+        // The pixels of a width in characters with the 5 pixels of padding Excel adds to the
+        // digits of its default font, as the drawings of a file are placed.
+        (Some(characters), false) => {
+            (((characters * 256.0).round() as i64 * 7 + 128) / 256 + 5) * EMU_PER_PIXEL
+        }
+    }
+}
+
+/// How far `from` to `to` reaches, in EMU over the given sizes.
+fn extent(sizes: Option<&BTreeMap<u32, f64>>, rows: bool, from: Corner, to: Corner) -> i64 {
+    let whole: i64 = (from.0..to.0.max(from.0))
+        .take(MAX_SPAN)
+        .map(|index| length(sizes, rows, index))
+        .sum();
+    whole - from.1 + to.1
+}
+
+/// The corner `extent` EMU past `start`, over the given sizes.
+fn corner_past(
+    sizes: Option<&BTreeMap<u32, f64>>,
+    rows: bool,
+    start: Corner,
+    extent: i64,
+    limit: i64,
+) -> Corner {
+    let (mut index, mut rest) = (start.0, start.1 + extent.max(0));
+    for _ in 0..MAX_SPAN {
+        let size = length(sizes, rows, index);
+        if index >= limit || rest < size || size == 0 && rest == 0 {
+            break;
+        }
+        rest -= size;
+        index += 1;
+    }
+    (index.min(limit), rest)
 }
 
 /// A number read from the part, with where its text sits.
@@ -97,11 +171,21 @@ fn new_corners(
     follows: Follows,
     from: Marker,
     to: Option<Marker>,
+    sizes: &Sizes<'_>,
 ) -> Option<(Corner, Option<Corner>)> {
-    let limit = i64::from(if shift.rows() { MAX_ROWS } else { MAX_COLUMNS }) - 1;
+    let rows = shift.rows();
+    let limit = i64::from(if rows { MAX_ROWS } else { MAX_COLUMNS }) - 1;
     let start = moved(shift, from.index, from.offset);
-    let delta = start.0 - from.index;
-    let keep_size = |to: Marker| ((to.index + delta).clamp(start.0, limit), to.offset);
+    // The same width or height, from where the top-left corner landed.
+    let keep_size = |to: Marker| {
+        let length = extent(
+            sizes.before,
+            rows,
+            (from.index, from.offset),
+            (to.index, to.offset),
+        );
+        corner_past(sizes.after, rows, start, length, limit)
+    };
     match (follows, to) {
         (Follows::Nothing, _) => None,
         (Follows::Corner, to) => Some((start, to.map(keep_size))),
@@ -240,14 +324,22 @@ fn find_anchors(xml: &str, rows: bool) -> Vec<FoundAnchor> {
     }
 }
 
-/// The drawing part with its anchors moved past a shift, or `None` when none moves.
+/// The drawing part with its anchors moved past a shift, or `None` when none moves; the rows
+/// and columns have Excel's default sizes.
+#[cfg(test)]
 pub(crate) fn moved_drawing(xml: &str, shift: Shift) -> Option<String> {
+    moved_drawing_over(xml, shift, &Sizes::default())
+}
+
+/// The drawing part with its anchors moved past a shift over rows or columns of the given sizes,
+/// or `None` when none moves.
+pub(crate) fn moved_drawing_over(xml: &str, shift: Shift, sizes: &Sizes<'_>) -> Option<String> {
     let mut edits: Vec<((usize, usize), String)> = Vec::new();
     for anchor in find_anchors(xml, shift.rows()) {
         let (Some(follows), Some(from)) = (anchor.follows, anchor.from) else {
             continue;
         };
-        let Some((start, end)) = new_corners(shift, follows, from, anchor.to) else {
+        let Some((start, end)) = new_corners(shift, follows, from, anchor.to, sizes) else {
             continue;
         };
         let mut write = |marker: Marker, (index, offset): (i64, i64)| {
@@ -276,8 +368,18 @@ pub(crate) fn moved_drawing(xml: &str, shift: Shift) -> Option<String> {
     Some(written)
 }
 
-/// Move the anchors of a sheet's drawing, its charts and pictures, with its rows or columns.
-pub(crate) fn move_drawing_anchors(sheet: &mut Sheet, shift: Shift) {
+/// Move the anchors of a sheet's drawing, its charts and pictures, with its rows or columns;
+/// `before` holds the heights or widths along the shifted axis as they were before the edit.
+pub(crate) fn move_drawing_anchors(sheet: &mut Sheet, shift: Shift, before: &BTreeMap<u32, f64>) {
+    let after = if shift.rows() {
+        &sheet.row_heights
+    } else {
+        &sheet.column_widths
+    };
+    let sizes = Sizes {
+        before: Some(before),
+        after: Some(after),
+    };
     let Some(drawing) = sheet.drawing.as_mut() else {
         return;
     };
@@ -286,7 +388,7 @@ pub(crate) fn move_drawing_anchors(sheet: &mut Sheet, shift: Shift) {
         return;
     };
     if let Ok(xml) = std::str::from_utf8(&part.bytes)
-        && let Some(moved) = moved_drawing(xml, shift)
+        && let Some(moved) = moved_drawing_over(xml, shift, &sizes)
     {
         part.bytes = moved.into_bytes();
     }

@@ -117,6 +117,35 @@ pub fn write_ods(workbook: &Workbook) -> Result<Vec<u8>, OfficeError> {
 
 /// The pictures and charts of every sheet as `OpenDocument` writes them: a frame in the cell
 /// each is anchored to, a chart object or a picture for each, and the manifest entries.
+/// A chart as an `OpenDocument` file can hold it: an ods has no address for a range whose cells
+/// were deleted, so such a series is left out, and a chart with none left is kept as the picture
+/// it is drawn as.
+fn writable_chart(spec: &rely_office_core::ChartSpec) -> Option<rely_office_core::ChartSpec> {
+    let broken = |formula: &str| {
+        formula
+            .trim()
+            .trim_start_matches('=')
+            .eq_ignore_ascii_case("#REF!")
+    };
+    let series: Vec<_> = spec
+        .series
+        .iter()
+        .filter(|series| !broken(&series.values))
+        .map(|series| rely_office_core::ChartSeriesSpec {
+            name: series.name.clone().filter(|name| !broken(name)),
+            values: series.values.clone(),
+        })
+        .collect();
+    (!series.is_empty()).then(|| rely_office_core::ChartSpec {
+        categories: spec
+            .categories
+            .clone()
+            .filter(|categories| !broken(categories)),
+        series,
+        ..spec.clone()
+    })
+}
+
 struct Objects {
     frames: Vec<HashMap<CellRef, String>>,
     files: Vec<(String, Vec<u8>)>,
@@ -147,7 +176,8 @@ impl Objects {
                     inches(drawing.width_emu),
                     inches(drawing.height_emu)
                 );
-                let content = if let Some(spec) = &drawing.chart {
+                let chart = drawing.chart.as_ref().and_then(writable_chart);
+                let content = if let Some(spec) = &chart {
                     let folder = format!("Object {number}");
                     objects.files.push((
                         format!("{folder}/content.xml"),
