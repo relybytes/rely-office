@@ -3,6 +3,17 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## Unreleased
+
+### Added
+
+- Threaded comments of Excel 365: read from and written to xlsx with their people, replies,
+  dates and resolved state, and the note Excel keeps beside each thread for older versions;
+  `start_comment_thread`, `reply_to_comment`, `set_comment_resolved` and `remove_comment_reply`,
+  `startCommentThread`, `replyToComment`, `setCommentResolved` and `removeCommentReply` from
+  JavaScript, and replies, resolving and reopening in the grid's comments panel. An ods writes a
+  thread as one annotation with its replies.
+
 ## 0.8.0
 
 ### Added

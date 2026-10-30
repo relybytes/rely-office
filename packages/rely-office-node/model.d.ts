@@ -734,6 +734,19 @@ export interface CellComment {
   author: string;
   /** The text, lines separated by `\n`. */
   text: string;
+  /** When it was written, ISO 8601, when the file says. */
+  date?: string;
+  /** A thread of Excel 365, with replies and a resolved state, rather than a note. */
+  threaded: boolean;
+  resolved: boolean;
+  replies: CommentReply[];
+}
+
+/** A reply in a comment thread. */
+export interface CommentReply {
+  author: string;
+  text: string;
+  date?: string;
 }
 
 /** A zero-based, inclusive rectangle of cells. */
@@ -972,8 +985,16 @@ export interface SheetDocument {
   chartForRange(sheet: number, window: CellWindow, type: ChartType): ChartDefinition | null;
   /** The comments of a sheet's cells, row by row. */
   comments(sheet: number): CellComment[];
-  /** Write the comment on a cell; an empty text removes it. */
+  /** Write the comment on a cell, a thread keeping its author and replies; an empty text removes it. */
   setComment(sheet: number, row: number, column: number, text: string, author?: string): void;
+  /** Open a thread on a cell in place of any comment it had; `date` is ISO 8601. */
+  startCommentThread(sheet: number, row: number, column: number, text: string, author?: string, date?: string): void;
+  /** Answer the comment of a cell; a note answered becomes a thread. */
+  replyToComment(sheet: number, row: number, column: number, text: string, author?: string, date?: string): void;
+  /** Mark the thread of a cell resolved, or open again. */
+  setCommentResolved(sheet: number, row: number, column: number, resolved: boolean): void;
+  /** Remove a reply of the thread of a cell, by its position. */
+  removeCommentReply(sheet: number, row: number, column: number, reply: number): void;
   /** Merge a window into one cell, keeping the content of its top-left cell. */
   mergeCells(sheet: number, window: CellWindow): void;
   /** Split the merged ranges a window overlaps. */

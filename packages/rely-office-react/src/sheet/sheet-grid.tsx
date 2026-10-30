@@ -24,6 +24,7 @@ import {
 } from 'react';
 import type {
   Border,
+  CellComment,
   CellRange,
   CellStyle,
   CellWindow,
@@ -778,7 +779,7 @@ export const SheetGrid = forwardRef(function SheetGrid(
         aria-label={cellName({ row, column })}
         aria-selected={contains(selected, { row, column })}
         aria-description={comment ? comment.text : undefined}
-        title={comment ? (comment.author ? `${comment.author}: ${comment.text}` : comment.text) : undefined}
+        title={comment ? commentTitle(comment) : undefined}
         className={[
           'rely-sheet-cell',
           workbook.invalid.has(key) ? 'rely-sheet-invalid' : '',
@@ -1507,6 +1508,22 @@ export const SheetGrid = forwardRef(function SheetGrid(
             selection={selected}
             comments={workbook.comments}
             onChange={(row, column, text) => mutate(() => sheet.setComment(workbook.index, row, column, text, author ?? ''))}
+            onStart={(row, column, text) =>
+              mutate(() =>
+                sheet.startCommentThread(workbook.index, row, column, text, author ?? '', new Date().toISOString()),
+              )
+            }
+            onReply={(row, column, text) =>
+              mutate(() =>
+                sheet.replyToComment(workbook.index, row, column, text, author ?? '', new Date().toISOString()),
+              )
+            }
+            onResolve={(row, column, resolved) =>
+              mutate(() => sheet.setCommentResolved(workbook.index, row, column, resolved))
+            }
+            onRemoveReply={(row, column, reply) =>
+              mutate(() => sheet.removeCommentReply(workbook.index, row, column, reply))
+            }
             onSelect={(row, column) => moveTo({ row, column }, false)}
             onClose={() => setPanel(null)}
           />
@@ -1636,3 +1653,10 @@ export const SheetGrid = forwardRef(function SheetGrid(
     </div>
   );
 });
+
+/** What pointing at a commented cell shows: the comment and each reply under its author. */
+function commentTitle(comment: CellComment): string {
+  return [comment, ...comment.replies]
+    .map((entry) => (entry.author ? `${entry.author}: ${entry.text}` : entry.text))
+    .join('\n');
+}

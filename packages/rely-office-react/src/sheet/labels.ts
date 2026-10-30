@@ -125,6 +125,12 @@ export interface SheetGridLabels {
   commentPlaceholder: string;
   saveComment: string;
   noComments: string;
+  reply: string;
+  replyPlaceholder: string;
+  resolve: string;
+  reopen: string;
+  resolved: string;
+  removeReply: string;
   definedNames: string;
   noNames: string;
   name: string;
@@ -278,6 +284,12 @@ export const ENGLISH_SHEET_GRID_LABELS: SheetGridLabels = {
   commentPlaceholder: 'Write a comment',
   saveComment: 'Save comment',
   noComments: 'No comments on this sheet',
+  reply: 'Reply',
+  replyPlaceholder: 'Write a reply',
+  resolve: 'Resolve',
+  reopen: 'Reopen',
+  resolved: 'Resolved',
+  removeReply: 'Remove reply',
   definedNames: 'Names',
   noNames: 'The workbook defines no names',
   name: 'Name',
@@ -431,6 +443,12 @@ export const ITALIAN_SHEET_GRID_LABELS: SheetGridLabels = {
   commentPlaceholder: 'Scrivi un commento',
   saveComment: 'Salva commento',
   noComments: 'Nessun commento in questo foglio',
+  reply: 'Rispondi',
+  replyPlaceholder: 'Scrivi una risposta',
+  resolve: 'Risolvi',
+  reopen: 'Riapri',
+  resolved: 'Risolto',
+  removeReply: 'Elimina risposta',
   definedNames: 'Nomi',
   noNames: 'La cartella non definisce nomi',
   name: 'Nome',

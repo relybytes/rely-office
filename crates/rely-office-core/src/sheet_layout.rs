@@ -248,6 +248,9 @@ fn read_layouts(
         .map(|xml| differential_looks(xml, &theme))
         .unwrap_or_default();
 
+    let persons = part("person")
+        .and_then(|target| crate::sheet_names::xlsx_persons(&mut package, &target, limits).ok())
+        .unwrap_or_default();
     let mut layouts = HashMap::new();
     for (name, relationship_id) in sheet_entries(&workbook)? {
         let Some(relationship) = relationships
@@ -279,9 +282,13 @@ fn read_layouts(
             &cells,
         )
         .unwrap_or_default();
-        layout.comments =
-            crate::sheet_names::xlsx_sheet_comments(&mut package, &relationship.target, limits)
-                .unwrap_or_default();
+        layout.comments = crate::sheet_names::xlsx_sheet_comments(
+            &mut package,
+            &relationship.target,
+            &persons,
+            limits,
+        )
+        .unwrap_or_default();
         layout.font_family.clone_from(&font_family);
         layout.font_size_tenths = font_size_tenths;
         layout.styles.clone_from(&styles);

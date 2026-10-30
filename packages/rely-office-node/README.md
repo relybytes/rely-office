@@ -206,7 +206,11 @@ buttons.
 
 `definedNames()`, `setDefinedName(name, formula, sheet?)` and `removeDefinedName(name, sheet?)`
 manage the names formulas read, a `LAMBDA` among them; `comments(sheet)` and
-`setComment(sheet, row, column, text, author?)` the comments of the cells. `charts(sheet)` lists
+`setComment(sheet, row, column, text, author?)` the comments of the cells, and
+`startCommentThread(sheet, row, column, text, author?, date?)`, `replyToComment(...)`,
+`setCommentResolved(sheet, row, column, resolved)` and `removeCommentReply(sheet, row, column,
+index)` the threads of Excel 365, each comment carrying `threaded`, `resolved`, `date` and its
+`replies`. `charts(sheet)` lists
 the charts with where they sit and, when they can be changed, what they show;
 `chartForRange(sheet, window, 'column')` suggests the chart of a selection, which `addChart(sheet,
 chart, placement)` adds, `setChart(sheet, index, { chart?, placement? })` changes or moves and

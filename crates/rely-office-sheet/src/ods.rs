@@ -231,14 +231,28 @@ fn named_expressions_xml(workbook: &Workbook, sheet: Option<usize>) -> String {
     }
 }
 
-/// The annotation `LibreOffice` shows for a cell's comment.
+/// The annotation `LibreOffice` shows for a cell's comment. ODF has no threads, so the replies
+/// of a thread follow its text, a paragraph each opening with its author.
 fn annotation_xml(comment: &Comment) -> String {
     let mut xml = String::from("<office:annotation>");
     if !comment.author.is_empty() {
         let _ = write!(xml, "<dc:creator>{}</dc:creator>", escape(&comment.author));
     }
+    if let Some(date) = comment.date.as_deref().and_then(|date| date.get(..19)) {
+        let _ = write!(xml, "<dc:date>{}</dc:date>", escape(date));
+    }
     for line in comment.text.split('\n') {
         let _ = write!(xml, "<text:p>{}</text:p>", paragraph_text(line));
+    }
+    for reply in &comment.replies {
+        for (number, line) in reply.text.split('\n').enumerate() {
+            let line = if number == 0 && !reply.author.is_empty() {
+                format!("{}: {line}", reply.author)
+            } else {
+                line.to_owned()
+            };
+            let _ = write!(xml, "<text:p>{}</text:p>", paragraph_text(&line));
+        }
     }
     xml.push_str("</office:annotation>");
     xml

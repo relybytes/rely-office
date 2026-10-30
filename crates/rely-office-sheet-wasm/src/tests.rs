@@ -457,8 +457,39 @@ fn lists_names_and_comments_as_json() {
         .unwrap();
     assert_eq!(
         parse(&document.comments_summary(0).unwrap()),
-        json!([{ "row": 1, "column": 2, "author": "Anna", "text": "Da rivedere" }])
+        json!([{
+            "row": 1, "column": 2, "author": "Anna", "text": "Da rivedere",
+            "threaded": false, "resolved": false, "replies": []
+        }])
     );
+    document
+        .workbook
+        .reply_to_comment(
+            0,
+            CellRef::new(1, 2),
+            "Bruno",
+            "Fatto",
+            Some("2026-10-30T09:00:00"),
+        )
+        .unwrap();
+    document
+        .workbook
+        .set_comment_resolved(0, CellRef::new(1, 2), true)
+        .unwrap();
+    assert_eq!(
+        parse(&document.comments_summary(0).unwrap()),
+        json!([{
+            "row": 1, "column": 2, "author": "Anna", "text": "Da rivedere",
+            "threaded": true, "resolved": true,
+            "replies": [{ "author": "Bruno", "text": "Fatto", "date": "2026-10-30T09:00:00" }]
+        }])
+    );
+    let failure: Failure = document
+        .workbook
+        .remove_comment_reply(0, CellRef::new(1, 2), 5)
+        .unwrap_err()
+        .into();
+    assert_eq!(failure.code, "INVALID_COMMENT");
     assert_eq!(
         document.comments_summary(4).unwrap_err().code,
         "NO_SUCH_SHEET"

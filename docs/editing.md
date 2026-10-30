@@ -380,6 +380,21 @@ columns are inserted and deleted, and goes when its row or column does. An xlsx 
 in its comments part with the VML note boxes Excel shows them in; an ods as `office:annotation`;
 both read back with the author and the lines.
 
+A comment is a note, as older Excel and LibreOffice write them, or a thread, as Excel 365 does:
+`start_comment_thread(sheet, cell, author, text, date)` opens one, `reply_to_comment` answers it,
+`set_comment_resolved` resolves or reopens it and `remove_comment_reply` takes a reply away; a
+note answered or resolved becomes a thread, and `set_comment` on a thread changes its text and
+keeps its author and replies. A date is ISO 8601 (`2026-10-30T09:00:00.000Z`), passed in by the
+host, since WebAssembly has no clock; a thread keeps at most 1,000 replies.
+
+An xlsx keeps a thread in its `threadedComments` part, the people who wrote it in
+`xl/persons/person.xml`, and beside it the note Excel writes for the versions that do not read
+threads, its author `tc=` and the thread's id and its text the thread spelled out. Reading an
+xlsx takes the threads and the notes on the cells no thread is on. The ids are GUIDs made from
+where each thread sits, so the same workbook is always written the same way. ODF has no
+threads: an ods writes a thread as the annotation of its cell, the replies following its text as
+paragraphs that open with their author, and reads it back as one note.
+
 ### Charts
 
 `charts(sheet)` lists the charts of a sheet, each with where it sits (`ChartPlacement`: the cell
@@ -452,8 +467,8 @@ the file back as it came.
 An ods keeps the frozen panes in `settings.xml` and the filter as a `table:database-range` with its
 conditions, the rows it hides marked as filtered.
 
-Not kept: the threaded comments of Excel 365 (their legacy note is kept), and formulas with
-functions outside the list, which show `#NAME?` after an edit recalculates them.
+Not kept: formulas with functions outside the list, which show `#NAME?` after an edit
+recalculates them.
 
 ## From JavaScript
 
@@ -466,7 +481,8 @@ each with its `input`, `display`, `kind` and `format`) and sends each action as 
 `clearStyles`, `mergeCells`, `unmergeCells`, `clearRange`, `copyRange`, `insertRows`, `deleteRows`,
 `insertColumns`, `deleteColumns`, `addSheet`, `renameSheet`, `removeSheet`,
 `setConditionalFormats`, `setValidations`, `fillRange`, `sortRange`, `setAutoFilter`,
-`setFilterColumn`, `setFrozen`, `setDefinedName`, `removeDefinedName`, `setComment`, `addChart`,
+`setFilterColumn`, `setFrozen`, `setDefinedName`, `removeDefinedName`, `setComment`,
+`startCommentThread`, `replyToComment`, `setCommentResolved`, `removeCommentReply`, `addChart`,
 `setChart`, `removeChart`, `setToday`, `save`, `saveOds`, `saveCsv`; `filterChoices`, `pictures`
 with `pictureBytes`, `definedNames`, `comments`, `charts`, `chartForRange`, `delimiter` and
 `functionNames` serve an editor's menus; `stylesJson` and

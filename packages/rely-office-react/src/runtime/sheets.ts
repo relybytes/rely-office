@@ -187,6 +187,22 @@ class BrowserSheetDocument implements SheetDocument {
     call(() => this.document.setComment(sheet, row, column, author, text));
   }
 
+  startCommentThread(sheet: number, row: number, column: number, text: string, author = '', date = ''): void {
+    call(() => this.document.startCommentThread(sheet, row, column, author, text, date));
+  }
+
+  replyToComment(sheet: number, row: number, column: number, text: string, author = '', date = ''): void {
+    call(() => this.document.replyToComment(sheet, row, column, author, text, date));
+  }
+
+  setCommentResolved(sheet: number, row: number, column: number, resolved: boolean): void {
+    call(() => this.document.setCommentResolved(sheet, row, column, resolved));
+  }
+
+  removeCommentReply(sheet: number, row: number, column: number, reply: number): void {
+    call(() => this.document.removeCommentReply(sheet, row, column, reply));
+  }
+
   mergeCells(sheet: number, { top, left, bottom, right }: CellWindow): void {
     call(() => this.document.mergeCells(sheet, top, left, bottom, right));
   }

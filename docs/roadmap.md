@@ -133,6 +133,12 @@ autosave, and where an inserted image goes, all through the components' props.
 | 8.6 | Charts of a sheet made from a selection, changed, moved and removed; the pictures and charts of an ods kept on save | done (0.8.0) |
 | 8.7 | Floating images edited in the document editor and written to docx, odt and HTML | done (0.8.0) |
 
+## Phase 9: the rest of a spreadsheet user's file (unreleased)
+
+| Step | Content | Status |
+| --- | --- | --- |
+| 9.1 | The threaded comments of Excel 365: replies, dates and resolved state, read, edited and written in xlsx, one annotation in ods | done |
+
 ## Next
 
 - The adjust values of the bent, curved, circular and U-turn arrows, the quad arrow callout, the

@@ -433,6 +433,7 @@ fn names_and_comments_survive_xlsx_and_ods() {
             Some(&Comment {
                 author: "Anna".to_owned(),
                 text: "Ultimo valore\nda confermare".to_owned(),
+                ..Comment::default()
             }),
             "{name}"
         );
@@ -478,4 +479,96 @@ fn a_name_the_model_cannot_keep_is_left_out() {
     assert_eq!(kept.len(), 1);
     assert_eq!(kept[0].name, "Good");
     assert!(kept[0].hidden);
+}
+
+fn threaded_book() -> Workbook {
+    let mut book = Workbook::new();
+    book.start_comment_thread(
+        0,
+        cell("B2"),
+        "Anna",
+        "Prezzo?",
+        Some("2026-10-30T09:00:00"),
+    )
+    .unwrap();
+    book.reply_to_comment(
+        0,
+        cell("B2"),
+        "Bruno",
+        "Confermato\nieri",
+        Some("2026-10-30T09:05:00"),
+    )
+    .unwrap();
+    book.set_comment_resolved(0, cell("B2"), true).unwrap();
+    book.set_comment(0, cell("C3"), "Carla", "Nota").unwrap();
+    book
+}
+
+#[test]
+fn writes_a_thread_with_its_people_and_the_note_beside_it() {
+    let bytes = write_xlsx(&threaded_book()).unwrap();
+    let threads = member(&bytes, "xl/threadedComments/threadedComment1.xml");
+    assert!(threads.contains(r#"<threadedComment ref="B2" dT="2026-10-30T09:00:00""#));
+    assert!(threads.contains(r#" done="1"><text>Prezzo?</text>"#));
+    assert_eq!(threads.matches("parentId=").count(), 1);
+    let persons = member(&bytes, "xl/persons/person.xml");
+    assert!(
+        persons.contains(r#"displayName="Anna""#) && persons.contains(r#"displayName="Bruno""#)
+    );
+    assert!(!persons.contains("Carla"));
+    let comments = member(&bytes, "xl/comments1.xml");
+    assert!(comments.contains("<author>tc={"));
+    assert!(comments.contains("<author>Carla</author>"));
+    assert!(comments.contains("[Threaded comment]"));
+    assert!(comments.contains("Reply:\n    Bruno: Confermato\n    ieri"));
+    let relationships = member(&bytes, "xl/worksheets/_rels/sheet1.xml.rels");
+    assert!(relationships.contains("../threadedComments/threadedComment1.xml"));
+    assert!(member(&bytes, "xl/_rels/workbook.xml.rels").contains("persons/person.xml"));
+    let types = member(&bytes, "[Content_Types].xml");
+    assert!(types.contains("application/vnd.ms-excel.threadedcomments+xml"));
+    assert!(types.contains("application/vnd.ms-excel.person+xml"));
+    // The same workbook is written the same way.
+    assert_eq!(bytes, write_xlsx(&threaded_book()).unwrap());
+}
+
+#[test]
+fn a_thread_survives_xlsx_and_becomes_one_comment_in_ods() {
+    let book = threaded_book();
+    let read = read_spreadsheet(
+        &write_xlsx(&book).unwrap(),
+        Some("a.xlsx"),
+        &Limits::default(),
+        Locale::English,
+    )
+    .unwrap();
+    assert_eq!(
+        read.sheets()[0].comment(cell("B2")),
+        book.sheets()[0].comment(cell("B2"))
+    );
+    assert_eq!(
+        read.sheets()[0].comment(cell("C3")),
+        book.sheets()[0].comment(cell("C3"))
+    );
+    let read = read_spreadsheet(
+        &crate::ods::write_ods(&book).unwrap(),
+        Some("a.ods"),
+        &Limits::default(),
+        Locale::English,
+    )
+    .unwrap();
+    let comment = read.sheets()[0].comment(cell("B2")).unwrap();
+    assert_eq!(comment.author, "Anna");
+    assert_eq!(comment.text, "Prezzo?\nBruno: Confermato\nieri");
+    assert_eq!(comment.date.as_deref(), Some("2026-10-30T09:00:00"));
+    assert!(!comment.threaded && comment.replies.is_empty());
+}
+
+#[test]
+fn guids_are_braced_version_four() {
+    let id = guid("thread:0:1:1");
+    assert_eq!(id.len(), 38);
+    assert!(id.starts_with('{') && id.ends_with('}'));
+    assert_eq!(&id[15..16], "4");
+    assert!("89AB".contains(&id[20..21]));
+    assert_ne!(id, guid("thread:0:1:2"));
 }

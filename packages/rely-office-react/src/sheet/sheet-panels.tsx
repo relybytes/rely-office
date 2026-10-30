@@ -341,28 +341,41 @@ export function ValidationPanel({
   );
 }
 
-/** The comments of a sheet, and the comment of the selected cell to write or remove. */
+/**
+ * The comments of a sheet, and the comment of the selected cell to write or remove. A new comment
+ * opens a thread, as Excel 365 does; a thread is answered, resolved and reopened here.
+ */
 export function CommentPanel({
   words,
   selection,
   comments,
   onChange,
+  onStart,
+  onReply,
+  onResolve,
+  onRemoveReply,
   onSelect,
   onClose,
 }: PanelProps & {
   comments: CellComment[];
   onChange: (row: number, column: number, text: string) => void;
+  onStart: (row: number, column: number, text: string) => void;
+  onReply: (row: number, column: number, text: string) => void;
+  onResolve: (row: number, column: number, resolved: boolean) => void;
+  onRemoveReply: (row: number, column: number, reply: number) => void;
   onSelect: (row: number, column: number) => void;
 }): ReactElement {
   const target = { row: selection.top, column: selection.left };
   const current = comments.find((comment) => comment.row === target.row && comment.column === target.column);
   const [draft, setDraft] = useState(current?.text ?? '');
+  const [reply, setReply] = useState('');
   const [shown, setShown] = useState(`${target.row}:${target.column}:${current?.text ?? ''}`);
   // A new cell selected, or its comment changed elsewhere, starts the draft again.
   const key = `${target.row}:${target.column}:${current?.text ?? ''}`;
   if (key !== shown) {
     setShown(key);
     setDraft(current?.text ?? '');
+    setReply('');
   }
   return (
     <aside className="rely-sheet-panel" aria-label={words.comments}>
@@ -385,18 +398,69 @@ export function CommentPanel({
             <span className="rely-sheet-rule-text">
               {comment.author ? <strong>{comment.author}: </strong> : null}
               {comment.text}
+              {comment.resolved ? <em className="rely-sheet-comment-resolved"> {words.resolved}</em> : null}
             </span>
             <button type="button" onClick={() => onChange(comment.row, comment.column, '')}>
               {words.remove}
             </button>
+            {comment.replies.length > 0 ? (
+              <ol className="rely-sheet-comment-replies">
+                {comment.replies.map((answer, index) => (
+                  <li key={index}>
+                    <span className="rely-sheet-rule-text">
+                      {answer.author ? <strong>{answer.author}: </strong> : null}
+                      {answer.text}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={words.removeReply}
+                      title={words.removeReply}
+                      onClick={() => onRemoveReply(comment.row, comment.column, index)}
+                    >
+                      {'×'}
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
           </li>
         ))}
       </ol>
+      {current ? (
+        <form
+          className="rely-sheet-panel-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (reply.trim() === '') return;
+            onReply(target.row, target.column, reply);
+            setReply('');
+          }}
+        >
+          <label>
+            <span>{words.reply}</span>
+            <textarea
+              value={reply}
+              rows={2}
+              placeholder={words.replyPlaceholder}
+              onChange={(event) => setReply(event.target.value)}
+            />
+          </label>
+          <div className="rely-sheet-panel-actions">
+            <button type="submit" className="rely-sheet-panel-submit">
+              {words.reply}
+            </button>
+            <button type="button" onClick={() => onResolve(target.row, target.column, !current.resolved)}>
+              {current.resolved ? words.reopen : words.resolve}
+            </button>
+          </div>
+        </form>
+      ) : null}
       <form
         className="rely-sheet-panel-form"
         onSubmit={(event) => {
           event.preventDefault();
-          onChange(target.row, target.column, draft);
+          if (current) onChange(target.row, target.column, draft);
+          else if (draft.trim() !== '') onStart(target.row, target.column, draft);
         }}
       >
         <p className="rely-sheet-panel-target">

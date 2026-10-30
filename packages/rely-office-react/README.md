@@ -125,8 +125,9 @@ conditional formats and the validations of the selection. While a formula is typ
 it could be calling are offered in the locale's names; Tab or Enter takes one. The pictures and
 charts of the file are drawn over the cells, each chart from the cells as they are now.
 
-The comments panel writes the comment of the active cell (by `author`), and a commented cell
-shows a mark and its comment on hover; the names panel defines the names formulas read. The
+The comments panel writes the comment of the active cell (by `author`), a new one opening a
+thread as Excel 365 does, answers it, resolves and reopens it, and a commented cell shows a mark
+and its comment with the replies on hover; the names panel defines the names formulas read. The
 charts panel inserts a chart of the selection in the type chosen, and changes the chosen one: its
 type, title, legend, stacking and data. A chart is chosen by a click, moved by dragging it,
 resized by its corner and removed with Delete.

@@ -363,6 +363,22 @@ class SheetDocument {
     call(() => this.document.setComment(sheet, row, column, author, text));
   }
 
+  startCommentThread(sheet, row, column, text, author = '', date = '') {
+    call(() => this.document.startCommentThread(sheet, row, column, author, text, date));
+  }
+
+  replyToComment(sheet, row, column, text, author = '', date = '') {
+    call(() => this.document.replyToComment(sheet, row, column, author, text, date));
+  }
+
+  setCommentResolved(sheet, row, column, resolved) {
+    call(() => this.document.setCommentResolved(sheet, row, column, resolved));
+  }
+
+  removeCommentReply(sheet, row, column, reply) {
+    call(() => this.document.removeCommentReply(sheet, row, column, reply));
+  }
+
   mergeCells(sheet, { top, left, bottom, right }) {
     call(() => this.document.mergeCells(sheet, top, left, bottom, right));
   }

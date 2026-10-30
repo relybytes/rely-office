@@ -16,6 +16,24 @@ use rely_office_core::{
 
 use crate::arrange::AutoFilter;
 
+pub use rely_office_core::CommentReply;
+
+/// The author, text and date of a comment or a reply, checked and trimmed.
+fn comment_parts(
+    author: &str,
+    text: &str,
+    date: Option<&str>,
+) -> Result<(String, String, Option<String>), EditError> {
+    if text.chars().count() > MAX_COMMENT_CHARS || author.chars().count() > MAX_COMMENT_CHARS {
+        return Err(EditError::OutOfBounds);
+    }
+    let text = text.replace("\r\n", "\n");
+    if text.trim().is_empty() || date.is_some_and(|date| !is_comment_date(date)) {
+        return Err(EditError::InvalidComment);
+    }
+    Ok((author.trim().to_owned(), text, date.map(str::to_owned)))
+}
+
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS};
 use crate::evaluate;
 use crate::formula::{Expr, FormulaError};
@@ -181,6 +199,10 @@ pub enum EditError {
         "a chart reads from one to 64 ranges of the workbook and has a title of 255 characters at most"
     )]
     InvalidChart,
+    #[error(
+        "a reply goes to a comment the cell has, names a reply it holds and carries an ISO 8601 date"
+    )]
+    InvalidComment,
 }
 
 /// A name the workbook defines, `Aliquota` or `Vendite`: what it refers to, a range, a value
@@ -194,15 +216,49 @@ pub struct DefinedName {
     pub hidden: bool,
 }
 
-/// A comment on a cell: who wrote it and its text, lines separated by `\n`.
+/// A comment on a cell: who wrote it and its text, lines separated by `\n`. A thread, the
+/// comment of Excel 365, also has a date, replies and whether it is resolved; a note has none.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Comment {
     pub author: String,
     pub text: String,
+    /// When it was written, in ISO 8601: `2026-10-30T10:00:00`.
+    pub date: Option<String>,
+    pub threaded: bool,
+    pub resolved: bool,
+    pub replies: Vec<CommentReply>,
 }
 
 /// The longest comment a cell keeps, in characters, as Excel limits it.
 pub const MAX_COMMENT_CHARS: usize = 32_767;
+/// The most replies a thread keeps.
+pub const MAX_COMMENT_REPLIES: usize = 1_000;
+
+/// A date a comment may carry: ISO 8601 from the year to the second, a fraction and a zone
+/// allowed after it, as `2026-10-30T10:00:00.000Z`.
+fn is_comment_date(date: &str) -> bool {
+    let bytes = date.as_bytes();
+    let digits = |range: std::ops::Range<usize>| {
+        bytes
+            .get(range)
+            .is_some_and(|part| part.iter().all(u8::is_ascii_digit))
+    };
+    date.len() <= 40
+        && digits(0..4)
+        && bytes.get(4) == Some(&b'-')
+        && digits(5..7)
+        && bytes.get(7) == Some(&b'-')
+        && digits(8..10)
+        && bytes.get(10) == Some(&b'T')
+        && digits(11..13)
+        && bytes.get(13) == Some(&b':')
+        && digits(14..16)
+        && bytes.get(16) == Some(&b':')
+        && digits(17..19)
+        && date[19..]
+            .chars()
+            .all(|character| character.is_ascii_digit() || ".:+-Z".contains(character))
+}
 
 /// A workbook with its computed values; every edit recalculates.
 #[derive(Debug, Clone, PartialEq)]
@@ -842,16 +898,128 @@ impl Workbook {
         let text = text.replace("\r\n", "\n");
         if text.trim().is_empty() {
             target.comments.remove(&cell);
+        } else if let Some(known) = target.comments.get_mut(&cell) {
+            known.text = text;
+            if known.author.is_empty() {
+                author.trim().clone_into(&mut known.author);
+            }
         } else {
             target.comments.insert(
                 cell,
                 Comment {
                     author: author.trim().to_owned(),
                     text,
+                    ..Comment::default()
                 },
             );
         }
         Ok(())
+    }
+
+    /// Open a thread on a cell, as Excel 365 does, in place of any comment it had.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NoSuchSheet`], [`EditError::OutOfBounds`] for a cell past the grid or a text
+    /// too long, [`EditError::InvalidComment`] for an empty text or a date not in ISO 8601.
+    pub fn start_comment_thread(
+        &mut self,
+        sheet: usize,
+        cell: CellRef,
+        author: &str,
+        text: &str,
+        date: Option<&str>,
+    ) -> Result<(), EditError> {
+        let (author, text, date) = comment_parts(author, text, date)?;
+        if cell.row >= MAX_ROWS || cell.column >= MAX_COLUMNS {
+            return Err(EditError::OutOfBounds);
+        }
+        let target = self
+            .sheets
+            .get_mut(sheet)
+            .ok_or(EditError::NoSuchSheet(sheet))?;
+        target.comments.insert(
+            cell,
+            Comment {
+                author,
+                text,
+                date,
+                threaded: true,
+                ..Comment::default()
+            },
+        );
+        Ok(())
+    }
+
+    /// Answer the comment of a cell; a note answered becomes a thread.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NoSuchSheet`], [`EditError::OutOfBounds`] for a text too long,
+    /// [`EditError::InvalidComment`] when the cell has no comment, the thread is full, the text
+    /// is empty or the date is not in ISO 8601.
+    pub fn reply_to_comment(
+        &mut self,
+        sheet: usize,
+        cell: CellRef,
+        author: &str,
+        text: &str,
+        date: Option<&str>,
+    ) -> Result<(), EditError> {
+        let (author, text, date) = comment_parts(author, text, date)?;
+        let comment = self.comment_mut(sheet, cell)?;
+        if comment.replies.len() >= MAX_COMMENT_REPLIES {
+            return Err(EditError::InvalidComment);
+        }
+        comment.threaded = true;
+        comment.replies.push(CommentReply { author, text, date });
+        Ok(())
+    }
+
+    /// Mark the thread of a cell resolved or open again; a note marked becomes a thread.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NoSuchSheet`], [`EditError::InvalidComment`] when the cell has no comment.
+    pub fn set_comment_resolved(
+        &mut self,
+        sheet: usize,
+        cell: CellRef,
+        resolved: bool,
+    ) -> Result<(), EditError> {
+        let comment = self.comment_mut(sheet, cell)?;
+        comment.threaded = true;
+        comment.resolved = resolved;
+        Ok(())
+    }
+
+    /// Remove a reply of the thread of a cell, by its position.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NoSuchSheet`], [`EditError::InvalidComment`] when the cell has no comment or
+    /// no reply at that position.
+    pub fn remove_comment_reply(
+        &mut self,
+        sheet: usize,
+        cell: CellRef,
+        reply: usize,
+    ) -> Result<(), EditError> {
+        let comment = self.comment_mut(sheet, cell)?;
+        if reply >= comment.replies.len() {
+            return Err(EditError::InvalidComment);
+        }
+        comment.replies.remove(reply);
+        Ok(())
+    }
+
+    fn comment_mut(&mut self, sheet: usize, cell: CellRef) -> Result<&mut Comment, EditError> {
+        self.sheets
+            .get_mut(sheet)
+            .ok_or(EditError::NoSuchSheet(sheet))?
+            .comments
+            .get_mut(&cell)
+            .ok_or(EditError::InvalidComment)
     }
 
     /// Remove a name; formulas that read it show `#NAME?`. False when the workbook has none.

@@ -395,9 +395,22 @@ describe('SheetGrid', () => {
     fireEvent.change(within(panel).getByRole('textbox', { name: 'Comments' }), { target: { value: 'Da rivedere' } });
     fireEvent.click(within(panel).getByRole('button', { name: 'Save comment' }));
 
-    expect(sheet.comments(0)).toEqual([{ row: 0, column: 1, author: 'Anna', text: 'Da rivedere' }]);
+    expect(sheet.comments(0)).toMatchObject([
+      { row: 0, column: 1, author: 'Anna', text: 'Da rivedere', threaded: true, resolved: false, replies: [] },
+    ]);
+    expect(sheet.comments(0)[0].date).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(cell('B1').className).toContain('rely-sheet-commented');
     expect(cell('B1').getAttribute('title')).toBe('Anna: Da rivedere');
+
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Reply' }), { target: { value: 'Fatto' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Reply' }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'Resolve' }));
+    expect(sheet.comments(0)[0]).toMatchObject({ resolved: true, replies: [{ author: 'Anna', text: 'Fatto' }] });
+    expect(cell('B1').getAttribute('title')).toBe('Anna: Da rivedere\nAnna: Fatto');
+    expect(within(panel).getByText('Resolved')).toBeTruthy();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Reopen' }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'Remove reply' }));
+    expect(sheet.comments(0)[0]).toMatchObject({ resolved: false, replies: [] });
 
     fireEvent.mouseDown(cell('A1'));
     expect((within(panel).getByRole('textbox', { name: 'Comments' }) as HTMLTextAreaElement).value).toBe('');
