@@ -4,10 +4,15 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
-// A page with the three editors over documents made in the page itself: `npm run demo`.
+// A page with the three editors over documents made in the page itself, and two editors sharing
+// one document as two people would: `npm run demo`.
 
-import { StrictMode, useEffect, useState } from 'react';
+import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from 'y-protocols/awareness';
+import * as Y from 'yjs';
+import { documentCollaborationExtensions } from '../src/collab/document-extensions.js';
+import type { CollabSession } from '../src/collab/session.js';
 import {
   DocumentEditor,
   ITALIAN_DOCUMENT_EDITOR_LABELS,
@@ -22,15 +27,19 @@ import {
   openDocument,
   readPresentation,
   writeDocx,
+  withRunStyle,
   writePptx,
   type EditorDocument,
   type Presentation,
   type SheetDocument,
+  type SlideShape,
+  type TextBody,
+  type DocumentEditorHandle,
   type TableCell,
 } from '../src/index.js';
 import '../src/styles.css';
 
-type View = 'document' | 'sheet' | 'slides';
+type View = 'document' | 'sheet' | 'slides' | 'together';
 
 const cell = (text: string): TableCell => ({
   colSpan: 1,
@@ -97,6 +106,12 @@ function sampleDocument(): EditorDocument {
 }
 
 function samplePresentation(): Presentation {
+  const title = newTextShape({ x: 900_000, y: 700_000, width: 10_000_000, height: 1_100_000 }, 'Risultati 2026');
+  const points = newTextShape(
+    { x: 900_000, y: 2_100_000, width: 6_200_000, height: 2_600_000 },
+    'Ricavi in crescita del 18%\nTre nuovi clienti\nMargine stabile al 38%',
+  );
+  const badge = newTextShape({ x: 7_900_000, y: 2_300_000, width: 3_000_000, height: 1_300_000 }, '+18%');
   return readPresentation(
     writePptx({
       widthEmu: 12_192_000,
@@ -107,25 +122,41 @@ function samplePresentation(): Presentation {
             type: 'gradient',
             gradient: {
               stops: [
-                { offset: 0, colour: 'EFF6FF' },
+                { offset: 0, colour: 'DBEAFE' },
                 { offset: 1, colour: 'FFFFFF' },
               ],
               kind: { type: 'linear', angle: 90 },
             },
           },
           shapes: [
-            newTextShape({ x: 900_000, y: 900_000, width: 10_000_000, height: 1_200_000 }, 'Risultati 2026'),
-            newTextShape(
-              { x: 900_000, y: 2_300_000, width: 6_000_000, height: 2_400_000 },
-              'Ricavi in crescita del 18%\nTre nuovi clienti\nMargine stabile',
-            ),
-            newGeometryShape({ x: 7_800_000, y: 2_300_000, width: 3_000_000, height: 3_000_000 }, { type: 'ellipse' }),
+            { ...title, content: { ...title.content, ...withRunStyle(textBody(title), { size: 4400, bold: true, colour: '1E3A8A' }) } },
+            { ...points, content: { ...points.content, ...withRunStyle(textBody(points), { size: 2400, colour: '334155' }) } },
+            {
+              ...badge,
+              geometry: { type: 'roundedRectangle' },
+              fill: { type: 'solid', colour: '2563EB' },
+              line: null,
+              content: {
+                ...badge.content,
+                ...withRunStyle(textBody(badge), { size: 4800, bold: true, colour: 'FFFFFF' }),
+                anchor: 'middle',
+                paragraphs: withRunStyle(textBody(badge), { size: 4800, bold: true, colour: 'FFFFFF' }).paragraphs.map((paragraph) => ({ ...paragraph, align: 'center' as const })),
+              },
+            },
+            { ...newGeometryShape({ x: 7_900_000, y: 3_900_000, width: 1_400_000, height: 1_400_000 }, { type: 'ellipse' }), fill: { type: 'solid', colour: 'F59E0B' }, line: null },
+            { ...newGeometryShape({ x: 9_500_000, y: 3_900_000, width: 1_400_000, height: 1_400_000 }, { type: 'ellipse' }), fill: { type: 'solid', colour: '10B981' }, line: null },
           ],
         },
         { shapes: [newTextShape({ x: 900_000, y: 900_000, width: 10_000_000, height: 1_200_000 }, 'Prossimi passi')] },
       ],
     }),
   );
+}
+
+/** The text body of a text shape. */
+function textBody(shape: SlideShape): TextBody {
+  if (shape.content.type !== 'text') throw new Error('not a text shape');
+  return shape.content;
 }
 
 async function sampleSheet(): Promise<SheetDocument> {
@@ -166,7 +197,81 @@ async function sampleSheet(): Promise<SheetDocument> {
   workbook.setValidations(0, [
     { ranges: [{ firstRow: 1, firstColumn: 1, lastRow: 3, lastColumn: 2 }], kind: 'decimal', operator: 'greaterOrEqual', formulas: ['0'] },
   ]);
+  const chart = workbook.chartForRange(0, { top: 0, left: 0, bottom: 3, right: 2 }, 'column');
+  if (chart) workbook.addChart(0, chart, { row: 0, column: 5, offsetX: 0, offsetY: 0, width: 4_572_000, height: 2_743_200 });
+  workbook.startCommentThread(0, 3, 3, 'Margine sopra l\'obiettivo di marzo.', 'Anna Bianchi', '2026-10-28T09:00:00Z');
+  workbook.replyToComment(0, 3, 3, 'Confermo, lo porto in riunione.', 'Marco Rossi', '2026-10-28T09:20:00Z');
   return workbook;
+}
+
+/** Two people on one document: their Yjs documents and presences hear each other at once. */
+function sharedSessions(): [CollabSession, CollabSession] {
+  const docs = [new Y.Doc(), new Y.Doc()] as const;
+  const presences = docs.map((doc) => new Awareness(doc));
+  docs.forEach((doc, index) => {
+    const other = docs[1 - index]!;
+    doc.on('update', (update: Uint8Array, origin: unknown) => {
+      if (origin !== 'remote') Y.applyUpdate(other, update, 'remote');
+    });
+    presences[index]!.on('update', ({ added, updated, removed }: Record<string, number[]>, origin: unknown) => {
+      if (origin === 'remote') return;
+      const changed = [...added!, ...updated!, ...removed!];
+      applyAwarenessUpdate(presences[1 - index]!, encodeAwarenessUpdate(presences[index]!, changed), 'remote');
+    });
+  });
+  return [0, 1].map((index) => ({ doc: docs[index], awareness: presences[index] }) as unknown as CollabSession) as [
+    CollabSession,
+    CollabSession,
+  ];
+}
+
+const PEOPLE = [
+  { name: 'Anna Bianchi', color: '#2563eb' },
+  { name: 'Marco Rossi', color: '#db2777' },
+];
+
+function Together({ document }: { document: EditorDocument }) {
+  const [sessions] = useState(sharedSessions);
+  const second = useRef<DocumentEditorHandle>(null);
+
+  useEffect(() => {
+    // For a still picture (`?still`): Marco selects a line as if his page had the focus, so Anna's
+    // side shows his caret and selection without anyone clicking.
+    if (!new URLSearchParams(location.search).has('still')) return undefined;
+    const timer = setTimeout(() => {
+      const editor = second.current?.editor;
+      if (!editor) return;
+      let from = -1;
+      editor.state.doc.descendants((node, position) => {
+        if (from < 0 && node.isText && node.text?.includes('Nuovi clienti')) from = position;
+      });
+      if (from < 0) return;
+      editor.view.hasFocus = () => true;
+      editor.commands.setTextSelection({ from, to: from + 'Nuovi clienti'.length });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, []);
+
+  return (
+    <div className="together">
+      {sessions.map((session, index) => (
+        <section key={PEOPLE[index]!.name}>
+          <header style={{ borderColor: PEOPLE[index]!.color }}>{PEOPLE[index]!.name}</header>
+          <DocumentEditor
+            ref={index === 1 ? second : undefined}
+            document={document}
+            labels={ITALIAN_DOCUMENT_EDITOR_LABELS}
+            collaboration={{
+              doc: session.doc,
+              extensions: documentCollaborationExtensions(session, PEOPLE[index]!),
+              slot: index,
+              seed: index === 0,
+            }}
+          />
+        </section>
+      ))}
+    </div>
+  );
 }
 
 function Demo() {
@@ -187,9 +292,9 @@ function Demo() {
   return (
     <>
       <nav>
-        {(['document', 'sheet', 'slides'] as View[]).map((each) => (
+        {(['document', 'sheet', 'slides', 'together'] as View[]).map((each) => (
           <button key={each} type="button" aria-pressed={view === each} onClick={() => setView(each)}>
-            {{ document: 'Documento', sheet: 'Foglio', slides: 'Presentazione' }[each]}
+            {{ document: 'Documento', sheet: 'Foglio', slides: 'Presentazione', together: 'Insieme' }[each]}
           </button>
         ))}
       </nav>
@@ -197,6 +302,7 @@ function Demo() {
         {view === 'document' && document ? <DocumentEditor document={document} labels={ITALIAN_DOCUMENT_EDITOR_LABELS} pageView={new URLSearchParams(location.search).has('page')} /> : null}
         {view === 'sheet' && sheet ? <SheetGrid sheet={sheet} labels={ITALIAN_SHEET_GRID_LABELS} /> : null}
         {view === 'slides' && presentation ? <SlideEditor presentation={presentation} labels={ITALIAN_SLIDE_EDITOR_LABELS} /> : null}
+        {view === 'together' && document ? <Together document={document} /> : null}
       </main>
     </>
   );

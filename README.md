@@ -1,103 +1,98 @@
-# rely-office
+<p align="center">
+  <img src="docs/assets/rely-office-hero.svg" width="100%" alt="rely-office: Office files without an office suite. Safe Rust, WebAssembly, in process: read, draw, edit, save, together. 17 formats, 502 sheet functions, 4 React editors, 11 of 11 pages matching LibreOffice.">
+</p>
 
-Office documents without an office suite, in safe Rust: format detection, text for search, sheets
-as tables, a `.docx`, `.doc`, `.odt`, Markdown or HTML file as a document tree for a rich-text
-editor, rendering to PDF and PNG through Typst, writing `.docx`, `.odt`, Markdown or HTML back from
-that tree and `.pptx` or `.odp` from slides, so a Word or PowerPoint 97-2003 file converts to a new
-format, slides edited as JSON, and an editable spreadsheet with Excel's function library, names,
-comments, charts, conditional formats and validation that saves xlsx, ods and csv. It runs natively and, compiled to WebAssembly, in process from Node and in the
-browser, where React components edit documents, spreadsheets and slides.
+<p align="center">
+  <a href="LICENSE"><img alt="Licence: MPL-2.0" src="https://img.shields.io/badge/licence-MPL--2.0-2563eb"></a>
+  <a href="https://github.com/relybytes/rely-office/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/relybytes/rely-office/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/relybytes/rely-office/actions/workflows/fuzz.yml"><img alt="Fuzz" src="https://github.com/relybytes/rely-office/actions/workflows/fuzz.yml/badge.svg"></a>
+  <img alt="unsafe: forbidden" src="https://img.shields.io/badge/unsafe-forbidden-15803d">
+  <img alt="Rust and WebAssembly" src="https://img.shields.io/badge/Rust-WebAssembly-c2410c">
+  <a href="https://github.com/relybytes/rely-office/packages"><img alt="npm on GitHub Packages" src="https://img.shields.io/badge/npm-GitHub%20Packages-7c3aed"></a>
+</p>
 
-rely-office is built and maintained by [RelyBytes Consulting](https://relybytes.com) for the Drive
-of the [Rely Platform](https://relyplatform.app), where it previews, indexes, edits and exports the
-files a team stores, and is published under the Mozilla Public License 2.0 so that it stays open.
+<p align="center">
+  <a href="#see-it">See it</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#editing-together">Editing together</a> ·
+  <a href="#checked-against-libreoffice">Fidelity</a> ·
+  <a href="#formats">Formats</a> ·
+  <a href="#roadmap">Roadmap</a>
+</p>
+
+**rely-office** reads, draws, edits and writes Word, Excel, PowerPoint and OpenDocument files with
+no office suite anywhere: one Rust library, compiled to WebAssembly, that runs in process in Node
+and in the browser. A server gets previews, thumbnails, search text and conversions from it; a page
+gets four React editors, for documents, spreadsheets, slides and plain text, that several people can
+use at the same time.
+
+It is built and maintained by [RelyBytes Consulting](https://relybytes.com) for the Drive of the
+[Rely Platform](https://relyplatform.app), where it previews, indexes, edits and exports every
+file a team stores, and it is published under the Mozilla Public License 2.0 so that it stays open.
+
+## See it
+
+| Documents | Spreadsheets |
+| --- | --- |
+| <img src="docs/assets/editor-document.png" alt="The document editor with a meeting record: headings, a numbered list, a table, an equation and a quote, under a formatting toolbar with the font picker, beside the comments and notes"> | <img src="docs/assets/editor-sheet.png" alt="The spreadsheet grid with a monthly table, its totals computed by formulas, data bars, a threaded comment and a column chart drawn over the cells"> |
+| **Slides** | **Together** |
+| <img src="docs/assets/editor-slides.png" alt="The slide editor with the slide thumbnails, a slide with a title, three bullet points, a blue badge and two circles, and the speaker notes"> | <img src="docs/assets/editor-together.png" alt="Two document editors side by side on one shared document: on Anna's side, Marco's caret and selection appear with his name"> |
+
+Every picture is the demo of the frontend package, `npm run demo` in
+[`packages/rely-office-react`](packages/rely-office-react): the files it opens are made in the page
+itself.
+
+## How it works
 
 <p align="center">
   <img src="docs/assets/rely-office-flow.svg" width="100%" alt="Office files go in; rely-office detects the format from the bytes, reads it within limits into one model, and gives back PDF and PNG previews, text for search, a tree for an editor, and files saved back.">
 </p>
 
-## Why it exists
+Every format is read into **one model**: a document becomes one tree whatever its format, a
+workbook one editable spreadsheet, a presentation one list of slides. So a `.doc` from 1997, an
+`.odt` and a `.docx` are drawn, indexed, edited and saved by the same code, and an editor never
+knows which format it opened.
 
-- **No office suite on the server.** Previews, thumbnails and conversions used to mean a
-  LibreOffice or Gotenberg container per service. rely-office is a library: one dependency, in
-  process, the same build on every platform.
-- **Safe on untrusted files.** Safe Rust, a format read from the bytes and every input under a
-  [`Limits`](crates/rely-office-core/src/limits.rs) cap, fuzzed with `cargo-fuzz`: a file from a
-  stranger cannot exhaust the process that opens it.
-- **One model for everything.** A document becomes one tree whatever its format, so a `.doc` from
-  1997, an `.odt` and a `.docx` are drawn, indexed, edited and saved by the same code.
-- **Checked against the real thing.** Pages are compared with LibreOffice on a corpus of Italian
-  documents; [rendering.md](docs/rendering.md) has the method and the figures.
-
-## In production
-
-In the Drive of the Rely Platform, rely-office runs inside the Node service as WebAssembly and:
-
-| Feature | Calls |
-| --- | --- |
-| Shows Word, Excel, PowerPoint and OpenDocument files as pages, with a thumbnail of the first page | `render` |
-| Indexes the text of every Office file for search | `extractText` |
-| Opens a `.docx`, `.doc` or `.odt` as an editable document, images included | `readDocumentTree` |
-| Downloads an edited document as Word | `writeDocx` |
-
-## What it does
-
-| Format | Detect | Text for search | Sheets as tables | Document tree | Render | Write | Edit |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| docx | yes | body, headers, footers, notes | - | yes, with comments, tracked changes, equations, floating images and embedded objects | layout, with sections, headers, footers, notes, floating objects with text around their outline, drawn shapes, metafiles, charts, SmartArt and equations | as docx, odt, Markdown or HTML | through the tree |
-| doc (97-2003, Word 6 and 95) | yes | every story | - | yes | layout, as a docx | as docx or odt | through the tree |
-| odt | yes | body with headers and footers | - | yes | layout, as a docx | as odt, docx, Markdown or HTML | through the tree |
-| md, html | by name or doctype | yes | - | yes | layout, as a docx | as Markdown, HTML, docx or odt | through the tree |
-| xlsx, xlsm | yes | every sheet, tab separated | yes, from A1 | - | layout, with its print settings, cell formats, conditional formats, merges, and pictures and charts over their cells | yes | yes, with names, threaded comments, charts and pivot tables made and changed; its styles, merges, rules, pictures and macros kept |
-| ods | yes | every sheet | yes | - | layout, as an xlsx | as ods, xlsx or csv | yes, its names, comments, pictures, charts and pivot tables kept |
-| xls | yes | every sheet | yes | - | layout | as xlsx | yes |
-| csv, tsv | by name, text only | yes | yes, UTF-8 or Windows-1252, `;` or `,` | - | layout | as csv, xlsx or ods | yes |
-| pptx, odp | yes | slides and pages with their notes | - | slides | slides, with their masters, shapes, gradient and picture fills, tables, pictures, charts and SmartArt | as pptx or odp | as slides, with notes, transitions and animations |
-| ppt (97-2003) | yes | every text atom outside the masters | - | slides | slides, with their masters, shapes, fills, tables and pictures | as pptx or odp | as slides |
-
-The format comes from the bytes, never from the file name alone. Every input is bounded by
-[`Limits`](crates/rely-office-core/src/limits.rs): the input size, each decompressed archive
-member or stream (the zip bomb defence), the characters of text, the rows and columns of a table,
-and the images of a document tree; the spreadsheet model caps sheets and cells, formulas their
-length and nesting.
-
-## Use it from Rust
-
-```toml
-[dependencies]
-rely-office-core = "0.8"    # reading, the document tree, writing docx, odt, Markdown, HTML, pptx and odp
-rely-office-render = "0.8"  # PDF and PNG through Typst
-rely-office-sheet = "0.8"   # the editable spreadsheet
+```mermaid
+flowchart LR
+  subgraph rust["Rust workspace, unsafe code forbidden"]
+    core["rely-office-core<br/>detect · read · tree · write"]
+    sheet["rely-office-sheet<br/>formulas · pivots · charts"]
+    render["rely-office-render<br/>Typst · PDF · PNG"]
+  end
+  subgraph wasm["WebAssembly fronts"]
+    wcore["rely-office-wasm"]
+    wsheet["rely-office-sheet-wasm"]
+    wrender["rely-office-render-wasm"]
+  end
+  core --> wcore
+  sheet --> wsheet
+  render --> wrender
+  wcore --> node["@relybytes/rely-office<br/>Node backend"]
+  wsheet --> node
+  wrender --> node
+  wcore --> react["@relybytes/rely-office-react<br/>browser runtime + editors"]
+  wsheet --> react
+  react <-->|"WebSocket frames"| room["CollabRoom<br/>in your server"]
+  node -.->|"same model.d.ts"| react
 ```
 
-```rust
-use rely_office_core::{Limits, extract_text, read_document_tree, write_docx};
-use rely_office_render::{RenderRequest, Renderer};
-use rely_office_sheet::{CellRef, Locale, Workbook, write_xlsx};
-
-let bytes = std::fs::read("contratto.docx")?;
-let extracted = extract_text(&bytes, Some("contratto.docx"), &Limits::default())?;
-let tree = read_document_tree(&bytes, &Limits::default())?;
-let copy = write_docx(&tree)?;
-
-let renderer = Renderer::new(font_files); // TrueType or OpenType files, read once
-let rendered = renderer.render(&bytes, Some("contratto.docx"), &RenderRequest::default())?;
-
-let mut workbook = Workbook::new();
-workbook.set_input(0, CellRef::new(0, 0), "=SOMMA(B1:B9)", Locale::Italian)?;
-let xlsx = write_xlsx(&workbook)?;
-```
-
-## Two npm packages: one for the backend, one for the frontend
-
-| Package | Where | What |
+| Layer | What it gives | Where it runs |
 | --- | --- | --- |
-| [`@relybytes/rely-office`](packages/rely-office-node) | Node 18 or later | every call below, rendering to PDF and PNG included; synchronous, no native addon |
-| [`@relybytes/rely-office-react`](packages/rely-office-react) | the browser | reading and writing documents, presentations and spreadsheets, and the React editors over them |
+| `rely-office-core` | format detection from the bytes, text for search, the document tree, the slide model, the docx, odt, Markdown, HTML, pptx and odp writers | Rust, Node, browser |
+| `rely-office-sheet` | the editable spreadsheet: 502 functions, names, `LET` and `LAMBDA`, comments and threads, charts, pivot tables, conditional formats, validation; xlsx, ods and csv out | Rust, Node, browser |
+| `rely-office-render` | pages typeset through Typst into PDF and PNG | Rust, Node |
+| `@relybytes/rely-office` | every call above, synchronous, no native addon | Node 18 or later |
+| `@relybytes/rely-office-react` | reading and writing in the browser, `DocumentEditor`, `SheetGrid`, `SlideEditor`, `TextEditor`, and the collaboration channel | the browser, and the room on any JavaScript server |
 
-They declare the same model from one file, so a tree read on the server opens in the editor and a
-document saved in the browser is read back by the server. Rendering stays on the backend: the
-typesetter is 31 MB of WebAssembly.
+**Safe on untrusted files.** The format comes from the bytes, never from the name alone; every
+input is capped by [`Limits`](crates/rely-office-core/src/limits.rs) (input size, each decompressed
+member, text, rows and columns, images), the spreadsheet caps sheets, cells and formula nesting,
+`unsafe` is forbidden across the workspace, and six `cargo-fuzz` targets run every week. A file from
+a stranger cannot exhaust the process that opens it.
+
+## Quick start
 
 ### On the backend
 
@@ -105,65 +100,152 @@ typesetter is 31 MB of WebAssembly.
 const office = require('@relybytes/rely-office');
 
 office.extractText(bytes, 'contratto.docx');            // { format, text, truncated }
-office.readDocumentTree(bytes);                         // { blocks, media, report, comments?, objects? }
-office.readPresentation(pptx);                          // { slides, media, ... }, back with writePptx
-office.render(bytes, 'contratto.docx', { thumbnailWidth: 320 }); // { pdf, thumbnail, ... }
-office.writeDocx({ blocks, media });                    // Uint8Array, or writeOdt, writeMarkdown, writeHtml
+office.render(bytes, 'contratto.docx', { thumbnailWidth: 320 }); // { pdf, thumbnail, pages }
+office.readDocumentTree(bytes);                         // the tree an editor opens
 office.convertToDocx(doc);                              // a Word 97-2003 file as docx
-office.convertToPptx(ppt);                              // a PowerPoint 97-2003 file as pptx
 const sheet = office.openSheet(xlsx, 'conti.xlsx');     // edit, recalculate, save()
 ```
-
-The package [README](packages/rely-office-node/README.md) has the whole API.
 
 ### In the browser
 
 ```tsx
 import { DocumentEditor, initDocuments, openDocument } from '@relybytes/rely-office-react';
 import '@relybytes/rely-office-react/styles.css';
+import '@relybytes/rely-office-react/fonts.css'; // optional: metric-compatible Office fonts
 
 await initDocuments();
 const { document } = openDocument(bytes, { fileName }); // docx, doc, odt, Markdown or HTML
-<DocumentEditor ref={editor} document={document} />;    // then editor.current.saveDocx(), or saveDocumentAs
+<DocumentEditor ref={editor} document={document} />;    // then editor.current.saveDocx()
 ```
 
-`SheetGrid` edits a workbook from `openSheet` and `SlideEditor` a presentation from
-`readPresentation` the same way; the package [README](packages/rely-office-react/README.md) has
-all three.
+`SheetGrid` edits a workbook from `openSheet`, `SlideEditor` a presentation from
+`readPresentation` and `TextEditor` a text file from `openTextFile` the same way. The package
+READMEs, [backend](packages/rely-office-node/README.md) and
+[frontend](packages/rely-office-react/README.md), have the whole API.
 
-| Documents | Spreadsheets | Slides |
-| --- | --- | --- |
-| <img src="docs/assets/editor-document.png" alt="The document editor with a meeting record: headings, a numbered list, a table, an equation and a quote, under a formatting toolbar"> | <img src="docs/assets/editor-sheet.png" alt="The spreadsheet grid with a monthly table, its totals computed by formulas, a formula bar and sheet tabs"> | <img src="docs/assets/editor-slides.png" alt="The slide editor with the slide thumbnails, a slide with a title, a text and a circle, and the speaker notes"> |
+### From Rust
 
-## From a terminal
+```toml
+[dependencies]
+rely-office-core = "0.10"    # reading, the document tree, the writers
+rely-office-render = "0.10"  # PDF and PNG through Typst
+rely-office-sheet = "0.10"   # the editable spreadsheet
+```
+
+```rust
+use rely_office_core::{Limits, extract_text, read_document_tree, write_docx};
+use rely_office_sheet::{CellRef, Locale, Workbook, write_xlsx};
+
+let bytes = std::fs::read("contratto.docx")?;
+let text = extract_text(&bytes, Some("contratto.docx"), &Limits::default())?;
+let copy = write_docx(&read_document_tree(&bytes, &Limits::default())?)?;
+
+let mut workbook = Workbook::new();
+workbook.set_input(0, CellRef::new(0, 0), "=SOMMA(B1:B9)", Locale::Italian)?;
+let xlsx = write_xlsx(&workbook)?;
+```
+
+### From a terminal
 
 ```sh
-cargo run -p rely-office-cli -- text contract.docx
-cargo run -p rely-office-cli -- tree contract.docx
 cargo run -p rely-office-cli -- pdf contract.docx       # writes contract.docx.pdf
 cargo run -p rely-office-cli -- png sales.xlsx          # one PNG per page
-cargo run -p rely-office-cli -- svg logo.emf            # an EMF or WMF picture as SVG
-cargo run -p rely-office-cli -- rewrite contract.docx   # through the tree and back
 cargo run -p rely-office-cli -- rewrite relazione.doc   # a doc converted to docx
-cargo run -p rely-office-cli -- rewrite riunione.ppt    # a ppt converted to pptx
-cargo run -p rely-office-cli -- rewrite sales.xlsx      # through the editable model and back
 cargo run -p rely-office-cli -- ods sales.xlsx          # a spreadsheet saved as ods
 ```
 
-Renders use the fonts of the folder `RELY_OFFICE_FONTS` names, by default `./fonts`.
+## Editing together
+
+Documents, presentations, spreadsheets and text files can be edited by several people at once,
+each seeing the others' carets and selections, each undoing only their own edits. The library
+carries both ends of the channel and no transport: the host owns the WebSocket, who may join, and
+where the room and the versions are stored.
+
+```mermaid
+sequenceDiagram
+  participant A as Anna's page<br/>CollabSession
+  participant R as Your server<br/>CollabRoom
+  participant M as Marco's page<br/>CollabSession
+  A->>R: hello (session key)
+  R-->>A: welcome · seed: true
+  A->>R: the file, seeded into the shared document
+  M->>R: hello
+  R-->>M: welcome · the shared document
+  par edits merge
+    A->>R: Yjs update
+    R-->>M: Yjs update
+  and presence
+    M->>R: awareness: caret, selection
+    R-->>A: awareness
+  end
+  A->>R: saved as version 42
+  Note over R: the host checks the claim,<br/>then markSaved()
+  R-->>M: saved · nothing unsaved
+```
+
+| Kind | Shared as | Why |
+| --- | --- | --- |
+| documents, presentations, text | a Yjs document, merged by its CRDT | text and lists of shapes merge without anyone deciding |
+| spreadsheets | operations the room puts in one order | a formula, a sort or a row insert rewrites cells across sheets, so every client's engine applies each edit in the same order; formulas written meanwhile have their references moved |
+
+A server runs a room in a few lines, with no React and no TipTap installed:
+
+```ts
+import { CollabRoom } from '@relybytes/rely-office-react/collab';
+
+const room = new CollabRoom(storedState, {
+  events: { update: append, operation: append, saveClaim: verifyThenMarkSaved },
+});
+socket.on('message', (frame) => room.receive(peer.id, new Uint8Array(frame)));
+room.join({ id: peer.id, canWrite, send: (frame) => socket.send(frame) });
+```
+
+The protocol, the room's state and the save handshake are in
+[docs/collaboration.md](docs/collaboration.md).
+
+## Checked against LibreOffice
+
+Pages are typeset by rely-office and compared with the print of LibreOffice on a corpus of
+Italian business documents: every page passes.
+
+<p align="center">
+  <img src="docs/assets/rely-office-fidelity.svg" width="100%" alt="Bar chart: the distance of each of the 11 corpus pages from LibreOffice's print, all between 0.003 and 0.023, under the pass threshold of 0.03.">
+</p>
+
+| rely-office | LibreOffice |
+| --- | --- |
+| <img src="docs/assets/compare-rely-office.png" alt="A priced quote as rely-office typesets it: title, customer, a table of five items with totals and VAT, and the conditions"> | <img src="docs/assets/compare-libreoffice.png" alt="The same quote as LibreOffice prints it, line for line the same"> |
+
+The method, the fonts and the figures are in [docs/rendering.md](docs/rendering.md); CI runs the
+comparison on every push.
+
+## Formats
+
+| Format | Detect | Text for search | Render | Open in an editor | Save as |
+| --- | --- | --- | --- | --- | --- |
+| docx, docm | yes | body, headers, footers, notes | pages with sections, floating objects, shapes, charts, SmartArt and equations | `DocumentEditor`, with comments, tracked changes, equations, images and the document's fonts | itself, odt, Markdown, HTML; the macros of a docm kept, never run |
+| doc (97-2003, Word 6 and 95) | yes | every story | pages | `DocumentEditor` | docx or odt |
+| odt | yes | body, headers and footers | pages | `DocumentEditor` | itself, docx, Markdown, HTML |
+| md, html | by name or doctype | yes | pages | `DocumentEditor` | itself, docx, odt |
+| xlsx, xlsm | yes | every sheet | pages with print settings, formats, rules, pictures and charts | `SheetGrid`, with names, threaded comments, charts and pivot tables | itself, ods, csv; macros kept, never run |
+| ods | yes | every sheet | pages | `SheetGrid` | itself, xlsx, csv |
+| xls | yes | every sheet | pages | `SheetGrid` | xlsx |
+| csv, tsv | by name | yes | pages | `SheetGrid` | itself, xlsx, ods |
+| pptx, pptm, odp | yes | slides and notes | slides with masters, fills, tables, pictures, charts and SmartArt | `SlideEditor`, with notes, transitions and animations | itself, pptx or odp; macros kept, never run |
+| ppt (97-2003) | yes | every text atom | slides | `SlideEditor` | pptx or odp |
+| txt | by name | yes | - | `TextEditor`, encoding, byte order mark and line ending kept | itself |
+
+The old binary formats are read, never written: saving one gives its modern twin.
 
 ## Roadmap
 
 <p align="center">
-  <img src="docs/assets/rely-office-roadmap.svg" width="100%" alt="Releases 0.1 to 0.6 read, render, write and edit every format; 0.7 adds the React editor components for documents, sheets and slides.">
+  <img src="docs/assets/rely-office-roadmap.svg" width="100%" alt="Releases 0.1 to 0.10: read and index, render and write, fidelity, layout, draw and edit, editor components, complete editing, editing together, and the finishing touches.">
 </p>
 
-Six releases took the library from text extraction to drawing and saving every format above; 0.7
-added the editor components, React components that edit the document tree, the workbook and the
-slides directly. **0.8 makes the editing complete across the formats**: an odt, an odp, Markdown,
-HTML and csv are saved as themselves, the spreadsheet has Excel's function library with names,
-`LET` and `LAMBDA`, comments and charts made and changed in the grid, and floating images are
-edited in the document editor. What comes next is in the [roadmap](docs/roadmap.md).
+Ten releases took the library from text extraction to a suite people edit together. What comes
+next is in the [roadmap](docs/roadmap.md), the changes of each release in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Build and test
 
@@ -174,29 +256,30 @@ cargo install wasm-bindgen-cli --version "$(node scripts/build-npm.mjs --print-b
 node scripts/build-npm.mjs                          # writes both packages to dist/
 node packages/rely-office-node/test/smoke.cjs       # every Node export
 (cd packages/rely-office-react && npm test)         # the editors over the real WebAssembly
-node packages/rely-office-react/test/smoke-dist.mjs # the built browser runtime
-SOFFICE=soffice node scripts/corpus.mjs           # pages compared with LibreOffice
+(cd packages/rely-office-react && npm run demo)     # the demo of the pictures above
+SOFFICE=soffice node scripts/corpus.mjs             # pages compared with LibreOffice
 ```
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| [`crates/rely-office-core`](crates/rely-office-core) | detection, text, sheet tables, print settings and rules, the document tree and its looks, Markdown and HTML, the slide model, the docx, odt, Markdown, HTML, pptx and odp writers |
+| [`crates/rely-office-core`](crates/rely-office-core) | detection, text, the document tree and its looks, fonts, Markdown and HTML, the slide model, the writers |
 | [`crates/rely-office-render`](crates/rely-office-render) | documents to Typst source, typeset to PDF and PNG |
-| [`crates/rely-office-sheet`](crates/rely-office-sheet) | the editable spreadsheet: formulas, names, recalculation, edits, comments, charts, conditional formats and validation, xlsx, ods and csv out |
+| [`crates/rely-office-sheet`](crates/rely-office-sheet) | the editable spreadsheet: formulas, names, recalculation, comments, charts, pivot tables, rules; xlsx, ods and csv out |
 | [`crates/rely-office-cli`](crates/rely-office-cli) | the `rely-office` command |
 | [`crates/rely-office-wasm`](crates/rely-office-wasm), [`-render-wasm`](crates/rely-office-render-wasm), [`-sheet-wasm`](crates/rely-office-sheet-wasm) | the WebAssembly fronts |
 | [`crates/rely-office-corpus`](crates/rely-office-corpus) | the page comparison with LibreOffice |
-| [`packages/rely-office-node`](packages/rely-office-node) | the backend package `@relybytes/rely-office`, and `model.d.ts`, the model both packages declare |
-| [`packages/rely-office-react`](packages/rely-office-react) | the frontend package `@relybytes/rely-office-react`: the browser runtime and the editor components |
-| [`corpus/`](corpus) and [`scripts/corpus.mjs`](scripts/corpus.mjs) | the Italian documents of the comparison |
-| [`fonts/`](fonts) | the fonts the package ships: metric-compatible text faces under the SIL Open Font License 1.1, and DejaVu Math TeX Gyre for equations |
+| [`packages/rely-office-node`](packages/rely-office-node) | the backend package, and `model.d.ts`, the model both packages declare |
+| [`packages/rely-office-react`](packages/rely-office-react) | the frontend package: the browser runtime, the editors, the collaboration channel and the demo |
+| [`corpus/`](corpus) | the Italian documents of the comparison |
+| [`fonts/`](fonts) | metric-compatible faces under the SIL Open Font License 1.1, and DejaVu Math TeX Gyre for equations |
 | [`fuzz/`](fuzz) | cargo-fuzz targets |
 
 The design is in [docs/](docs/README.md): [architecture](docs/architecture.md),
-[rendering](docs/rendering.md), [editing](docs/editing.md), [the document tree](docs/document-tree.md)
-and the [roadmap](docs/roadmap.md); the changes of each release in [CHANGELOG.md](CHANGELOG.md).
+[rendering](docs/rendering.md), [editing](docs/editing.md),
+[collaboration](docs/collaboration.md), [the document tree](docs/document-tree.md) and the
+[roadmap](docs/roadmap.md).
 
 ## Licence
 
