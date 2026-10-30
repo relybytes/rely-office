@@ -360,7 +360,11 @@ impl Writer<'_> {
         let line = SINGLE_LINE_EM.max(metrics.single_em)
             * f64::from(paragraph.line_spacing_percent)
             / 100.0;
-        let leading = ((line - metrics.box_em) * size).max(0.0);
+        // An office suite sets the first baseline the font's ascent below the top of the line and
+        // gives every line, the first of the next paragraph too, the same height; Typst's own
+        // ascender is the typographic one, short of that in fonts such as Liberation Sans.
+        let top = (metrics.single_em - metrics.descent_em).min(line) * size;
+        let bottom = top - line * size;
         let mut runs = String::new();
         for run in &paragraph.runs {
             runs.push('#');
@@ -382,10 +386,11 @@ impl Writer<'_> {
         let margin = emu(paragraph.margin_left_emu);
         let indent = emu(paragraph.indent_emu);
         let text = format!(
-            "text(font: {}, size: {}, par(leading: {}{justify})[{runs}])",
+            "text(font: {}, size: {}, top-edge: {}, bottom-edge: {}, par(leading: 0pt{justify})[{runs}])",
             font_list(&families),
             points(size),
-            points(leading)
+            points(top),
+            points(bottom)
         );
         let body = match &paragraph.bullet {
             Some(bullet) => {

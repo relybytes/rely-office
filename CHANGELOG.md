@@ -3,6 +3,25 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## Unreleased
+
+### Added
+
+- `decompress_mtx(bytes, max_bytes)` in `rely-office-core`: a MicroType Express font back as
+  TrueType, as the W3C member submission of 2008 describes it, in safe Rust and capped at the size
+  given. The faces a Word 97-2003 document embeds compressed are now read into `fontFiles` rather
+  than counted in `fontsLeftOut`, so a doc converted to docx keeps them and its pages are drawn
+  with them. A fuzz target, `mtx`, runs it every week.
+- Three slide decks in the comparison with LibreOffice (quarterly results, an agenda with a table,
+  a process drawn with shapes), written as Flat ODP and turned into pptx by LibreOffice: 17 of 17
+  pages pass, the slides at 0.014 at most.
+
+### Fixed
+
+- The lines of a slide's text are as tall as PowerPoint and Impress make them: the first baseline
+  of a frame or a paragraph stood the typographic ascender below its top, a third of a line short
+  in Liberation Sans, and a paragraph closed up on the one before it.
+
 ## 0.10.1
 
 ### Added

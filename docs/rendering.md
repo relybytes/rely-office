@@ -129,7 +129,11 @@ PowerPoint does. An odp page is drawn over its master page: the master's title a
 stay templates, its footer, date and page number show when the page asks for them, and each
 outline level takes its own presentation style (`Default-outline2` one level down). Text frames
 keep their insets, anchor, bullets and numbering, and every shape is placed absolutely on a Typst
-page of the slide's size.
+page of the slide's size. Each line of a text frame is as tall as an office suite makes it, the
+larger of 1.2 em and the font's single line, times the line spacing, its baseline the font's
+Windows ascent below its top: the first line of a frame and the first of each paragraph stand
+where PowerPoint and Impress put them, since Typst's own ascender is the typographic one, which in
+Liberation Sans is barely above the capitals.
 
 A shape's outline comes from its geometry (`geometry.rs`). A `DrawingML` preset is evaluated from
 the guide formulas of ECMA-376 against the shape's size and adjust values (`presets.rs` holds the
@@ -198,11 +202,13 @@ the CLI reads the folder `RELY_OFFICE_FONTS` names, by default `./fonts`.
 ## The corpus and the pixel comparison
 
 `corpus/sources/` holds Italian documents written for the comparison: a service contract, a
-payment reminder, meeting minutes, a quote with a priced table, a three-page technical report, and
-two semicolon-separated sheets, one of them wider than a page. `scripts/corpus.mjs`:
+payment reminder, meeting minutes, a quote with a priced table, a three-page technical report, two
+semicolon-separated sheets, one of them wider than a page, and three Flat ODP decks: quarterly
+results with text beside shapes, an agenda with a shaded table, a sales process drawn with
+rounded rectangles, arrows and an ellipse. `scripts/corpus.mjs`:
 
-1. has LibreOffice write each HTML source as docx and each CSV as xlsx, so the documents carry
-   LibreOffice's own styles rather than hand-made XML;
+1. has LibreOffice write each HTML source as docx, each CSV as xlsx and each deck as pptx, so the
+   documents carry LibreOffice's own styles rather than hand-made XML;
 2. has LibreOffice print each document to PDF, rasterized to grey PNG at 72 dpi (`pdftoppm`, or
    Ghostscript with `RASTERIZER=gs`);
 3. runs `rely-office-corpus`, which renders each document at 72 dpi and compares the pages.
@@ -213,22 +219,24 @@ a missing paragraph, table or image. A page passes at 0.03 or less; pages of dif
 pages one side has and the other has not, fail. The report lands in `target/corpus/report.json`,
 our pages in `target/corpus/ours/`.
 
-Measured on 2026-10-28 with LibreOffice on Windows and Ghostscript as rasterizer: **11 of 11 pages
-pass (100%)**, the worst at 0.023. Every docx has the page count LibreOffice prints. What lines the
+Measured on 2026-10-30 with LibreOffice on Windows and Ghostscript as rasterizer: **17 of 17 pages
+pass (100%)**, the worst at 0.023; the six slides of the decks at 0.014 at most. Every docx has the
+page count LibreOffice prints. What lines the
 docx pages up is the spacing rule and the single line above, and the room a table row gives the
 double rule under it: two lines and the gap between them, three times the border's width, which
-Word and LibreOffice add to the row's height.
+Word and LibreOffice add to the row's height. What lines the slides up is the line box above: with
+Typst's ascender a paragraph started a third of a line too high and the next paragraph closed up.
 
 CI runs the comparison on every push with a regression floor of 40%, below the local figure since
 the Linux LibreOffice and Poppler differ; the job uploads the report and both sets of pages.
 
 ## Fuzzing
 
-`fuzz/` is a cargo-fuzz workspace of its own with six targets: `extract_text`, `read_workbook`,
-`read_document_tree`, `render`, `formula` and `spreadsheet`. `render` fails when the source written
-from any readable document does not typeset, which would be a bug of the writer; `formula` when a
-printed formula does not parse back to itself; `spreadsheet` when a workbook it read does not
-survive a write and a read. `.github/workflows/fuzz.yml` runs
+`fuzz/` is a cargo-fuzz workspace of its own with seven targets: `extract_text`, `read_workbook`,
+`read_document_tree`, `render`, `formula`, `spreadsheet` and `mtx`. `render` fails when the source
+written from any readable document does not typeset, which would be a bug of the writer; `formula`
+when a printed formula does not parse back to itself; `spreadsheet` when a workbook it read does
+not survive a write and a read; `mtx` when a MicroType Express font decompresses past its cap. `.github/workflows/fuzz.yml` runs
 each target for five minutes every Monday and by hand, on nightly, and uploads a crashing input.
 
 ```sh

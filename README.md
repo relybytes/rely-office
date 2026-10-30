@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/rely-office-hero.svg" width="100%" alt="rely-office: Office files without an office suite. Safe Rust, WebAssembly, in process: read, draw, edit, save, together. 17 formats, 502 sheet functions, 4 React editors, 11 of 11 pages matching LibreOffice.">
+  <img src="docs/assets/rely-office-hero.svg" width="100%" alt="rely-office: Office files without an office suite. Safe Rust, WebAssembly, in process: read, draw, edit, save, together. 17 formats, 502 sheet functions, 4 React editors, 17 of 17 pages matching LibreOffice.">
 </p>
 
 <p align="center">
@@ -69,7 +69,7 @@ knows which format it opened.
 **Safe on untrusted files.** The format comes from the bytes, never from the name alone; every
 input is capped by [`Limits`](crates/rely-office-core/src/limits.rs) (input size, each decompressed
 member, text, rows and columns, images), the spreadsheet caps sheets, cells and formula nesting,
-`unsafe` is forbidden across the workspace, and six `cargo-fuzz` targets run every week. A file from
+`unsafe` is forbidden across the workspace, and seven `cargo-fuzz` targets run every week. A file from
 a stranger cannot exhaust the process that opens it.
 
 ## Quick start
@@ -168,10 +168,10 @@ The protocol, the room's state and the save handshake are in
 ## Checked against LibreOffice
 
 Pages are typeset by rely-office and compared with the print of LibreOffice on a corpus of
-Italian business documents: every page passes.
+Italian business documents, spreadsheets and slide decks: every page passes.
 
 <p align="center">
-  <img src="docs/assets/rely-office-fidelity.svg" width="100%" alt="Bar chart: the distance of each of the 11 corpus pages from LibreOffice's print, all between 0.003 and 0.023, under the pass threshold of 0.03.">
+  <img src="docs/assets/rely-office-fidelity.svg" width="100%" alt="Bar chart: the distance of each of the 17 corpus pages and slides from LibreOffice's print, all between 0.003 and 0.023, under the pass threshold of 0.03.">
 </p>
 
 | rely-office | LibreOffice |
