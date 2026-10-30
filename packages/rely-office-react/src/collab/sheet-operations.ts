@@ -11,6 +11,7 @@
 import type {
   CellRange,
   CellWindow,
+  ChartDefinition,
   ChartPlacement,
   Condition,
   ConditionalFormat,
@@ -79,6 +80,24 @@ export interface SheetOperation {
    * the change was made, so the formulas of the others that name that sheet move with it.
    */
   sheetName?: string;
+  /**
+   * What an undo puts back over the others: an input, a rule list, a name or a chart that another
+   * client changed after it was taken is left as they made it.
+   */
+  guarded?: boolean;
+  /**
+   * The rows or columns an undo puts back just before this operation, which its positions
+   * already count: the others' changes are moved around them before this one moves past them.
+   */
+  follows?: RestoredBand;
+}
+
+/** Rows or columns an undo inserts again, as the operations after it in the same undo see them. */
+export interface RestoredBand {
+  sheet: number;
+  axis: 'row' | 'column';
+  at: number;
+  count: number;
 }
 
 /** The calls whose sheet the formulas of others may name, and so carry its name. */
@@ -434,6 +453,20 @@ function indexesPastRemovedSheet(operation: SheetOperation, removed: number): Sh
   }
 }
 
+/**
+ * The operation moved past a sheet's rename: its formulas name the sheet by its new name, and a
+ * change to that sheet's rows, name or place carries the new name, so the formulas written after
+ * the rename still move with it.
+ */
+function pastRenamedSheet(operation: SheetOperation, rename: SheetOperation): SheetOperation {
+  const to = rename.args[1] as string;
+  const from = rename.sheetName;
+  const renamed = from === undefined ? operation : mapFormulas(operation, (formula) => renameFormulaSheet(formula, from, to));
+  const carriesName =
+    renamed.sheetName !== undefined && SHEET_NAMED_MUTATORS.has(renamed.method) && renamed.args[0] === rename.args[0];
+  return carriesName ? { ...renamed, sheetName: to } : renamed;
+}
+
 /** The operation moved past a pivot table removed from the same sheet. */
 function pastRemovedPivot(operation: SheetOperation, sheet: number, index: number): SheetOperation | null {
   const indexed = ['setPivotTable', 'refreshPivotTable', 'removePivotTable'];
@@ -484,11 +517,23 @@ function mapCondition(condition: Condition, map: (formula: string) => string): C
   }
 }
 
+/** A chart's ranges passed through `map`. */
+function mapChart(chart: ChartDefinition, map: (formula: string) => string): ChartDefinition {
+  return {
+    ...chart,
+    ...(typeof chart.categories === 'string' ? { categories: map(chart.categories) } : {}),
+    series: chart.series.map((series) => ({
+      ...series,
+      values: map(series.values),
+      ...(typeof series.name === 'string' ? { name: map(series.name) } : {}),
+    })),
+  };
+}
+
 /**
  * The operation with every formula it carries passed through `map`, given the sheet the formula
  * belongs to: cell inputs, a region put back, the rules of conditional formats and validations,
- * and a defined name. The same operation when none changes. Chart ranges are left as they are,
- * as the workbook leaves those of a chart it holds.
+ * a defined name and the ranges of a chart. The same operation when none changes.
  */
 function mapFormulas(operation: SheetOperation, map: (formula: string, home: number) => string): SheetOperation {
   const args = operation.args;
@@ -538,10 +583,102 @@ function mapFormulas(operation: SheetOperation, map: (formula: string, home: num
       if (typeof args[1] === 'string') replace(1, map(args[1], home));
       break;
     }
+    case 'addChart':
+      replace(1, mapChart(args[1] as ChartDefinition, own));
+      break;
+    case 'setChart': {
+      const change = args[2] as { chart?: ChartDefinition; placement?: ChartPlacement } | undefined;
+      if (change?.chart) replace(2, { ...change, chart: mapChart(change.chart, own) });
+      break;
+    }
     default:
       break;
   }
   return changed ? { ...operation, args: changed } : operation;
+}
+
+/** The cells an operation writes, on one sheet; null when it writes none. */
+function cellsWritten(operation: SheetOperation): { sheet: number; holds: (row: number, column: number) => boolean } | null {
+  const args = operation.args;
+  const inside = (window: CellWindow) => (row: number, column: number) =>
+    row >= window.top && row <= window.bottom && column >= window.left && column <= window.right;
+  switch (operation.method) {
+    case 'setInput': {
+      const [sheet, row, column] = args as [number, number, number];
+      return { sheet, holds: (r, c) => r === row && c === column };
+    }
+    case 'setInputs': {
+      const cells = new Set((args[1] as [number, number, string][]).map(([row, column]) => `${row}:${column}`));
+      return { sheet: args[0] as number, holds: (row, column) => cells.has(`${row}:${column}`) };
+    }
+    case 'clearRange':
+    case 'sortRange':
+      return { sheet: args[0] as number, holds: inside(args[1] as CellWindow) };
+    case 'fillRange':
+      return { sheet: args[0] as number, holds: inside(args[2] as CellWindow) };
+    case 'copyRange': {
+      const source = args[1] as CellWindow;
+      const row = args[3] as number;
+      const column = args[4] as number;
+      return {
+        sheet: args[2] as number,
+        holds: inside({ top: row, left: column, bottom: row + source.bottom - source.top, right: column + source.right - source.left }),
+      };
+    }
+    case 'restoreRegion': {
+      const area = (args[1] as SheetRegion).area;
+      return {
+        sheet: args[0] as number,
+        holds: inside({ top: area.firstRow, left: area.firstColumn, bottom: area.lastRow, right: area.lastColumn }),
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+/** What an undo puts back, without what another client changed since it was taken. */
+function pastGuarded(operation: SheetOperation, earlier: SheetOperation): SheetOperation | null {
+  const args = operation.args;
+  switch (operation.method) {
+    case 'setInputs': {
+      const written = cellsWritten(earlier);
+      if (!written || written.sheet !== args[0]) return operation;
+      const inputs = args[1] as [number, number, string][];
+      const band = operation.follows;
+      // Where a cell was before the undo put its rows back, as the others' change names it.
+      const before = (row: number, column: number): [number, number] | null => {
+        if (!band || band.sheet !== args[0]) return [row, column];
+        const index = band.axis === 'row' ? row : column;
+        if (index >= band.at && index < band.at + band.count) return null;
+        const moved = index >= band.at + band.count ? index - band.count : index;
+        return band.axis === 'row' ? [moved, column] : [row, moved];
+      };
+      const kept = inputs.filter(([row, column]) => {
+        const cell = before(row, column);
+        return cell === null || !written.holds(cell[0], cell[1]);
+      });
+      if (kept.length === inputs.length) return operation;
+      return kept.length === 0 ? null : { ...operation, args: [args[0], kept] };
+    }
+    case 'setConditionalFormats':
+    case 'setValidations':
+      return earlier.method === operation.method && earlier.args[0] === args[0] ? null : operation;
+    case 'setDefinedName': {
+      if (earlier.method !== 'setDefinedName' && earlier.method !== 'removeDefinedName') return operation;
+      const scope = earlier.method === 'setDefinedName' ? earlier.args[2] : earlier.args[1];
+      const sameName = (earlier.args[0] as string).toLowerCase() === (args[0] as string).toLowerCase();
+      return sameName && (scope ?? null) === (args[2] ?? null) ? null : operation;
+    }
+    case 'setChart':
+      return (earlier.method === 'setChart' || earlier.method === 'removeChart') &&
+        earlier.args[0] === args[0] &&
+        earlier.args[1] === args[1]
+        ? null
+        : operation;
+    default:
+      return operation;
+  }
 }
 
 /**
@@ -551,17 +688,99 @@ function mapFormulas(operation: SheetOperation, map: (formula: string, home: num
  * other pair is left as it is, the later one winning where both change the same cell.
  */
 export function transformSheetOperation(operation: SheetOperation, earlier: SheetOperation): SheetOperation | null {
+  if (operation.follows) return pastAroundBand(operation, earlier, operation.follows);
+  const moved = movedPast(operation, earlier);
+  return moved?.guarded ? pastGuarded(moved, earlier) : moved;
+}
+
+/**
+ * An operation that follows rows or columns its undo puts back, moved past another client's
+ * change made without them: a change to the same rows is first moved around the band, so a
+ * position after it moves as it would have before the undo, and the band moves with it.
+ */
+function pastAroundBand(operation: SheetOperation, earlier: SheetOperation, band: RestoredBand): SheetOperation | null {
+  const shift = structural(earlier);
+  if (shift && shift.sheet === band.sheet && shift.axis === band.axis) {
+    let moved: SheetOperation | null = operation;
+    for (const piece of shiftsAroundBand(shift, band)) {
+      if (moved === null) break;
+      moved = pastShift(moved, piece);
+    }
+    if (moved && (moved.method === 'addChart' || moved.method === 'setChart')) moved = withoutBrokenSeries(moved);
+    return moved && { ...moved, follows: { ...band, at: bandPastShift(band, shift) } };
+  }
+  const moved = movedPast(operation, earlier);
+  if (moved === null) return null;
+  let follows: RestoredBand | undefined = band;
+  if (earlier.method === 'removeSheet') {
+    const removed = earlier.args[0] as number;
+    follows = band.sheet === removed ? undefined : band.sheet > removed ? { ...band, sheet: band.sheet - 1 } : band;
+  }
+  const { follows: _band, ...rest } = moved;
+  const placed: SheetOperation = follows ? { ...rest, follows } : rest;
+  return placed.guarded ? pastGuarded(placed, earlier) : placed;
+}
+
+/** Another client's rows or columns, made without the band, as they fall once the band is back. */
+function shiftsAroundBand(shift: Shift, band: RestoredBand): Shift[] {
+  if (shift.inserted) return [{ ...shift, at: shift.at > band.at ? shift.at + band.count : shift.at }];
+  const last = shift.at + shift.count - 1;
+  if (last < band.at) return [shift];
+  if (shift.at >= band.at) return [{ ...shift, at: shift.at + band.count }];
+  // A deletion across the place the band goes back to: the part after it, then the part before.
+  return [
+    { ...shift, at: band.at + band.count, count: last - band.at + 1 },
+    { ...shift, at: shift.at, count: band.at - shift.at },
+  ];
+}
+
+/** Where the band goes back once another client's rows or columns moved it, as its insertion moves. */
+function bandPastShift(band: RestoredBand, shift: Shift): number {
+  if (shift.inserted) return band.at >= shift.at ? band.at + shift.count : band.at;
+  return band.at <= shift.at ? band.at : Math.max(shift.at, band.at - shift.count);
+}
+
+function movedPast(operation: SheetOperation, earlier: SheetOperation): SheetOperation | null {
+  const moved = movedPastAny(operation, earlier);
+  return moved && (moved.method === 'addChart' || moved.method === 'setChart') ? withoutBrokenSeries(moved) : moved;
+}
+
+/**
+ * A chart operation without the ranges its data's removal made `#REF!`, which the workbook does
+ * not take: those series and labels go, and the chart goes when no series is left.
+ */
+function withoutBrokenSeries(operation: SheetOperation): SheetOperation | null {
+  const position = operation.method === 'addChart' ? 1 : 2;
+  const change = operation.args[position] as ChartDefinition | { chart?: ChartDefinition; placement?: ChartPlacement };
+  const chart = operation.method === 'addChart' ? (change as ChartDefinition) : (change as { chart?: ChartDefinition }).chart;
+  if (!chart) return operation;
+  const broken = (formula: string | null | undefined) => typeof formula === 'string' && formula.includes('#REF!');
+  const series = chart.series.filter((each) => !broken(each.values)).map((each) => (broken(each.name) ? { ...each, name: null } : each));
+  if (series.length === chart.series.length && series.every((each, index) => each === chart.series[index]) && !broken(chart.categories)) {
+    return operation;
+  }
+  const kept: ChartDefinition | null =
+    series.length === 0 ? null : { ...chart, series, ...(broken(chart.categories) ? { categories: null } : {}) };
+  const args = [...operation.args];
+  if (operation.method === 'addChart') {
+    if (!kept) return null;
+    args[position] = kept;
+  } else {
+    const { chart: _chart, ...rest } = change as { chart?: ChartDefinition; placement?: ChartPlacement };
+    if (!kept && !rest.placement) return null;
+    args[position] = kept ? { ...rest, chart: kept } : rest;
+  }
+  return { ...operation, args };
+}
+
+function movedPastAny(operation: SheetOperation, earlier: SheetOperation): SheetOperation | null {
   const shift = structural(earlier);
   if (shift) return pastShift(operation, shift);
   if (earlier.method === 'removeSheet') {
     if (operation.method === 'removeSheet' && operation.args[0] === earlier.args[0]) return null;
     return pastRemovedSheet(operation, earlier.args[0] as number, earlier.sheetName);
   }
-  if (earlier.method === 'renameSheet' && earlier.sheetName !== undefined) {
-    const from = earlier.sheetName;
-    const to = earlier.args[1] as string;
-    return mapFormulas(operation, (formula) => renameFormulaSheet(formula, from, to));
-  }
+  if (earlier.method === 'renameSheet') return pastRenamedSheet(operation, earlier);
   if (earlier.method === 'removeChart') {
     return pastRemovedChart(operation, earlier.args[0] as number, earlier.args[1] as number);
   }

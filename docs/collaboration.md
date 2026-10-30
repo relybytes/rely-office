@@ -120,17 +120,20 @@ same calls with the edits shared, and the binding itself as `SheetGrid`'s `colla
   drops what was inside it (`shiftIndex`, `shiftSpan`).
 - The formulas an operation carries move with it, as the workbook moves the formulas it holds:
   cell inputs, a region put back by undo, the rules of conditional formats and validations (their
-  ranges too) and defined names. A reference to inserted or deleted rows or columns shifts, a
+  ranges too), defined names and the ranges of a chart. A reference to inserted or deleted rows or columns shifts, a
   range grows or shrinks, one whose cells were all deleted becomes `#REF!`, as does one pushed past
   the last row or column; a renamed sheet is written with its new name, quoted when it must be, and
   a removed one becomes `#REF!` (`shiftFormula`, `renameFormulaSheet`, `removeFormulaSheet` in
   `formula-references.ts`). Formulas are read as the engine reads them, in either locale: texts,
   function names such as `LOG10(`, defined names, tables and external references are left alone.
+  A chart added or changed with ranges whose cells another client deleted loses those series, as
+  the workbook takes no `#REF!` range from a call, and is not made when none is left.
 - Unqualified references belong to the sheet the formula is on (the first sheet for a workbook
   name, which the workbook writes there); a qualified one is matched by name, so an insertion,
-  deletion, rename or removal carries the name its sheet had when it was made (`sheetName`, set by
-  the binding for `SHEET_NAMED_MUTATORS`). An operation without it moves only unqualified
-  references.
+  deletion, rename or removal carries the name of its sheet (`sheetName`, set by the binding for
+  `SHEET_NAMED_MUTATORS`), and moved past another client's rename of that sheet it carries the new
+  name, so a formula written after the rename still moves with it. An operation without it moves
+  only unqualified references.
 - When the others' operations arrive, the workbook returns to the last state the room agreed
   (`checkpoint` / `rollback` of the `SheetDocument`), applies them, and puts this client's waiting
   edits back on top.
@@ -139,6 +142,16 @@ same calls with the edits shared, and the binding itself as `SheetGrid`'s `colla
   would also undo what the others wrote; instead, before each edit, the binding keeps the
   rectangle it touches (`region` / `restoreRegion`, at most 200,000 cells, `MAX_REGION_CELLS`) and
   undoes by putting it back as a new operation. An edit larger than that cannot be undone.
+- Undoing a deletion of rows or columns inserts them again, puts back what they held, and puts
+  back what the deletion broke elsewhere: the formulas of every sheet, the rules and validations,
+  the defined names and the charts whose references it cut to `#REF!` or shrank, as they were
+  before it (read from sheets of at most 5,000,000 cells, 200,000 formulas in all). These restores
+  are `guarded`: a cell, a rule list, a name or a chart another client changed since is left as
+  they made it. They also carry the band their undo inserts again (`follows`, a `RestoredBand`), so
+  the others' rows and columns, made without it, are moved around it before the restore moves past
+  them. Redoing deletes the band again and keeps nothing of the restores.
+- Removing a sheet clears this client's undo and redo: the workbook cannot put a sheet back at its
+  place.
 - `whenIdle()` resolves once every waiting edit has its turn, so a save writes what the room has
   and nothing it does not.
 - `setSelection` and `remoteSelections` share where each client's selection is; the grid draws
@@ -149,16 +162,16 @@ same calls with the edits shared, and the binding itself as `SheetGrid`'s `colla
 ## Not done
 
 - A room lives in one process: the host routes every connection of a file to it.
-- Chart ranges are not moved, by the transform or by the workbook, when rows or columns are
-  inserted or deleted or a sheet is renamed: a chart keeps the ranges it was given.
 - `SlideEditor` shares no presence: the others' selections are not drawn on a slide.
 
 ## Testing
 
 `test/collab.test.ts` runs rooms and sessions over an in-memory network (`test/collab-network.ts`):
 seeding and its hand-over, readers refused, `dirty` and save claims, concurrent and late sheet
-operations, undo of one's own edits, reconnection, and formulas moved past structure, each checked
-against what the workbook does to the same formula already in place. `test/collab-editors.test.tsx` runs two
+operations, undo of one's own edits and of deletions with what they broke, past the others' rows
+and cells, a rename at the same time as a row insertion, reconnection, and formulas and chart ranges
+moved past structure, each checked against what the workbook does to the same formula already in
+place. `test/collab-editors.test.tsx` runs two
 document editors, two grids and two slide editors against one room; the shared `TextEditor` is
 tested in `src/text/text-editor.test.tsx`. Regions and checkpoints are tested on the Rust side in
 `crates/rely-office-sheet-wasm/src/tests.rs`.
