@@ -280,6 +280,7 @@ fn read_layouts(
             limits,
             &mut budget,
             &cells,
+            crate::number_format::NumberLocale::default(),
         )
         .unwrap_or_default();
         layout.comments = crate::sheet_names::xlsx_sheet_comments(

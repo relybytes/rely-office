@@ -16,6 +16,7 @@ use calamine::{Data, Range, Reader, Sheets, open_workbook_auto_from_rs};
 use crate::archive::{ZipPackage, read_member_bytes, read_text_member};
 use crate::chart::{CellSource, ChartCell, chart_picture, chart_reference};
 use crate::document::sniff_image_type;
+use crate::number_format::NumberLocale;
 use crate::relationships::{Relationship, read_relationships};
 use crate::sheet_layout::{CellRange, SheetLayout};
 use crate::theme::Theme;
@@ -391,7 +392,8 @@ pub enum ChartValue {
 
 /// The pictures and charts of a drawing carried from a file, drawn again: each chart from the
 /// values `values` gives for its formulas (`'Vendite'!$B$2:$B$7`), so it follows what an editor
-/// changed in the cells. `layout` gives the sizes of the rows and columns the drawings anchor to.
+/// changed in the cells, its numbers written as `locale` writes them. `layout` gives the sizes of
+/// the rows and columns the drawings anchor to.
 #[must_use]
 pub fn redraw_carried_drawing(
     drawing: &CarriedDrawing,
@@ -399,6 +401,7 @@ pub fn redraw_carried_drawing(
     layout: &SheetLayout,
     limits: &Limits,
     values: &dyn Fn(&str) -> Option<Vec<ChartValue>>,
+    locale: NumberLocale,
 ) -> Vec<SheetDrawing> {
     use std::io::Write as _;
     const SHEET: &str = "sheet.xml";
@@ -463,6 +466,7 @@ pub fn redraw_carried_drawing(
         limits,
         &mut budget,
         &cells,
+        locale,
     )
     .unwrap_or_default()
 }
@@ -609,7 +613,12 @@ fn element_spans(xml: &str) -> Vec<(usize, usize)> {
     }
 }
 
-/// The drawings of a worksheet part; a drawing that cannot be read is left out.
+/// The drawings of a worksheet part, the numbers of its charts written as `locale` writes them;
+/// a drawing that cannot be read is left out.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the charts of a sheet need its part, theme, limits, cells and locale"
+)]
 pub(crate) fn sheet_drawings(
     package: &mut ZipPackage<'_>,
     sheet_part: &str,
@@ -618,6 +627,7 @@ pub(crate) fn sheet_drawings(
     limits: &Limits,
     budget: &mut ImageBudget,
     cells: CellSource<'_>,
+    locale: NumberLocale,
 ) -> Result<Vec<SheetDrawing>, OfficeError> {
     let sheet_relationships = read_relationships(package, sheet_part, limits)?;
     let Some(drawing_part) = sheet_relationships
@@ -675,7 +685,7 @@ pub(crate) fn sheet_drawings(
                 limits,
                 budget,
                 frame,
-                cells,
+                (cells, locale),
             )
         } else {
             None
@@ -882,7 +892,7 @@ fn chart_of(
     limits: &Limits,
     budget: &mut ImageBudget,
     (width_emu, height_emu): (i64, i64),
-    cells: CellSource<'_>,
+    (cells, locale): (CellSource<'_>, NumberLocale),
 ) -> Option<Drawn> {
     let id = chart.attribute(Namespace::Relationships, "id")?;
     let target = &relationships
@@ -890,7 +900,7 @@ fn chart_of(
         .find(|relationship| relationship.id == id && !relationship.external)?
         .target;
     let xml = read_text_member(package, target, limits).ok().flatten()?;
-    let (bytes, title) = chart_picture(&xml, theme, width_emu, height_emu, cells)?;
+    let (bytes, title) = chart_picture(&xml, theme, width_emu, height_emu, cells, locale)?;
     if !budget.take(bytes.len() as u64) {
         return None;
     }

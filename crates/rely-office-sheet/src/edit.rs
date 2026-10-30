@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use rely_office_core::CellRange;
 
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS};
+use crate::charts::rewrite_chart_formulas;
 use crate::formula::{CellAddress, Expr, RangeAddress};
 use crate::model::{DefinedName, EditError, Sheet};
 use crate::rules::rewrite_rule_formulas;
@@ -195,7 +196,12 @@ fn shift_ranges(ranges: &[CellRange], shift: Shift) -> Vec<CellRange> {
 }
 
 /// A formula of `local` sheet, or of another, after the cells of the sheet named `target` move.
-fn shifted_expression(expression: &Expr, local: bool, target: &str, shift: Shift) -> Expr {
+pub(crate) fn shifted_expression(
+    expression: &Expr,
+    local: bool,
+    target: &str,
+    shift: Shift,
+) -> Expr {
     let names_target = |sheet: &Option<String>| match sheet {
         None => local,
         Some(name) => name.to_lowercase() == target,
@@ -263,6 +269,7 @@ pub(crate) fn shift(
             }
         }
         rewrite_rule_formulas(sheet, &mut moved);
+        rewrite_chart_formulas(sheet, &mut moved);
         rewrite_stored(sheet, &mut moved);
     }
     for defined in names.iter_mut() {
@@ -393,6 +400,7 @@ pub(crate) fn break_references_to_sheet(
             }
         }
         rewrite_rule_formulas(sheet, &mut broken);
+        rewrite_chart_formulas(sheet, &mut broken);
         rewrite_stored(sheet, &mut broken);
     }
     for defined in workbook_names.iter_mut() {
@@ -450,6 +458,7 @@ fn rewrite_named(
             }
         }
         rewrite_rule_formulas(sheet, &mut renamed);
+        rewrite_chart_formulas(sheet, &mut renamed);
         rewrite_stored(sheet, &mut renamed);
     }
     for defined in workbook_names.iter_mut() {

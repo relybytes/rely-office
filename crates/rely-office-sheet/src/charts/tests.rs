@@ -393,3 +393,132 @@ fn makes_a_chart_from_a_selection() {
     );
     assert_eq!(workbook.chart_for_range(5, table, ChartType::Column), None);
 }
+
+/// The formulas of the first chart of a sheet: categories, then each series' name and values.
+fn chart_formulas(workbook: &Workbook, sheet: usize) -> Vec<Option<String>> {
+    let spec = workbook.charts(sheet)[0].spec.clone().unwrap();
+    let mut formulas = vec![spec.categories];
+    for series in spec.series {
+        formulas.push(series.name);
+        formulas.push(Some(series.values));
+    }
+    formulas
+}
+
+fn formulas(texts: [&str; 3]) -> Vec<Option<String>> {
+    texts.iter().map(|text| Some((*text).to_owned())).collect()
+}
+
+#[test]
+fn chart_formulas_follow_inserted_and_deleted_rows_and_columns() {
+    let mut workbook = sales();
+    workbook
+        .add_chart(0, &spec(ChartType::Column), PLACEMENT)
+        .unwrap();
+    workbook.insert_rows(0, 2, 2).unwrap();
+    assert_eq!(
+        chart_formulas(&workbook, 0),
+        formulas(["Foglio1!$A$2:$A$6", "Foglio1!$B$1", "Foglio1!$B$2:$B$6"]),
+        "rows inserted inside the range widen it"
+    );
+    workbook.insert_columns(0, 0, 1).unwrap();
+    assert_eq!(
+        chart_formulas(&workbook, 0),
+        formulas(["Foglio1!$B$2:$B$6", "Foglio1!$C$1", "Foglio1!$C$2:$C$6"])
+    );
+    workbook.delete_rows(0, 1, 3).unwrap();
+    assert_eq!(
+        chart_formulas(&workbook, 0),
+        formulas(["Foglio1!$B$2:$B$3", "Foglio1!$C$1", "Foglio1!$C$2:$C$3"]),
+        "a deletion shrinks the range"
+    );
+    let drawn = String::from_utf8(workbook.pictures(0)[0].bytes.clone()).unwrap();
+    assert!(drawn.contains("Feb") && drawn.contains("Mar") && !drawn.contains("Gen"));
+    workbook.delete_columns(0, 2, 1).unwrap();
+    let spec = workbook.charts(0)[0].spec.clone();
+    assert!(
+        spec.is_none_or(|spec| spec.series[0].values == "#REF!"),
+        "a deleted column breaks the series"
+    );
+}
+
+#[test]
+fn chart_formulas_follow_a_renamed_or_removed_sheet() {
+    let mut workbook = sales();
+    let data = workbook.add_sheet("Dati").unwrap();
+    workbook
+        .set_inputs(
+            data,
+            &[
+                (CellRef::new(0, 0), "1".to_owned()),
+                (CellRef::new(1, 0), "2".to_owned()),
+            ],
+            Locale::English,
+        )
+        .unwrap();
+    let mut chart = spec(ChartType::Line);
+    chart.series.push(ChartSeriesSpec {
+        name: None,
+        values: "Dati!$A$1:$A$2".to_owned(),
+    });
+    workbook.add_chart(0, &chart, PLACEMENT).unwrap();
+    workbook.rename_sheet(0, "Vendite d'oggi").unwrap();
+    workbook.rename_sheet(data, "Altri dati").unwrap();
+    let spec = workbook.charts(0)[0].spec.clone().unwrap();
+    assert_eq!(
+        spec.categories.as_deref(),
+        Some("'Vendite d''oggi'!$A$2:$A$4")
+    );
+    assert_eq!(spec.series[1].values, "'Altri dati'!$A$1:$A$2");
+    workbook.insert_rows(data, 0, 1).unwrap();
+    assert_eq!(
+        workbook.charts(0)[0].spec.clone().unwrap().series[1].values,
+        "'Altri dati'!$A$2:$A$3",
+        "a chart follows the rows of the sheet it plots, not only of its own"
+    );
+    workbook.remove_sheet(data).unwrap();
+    let spec = workbook.charts(0)[0].spec.clone();
+    assert!(spec.is_none_or(|spec| spec.series[1].values == "#REF!"));
+    assert_eq!(workbook.pictures(0).len(), 1, "the chart is still drawn");
+}
+
+#[test]
+fn rewrites_only_the_formulas_of_a_chart_part() {
+    let xml = "<c:chartSpace><c:tx><c:f>Foglio1!$B$1</c:f></c:tx><c:v>f</c:v><cx:f dir=\"row\">'A &amp; B'!$A$1:$A$2</cx:f><c:f/></c:chartSpace>";
+    let shift = crate::edit::Shift::InsertRows { at: 0, count: 1 };
+    let moved = rewritten_chart_part(xml, &mut |expression| {
+        crate::edit::shifted_expression(expression, false, "a & b", shift)
+    })
+    .unwrap();
+    assert_eq!(
+        moved,
+        "<c:chartSpace><c:tx><c:f>Foglio1!$B$1</c:f></c:tx><c:v>f</c:v><cx:f dir=\"row\">'A &amp; B'!$A$2:$A$3</cx:f><c:f/></c:chartSpace>"
+    );
+    assert_eq!(
+        rewritten_chart_part(xml, &mut |expression| expression.clone()),
+        None
+    );
+    assert_eq!(unescape("a&#38;b&#x26;c&apos;"), Some("a&b&c'".to_owned()));
+    assert_eq!(unescape("broken &amp"), None);
+}
+
+#[test]
+fn draws_the_numbers_of_a_chart_in_the_locale_asked() {
+    let mut workbook = sales();
+    let small: Vec<(CellRef, String)> = [(1, "0.3"), (2, "0.7"), (3, "1.1")]
+        .iter()
+        .map(|(row, typed)| (CellRef::new(*row, 1), (*typed).to_owned()))
+        .collect();
+    workbook.set_inputs(0, &small, Locale::English).unwrap();
+    workbook
+        .add_chart(0, &spec(ChartType::Column), PLACEMENT)
+        .unwrap();
+    let drawn =
+        |locale| String::from_utf8(workbook.pictures_in(0, locale)[0].bytes.clone()).unwrap();
+    assert!(drawn(Locale::English).contains(">0.2<"));
+    assert!(drawn(Locale::Italian).contains(">0,2<"));
+    assert_eq!(
+        workbook.pictures(0),
+        workbook.pictures_in(0, Locale::Italian)
+    );
+}

@@ -25,6 +25,7 @@ use super::{
 };
 use crate::archive::{ZipPackage, read_member_bytes, read_text_member};
 use crate::chart::{chart_picture, chart_reference, no_cells};
+use crate::number_format::NumberLocale;
 use crate::relationships::Relationship;
 use crate::theme::Theme;
 use crate::theme::colour_in;
@@ -1359,7 +1360,14 @@ impl<'a, 'p> Converter<'a, 'p> {
             .ok()
             .flatten()?;
         let theme = self.theme.as_ref()?;
-        let (bytes, title) = chart_picture(&xml, theme, width_emu, height_emu, &no_cells)?;
+        let (bytes, title) = chart_picture(
+            &xml,
+            theme,
+            width_emu,
+            height_emu,
+            &no_cells,
+            NumberLocale::default(),
+        )?;
         if self.media.len() >= self.limits.max_images {
             self.report.images_over_limit += 1;
             return None;

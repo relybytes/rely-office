@@ -293,6 +293,9 @@ impl From<NumberFormat> for Format {
     }
 }
 
+/// The pictures of a sheet as drawn: the sheet, the revision and locale they were drawn for.
+type DrawnPictures = (usize, u64, Locale, Vec<SheetDrawing>);
+
 /// An edited workbook.
 #[wasm_bindgen]
 #[derive(Debug)]
@@ -304,8 +307,8 @@ pub struct SheetDocument {
     history_enabled: bool,
     /// The workbook as a collaborative editor last agreed it with the room.
     checkpoint: Option<Workbook>,
-    /// The pictures last drawn, by sheet and revision: a chart is drawn once per change.
-    pictures: std::cell::RefCell<Option<(usize, u64, Vec<SheetDrawing>)>>,
+    /// The pictures last drawn, by sheet, revision and locale: a chart is drawn once per change.
+    pictures: std::cell::RefCell<Option<DrawnPictures>>,
 }
 
 impl SheetDocument {
@@ -517,14 +520,15 @@ impl SheetDocument {
     fn current_pictures(&self, sheet: usize) -> Vec<SheetDrawing> {
         let revision = self.workbook.revision();
         let mut cached = self.pictures.borrow_mut();
-        if let Some((known_sheet, known_revision, pictures)) = cached.as_ref()
+        if let Some((known_sheet, known_revision, known_locale, pictures)) = cached.as_ref()
             && *known_sheet == sheet
             && *known_revision == revision
+            && *known_locale == self.locale
         {
             return pictures.clone();
         }
-        let pictures = self.workbook.pictures(sheet);
-        *cached = Some((sheet, revision, pictures.clone()));
+        let pictures = self.workbook.pictures_in(sheet, self.locale);
+        *cached = Some((sheet, revision, self.locale, pictures.clone()));
         pictures
     }
 

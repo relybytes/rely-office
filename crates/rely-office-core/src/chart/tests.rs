@@ -304,7 +304,17 @@ fn draws_nothing_for_what_it_cannot_read() {
         read(&chart_space("<c:plotArea><c:barChart/></c:plotArea>", "")).is_none(),
         "a plot without series"
     );
-    assert!(chart_picture("<broken", &Theme::default(), 100, 100, &no_cells).is_none());
+    assert!(
+        chart_picture(
+            "<broken",
+            &Theme::default(),
+            100,
+            100,
+            &no_cells,
+            NumberLocale::Italian
+        )
+        .is_none()
+    );
     assert_eq!(no_cells("A1"), None);
 }
 
@@ -317,8 +327,15 @@ fn draws_a_chart_into_its_frame() {
         ),
         "",
     );
-    let (svg, title) =
-        chart_picture(&xml, &Theme::default(), 1_270_000, 635_000, &no_cells).unwrap();
+    let (svg, title) = chart_picture(
+        &xml,
+        &Theme::default(),
+        1_270_000,
+        635_000,
+        &no_cells,
+        NumberLocale::Italian,
+    )
+    .unwrap();
     let svg = String::from_utf8(svg).unwrap();
     assert!(
         svg.starts_with(r#"<svg xmlns="http://www.w3.org/2000/svg" width="100pt" height="50pt""#),
@@ -448,8 +465,15 @@ fn draws_a_chart_of_the_2016_kinds_from_its_part() {
         r#"<cx:series layoutId="waterfall"><cx:dataId val="0"/></cx:series>"#,
         "",
     );
-    let (svg, title) =
-        chart_picture(&xml, &Theme::default(), 1_270_000, 635_000, &no_cells).unwrap();
+    let (svg, title) = chart_picture(
+        &xml,
+        &Theme::default(),
+        1_270_000,
+        635_000,
+        &no_cells,
+        NumberLocale::Italian,
+    )
+    .unwrap();
     assert_eq!(title.as_deref(), Some("Risultato"));
     assert!(String::from_utf8(svg).unwrap().starts_with("<svg"));
     let frame = crate::xml_tree::parse_tree(
@@ -458,5 +482,15 @@ fn draws_a_chart_of_the_2016_kinds_from_its_part() {
     )
     .unwrap();
     assert!(chart_reference(&frame).is_some());
-    assert!(chart_picture("<c:chartSpace", &Theme::default(), 1, 1, &no_cells).is_none());
+    assert!(
+        chart_picture(
+            "<c:chartSpace",
+            &Theme::default(),
+            1,
+            1,
+            &no_cells,
+            NumberLocale::Italian
+        )
+        .is_none()
+    );
 }

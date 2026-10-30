@@ -176,14 +176,16 @@ const EMU_PER_POINT: f64 = 12_700.0;
 const DEFAULT_LABEL_SIZE: f64 = 9.0;
 const TITLE_SCALE: f64 = 14.0 / 9.0;
 
-/// A chart drawn into a frame of `width_emu` by `height_emu`: the SVG and the chart's title, or
-/// `None` when the part holds nothing this reader draws.
+/// A chart drawn into a frame of `width_emu` by `height_emu`, its numbers written as `locale`
+/// writes them: the SVG and the chart's title, or `None` when the part holds nothing this reader
+/// draws.
 pub(crate) fn chart_picture(
     xml: &str,
     theme: &Theme,
     width_emu: i64,
     height_emu: i64,
     cells: CellSource<'_>,
+    locale: NumberLocale,
 ) -> Option<(Vec<u8>, Option<String>)> {
     #[expect(clippy::cast_precision_loss, reason = "frame sizes fit in f64")]
     let (width, height) = (
@@ -192,12 +194,12 @@ pub(crate) fn chart_picture(
     );
     let root = parse_tree(xml, |namespace, name| namespace == A && name == "t").ok()?;
     if root.is(Namespace::ChartEx, "chartSpace") {
-        let chart = read_extended_chart(&root, theme, NumberLocale::default())?;
+        let chart = read_extended_chart(&root, theme, locale)?;
         let svg = extended_svg(&chart, width, height);
         return Some((svg.into_bytes(), chart.title));
     }
     drop(root);
-    let chart = read_chart(xml, theme, NumberLocale::default(), cells)?;
+    let chart = read_chart(xml, theme, locale, cells)?;
     let svg = chart_svg(&chart, width, height);
     Some((svg.into_bytes(), chart.title))
 }

@@ -501,7 +501,10 @@ rows or columns move.
 
 `Workbook::pictures(sheet)` draws the pictures and charts of a sheet, each chart from the values
 its cells hold now, so a chart follows an edit; the drawing is kept until the workbook changes, a
-change of a chart included.
+change of a chart included. Every chart is drawn, the ones no spec describes too, by the same SVG
+drawer that draws a chart in a rendered page. `Workbook::pictures_in(sheet, locale)` writes the
+numbers of the axes and labels as the locale writes them, `0,5` or `0.5`; `pictures` writes them
+in Italian.
 
 ### Edits that move cells
 
@@ -509,6 +512,8 @@ Inserting and deleting rows and columns move the cells and every formula of the 
 references after the edit shift, ranges grow or shrink, a reference to a deleted cell becomes
 `#REF!`, and an insertion that would push content off the grid is refused. Renaming a sheet
 rewrites the formulas that name it; removing one turns them into `#REF!`; the last sheet stays.
+The formulas the charts read, every `<c:f>` and `<cx:f>` of their parts, follow the same way, so a
+chart keeps plotting the cells it plotted, and one whose cells are all deleted reads `#REF!`.
 `copy_range` pastes a rectangle with relative references moved by the offset and absolute ones
 kept, clearing the target first, as a spreadsheet's paste does.
 
@@ -581,3 +586,10 @@ throw a `RelyOfficeError` with a stable
 code (`INVALID_FORMULA`, `NO_SUCH_SHEET`, `DUPLICATE_SHEET_NAME`, `INVALID_SHEET_NAME`,
 `LAST_SHEET`, `OUT_OF_BOUNDS`, `INVALID_INPUT`, `INVALID_LOCALE`, `INVALID_STYLE`, `INVALID_NAME`,
 `INVALID_CHART`, and the reading codes on open).
+
+`pictures` draws the charts in the document's locale. `SheetGrid` shows each one where it sits,
+named for assistive technology as "Chart" and its title, in an editable grid and in a read-only
+one; an editable grid lays over it the frame that moves and resizes it. The picture addresses
+are object URLs made in an effect and released when the pictures change or the grid goes, so
+React's strict mode never leaves a chart on a released address; where the page has no object
+URLs they are `data:` addresses.
