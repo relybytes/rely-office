@@ -57,6 +57,7 @@
       "default": "./dist/collab/document-extensions.js"
     },
     "./styles.css": "./dist/styles.css",
+    "./fonts.css": "./dist/fonts.css",
     "./package.json": "./package.json"
   },
   "files": [

@@ -37,6 +37,18 @@ export {
 } from './document/references.js';
 export { createRelyDocumentExtensions, type RelyDocumentExtensionOptions } from './document/extensions.js';
 export { FONT_FAMILIES, FONT_SIZES, LINE_SPACINGS, RelyParagraphFormat, cleanFormat } from './document/formatting.js';
+export {
+  BUNDLED_FONT_FAMILIES,
+  fontGeneric,
+  fontStack,
+  fontSubstitute,
+  isFontAvailable,
+  loadDocumentFonts,
+  pickerFamilies,
+  stackFamily,
+  usedFamilies,
+  type LoadedFaces,
+} from './document/fonts.js';
 export { RelyPagination, pageBreaks, type PaginationOptions } from './document/pagination.js';
 export { RelySearch, findMatches, type SearchMatch, type SearchState } from './document/search.js';
 export { RelyTrackRecording, TRACK_SKIP } from './document/track-changes.js';

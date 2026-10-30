@@ -13,6 +13,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const packagePath = path.resolve(process.argv[2] ?? path.join(__dirname, '..'));
@@ -334,6 +335,22 @@ test('writes a docx it reads back', () => {
     () => office.writeDocx({ blocks: [{ type: 'nope' }] }),
     (error) => error.code === 'INVALID_TREE',
   );
+});
+
+test('writes the fonts of a document and embeds their faces', () => {
+  const carlito = fs.readFileSync(path.join(packagePath, 'fonts', 'Carlito-Regular.ttf'));
+  const written = office.writeDocx({
+    blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'x', marks: [{ type: 'textStyle', fontFamily: 'Consolas' }] }] }],
+    fonts: [{ name: 'Carlito', faces: [{ style: 'regular', file: 0 }] }],
+    fontFiles: [carlito],
+    defaultFont: { family: 'Carlito', sizeHalfPoints: 24 },
+  });
+  const tree = office.readDocumentTree(written);
+  assert.deepEqual(tree.defaultFont, { family: 'Carlito', sizeHalfPoints: 24 });
+  assert.equal(Buffer.compare(Buffer.from(tree.fontFiles[0]), carlito), 0);
+  assert.equal(tree.fonts.find((font) => font.name === 'Consolas').generic, 'modern');
+  assert.equal(office.fontStack('Calibri'), "'Calibri', 'Carlito', sans-serif");
+  assert.equal(office.fontSubstitute('Mystery', 'roman'), 'Liberation Serif');
 });
 
 test('writes an embedded object it reads back', () => {

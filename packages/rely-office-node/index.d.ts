@@ -27,6 +27,11 @@ import type {
   PageSize,
   Section,
   DocumentTree,
+  DocumentFont,
+  DefaultFont,
+  FaceStyle,
+  FontFace,
+  FontGeneric,
   EmbeddedObject,
   RenderOptions,
   Rendered,
@@ -128,6 +133,16 @@ export function render(bytes: DocumentBytes, fileName?: string, options?: Render
 
 /** A docx Word opens and `readDocumentTree` reads back to the same tree. */
 export function writeDocx(tree: DocxInput): Uint8Array;
+
+/**
+ * A CSS font stack for a family: the family, the bundled family of the same metrics (Carlito
+ * for Calibri and Aptos, Caladea for Cambria, Liberation for Arial, Times New Roman and Courier
+ * New), then the generic family. `generic` comes from the document's font table when known.
+ */
+export function fontStack(family: string, generic?: FontGeneric): string;
+
+/** The bundled family that sets a family where it is not installed, or the nearest of its kind. */
+export function fontSubstitute(family: string, generic?: FontGeneric): string;
 
 /**
  * The tree as Markdown with GitHub's tables, footnotes and math, its images in `data:`

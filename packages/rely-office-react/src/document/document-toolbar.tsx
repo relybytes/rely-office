@@ -11,6 +11,7 @@ import type { Alignment, ImageAnchor, ImageWrap, NamedStyle, ParagraphFormat } f
 import { FONT_FAMILIES, FONT_SIZES, LINE_SPACINGS } from './formatting.js';
 import type { DocumentEditorLabels } from './labels.js';
 import { searchKey } from './search.js';
+import { fontStack, fontSubstitute, isFontAvailable, pickerFamilies, stackFamily } from './fonts.js';
 
 type Panel = 'link' | 'equation' | 'find' | null;
 
@@ -29,7 +30,14 @@ function spacingName(value: number): string {
 
 /** The family a CSS font list starts with, without quotes. */
 function firstFamily(family: string | null | undefined): string {
-  return (family ?? '').split(',')[0].trim().replace(/^['"]|['"]$/g, '');
+  return stackFamily(family) ?? '';
+}
+
+/** A family as the picker names it: with the bundled face it is shown with when the browser lacks it. */
+function familyLabel(family: string, labels: DocumentEditorLabels): string {
+  const substitute = fontSubstitute(family);
+  if (substitute.toLowerCase() === family.toLowerCase() || isFontAvailable(family)) return family;
+  return `${family} (${labels.fontShownAs(substitute)})`;
 }
 
 function ToolButton({
@@ -159,6 +167,7 @@ export function DocumentToolbar({
   pageView,
   onPageView,
   findRequest = 0,
+  documentFamilies = [],
 }: Readonly<{
   editor: Editor;
   labels: DocumentEditorLabels;
@@ -171,6 +180,8 @@ export function DocumentToolbar({
   onPageView: (enabled: boolean) => void;
   /** Raised by the editor on Ctrl+F, to open the find panel. */
   findRequest?: number;
+  /** The families the document names, listed before the standard ones. */
+  documentFamilies?: readonly string[];
 }>): ReactElement {
   const [panel, setPanel] = useState<Panel>(null);
   const [linkAddress, setLinkAddress] = useState('');
@@ -240,7 +251,10 @@ export function DocumentToolbar({
   const styleValue = state.heading > 0 ? String(state.heading) : (state.format?.style ?? '0');
   const sizePoints = /^(\d+(?:\.\d+)?)pt$/.exec(state.fontSize)?.[1] ?? '';
   const spacing = state.format?.lineSpacing?.rule === 'auto' ? String(state.format.lineSpacing.value) : '';
-  const families = FONT_FAMILIES.includes(state.fontFamily) || state.fontFamily === '' ? FONT_FAMILIES : [state.fontFamily, ...FONT_FAMILIES];
+  const families = pickerFamilies(
+    state.fontFamily === '' ? documentFamilies : [state.fontFamily, ...documentFamilies],
+    FONT_FAMILIES,
+  );
   const sizes = sizePoints === '' || FONT_SIZES.includes(Number(sizePoints)) ? FONT_SIZES : [Number(sizePoints), ...FONT_SIZES];
   const matches = state.search?.matches.length ?? 0;
 
@@ -288,8 +302,8 @@ export function DocumentToolbar({
           >
             <option value="">{labels.defaultFont}</option>
             {families.map((family) => (
-              <option key={family} value={family} style={{ fontFamily: family }}>
-                {family}
+              <option key={family} value={family} style={{ fontFamily: fontStack(family) }}>
+                {familyLabel(family, labels)}
               </option>
             ))}
           </select>

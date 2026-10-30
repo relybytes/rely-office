@@ -13,8 +13,9 @@
 //! cross as their own byte arrays, never inside the JSON.
 
 use rely_office_core::{
-    Block, Comment, DocumentTree, EmbeddedObject, HeadersFooters, ImportReport, Limits,
-    MacroProject, Media, Note, OfficeError, PageLayout, Section, Sheet, TrackedChanges,
+    Block, Comment, DocumentFont, DocumentFonts, DocumentTree, EmbeddedObject, HeadersFooters,
+    ImportReport, Limits, MacroProject, Media, Note, OfficeError, PageLayout, Section, Sheet,
+    TrackedChanges,
     TreeOptions, detect_format, extract_text, read_document_tree, read_document_tree_named,
     read_presentation, read_workbook, sniff_image_type, write_docx, write_html, write_markdown,
     write_odt, write_pptx,
@@ -170,6 +171,36 @@ struct DocumentTreeOutput<'a> {
     comments: &'a [Comment],
     #[serde(skip_serializing_if = "Vec::is_empty")]
     objects: Vec<ObjectOutput<'a>>,
+    #[serde(skip_serializing_if = "<[DocumentFont]>::is_empty")]
+    fonts: &'a [DocumentFont],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    font_files: Vec<FontFileOutput>,
+    #[serde(skip_serializing_if = "DefaultFont::is_empty")]
+    default_font: DefaultFont,
+}
+
+/// An embedded font file of a document tree, its bytes kept aside like an image's.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FontFileOutput {
+    index: usize,
+    byte_length: usize,
+}
+
+/// The font and size of body text: `{ family?, sizeHalfPoints? }`.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+struct DefaultFont {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size_half_points: Option<u32>,
+}
+
+impl DefaultFont {
+    fn is_empty(&self) -> bool {
+        self.family.is_none() && self.size_half_points.is_none()
+    }
 }
 
 /// How a document is read for JavaScript: `{ trackedChanges: "accept" | "keep" }`.
@@ -294,6 +325,7 @@ pub struct DocumentTreeHandle {
     media: Vec<Media>,
     objects: Vec<EmbeddedObject>,
     macro_project: Option<Vec<u8>>,
+    font_files: Vec<Vec<u8>>,
 }
 
 #[wasm_bindgen]
@@ -318,6 +350,19 @@ impl DocumentTreeHandle {
         self.objects
             .get_mut(index)
             .map(|object| std::mem::take(&mut object.bytes))
+    }
+
+    #[wasm_bindgen(js_name = fontFileCount)]
+    #[must_use]
+    pub fn font_file_count(&self) -> usize {
+        self.font_files.len()
+    }
+
+    /// The bytes of embedded font file `index`, moved out of the handle: a second call returns
+    /// none.
+    #[wasm_bindgen(js_name = takeFontFileBytes)]
+    pub fn take_font_file_bytes(&mut self, index: usize) -> Option<Vec<u8>> {
+        self.font_files.get_mut(index).map(std::mem::take)
     }
 
     /// The bytes of image `index`, moved out of the handle: a second call returns none.
@@ -360,6 +405,7 @@ pub fn document_tree(
         comments,
         objects,
         macro_project,
+        fonts,
     } = read_document_tree_named(bytes, file_name, &limits, &options)?;
     let json = to_json(&DocumentTreeOutput {
         blocks: &blocks,
@@ -398,6 +444,20 @@ pub fn document_tree(
                 byte_length: object.bytes.len(),
             })
             .collect(),
+        fonts: &fonts.families,
+        font_files: fonts
+            .files
+            .iter()
+            .enumerate()
+            .map(|(index, file)| FontFileOutput {
+                index,
+                byte_length: file.len(),
+            })
+            .collect(),
+        default_font: DefaultFont {
+            family: layout.font_family.clone(),
+            size_half_points: layout.font_size_half_points,
+        },
     })?;
     let macro_project = macro_project
         .map(|project| project.to_bytes())
@@ -407,6 +467,7 @@ pub fn document_tree(
         media,
         objects,
         macro_project,
+        font_files: fonts.files,
     })
 }
 
@@ -439,6 +500,10 @@ struct DocxInput {
     sections: Vec<SectionInput>,
     #[serde(default)]
     comments: Vec<Comment>,
+    #[serde(default)]
+    fonts: Vec<DocumentFont>,
+    #[serde(default)]
+    default_font: Option<DefaultFont>,
 }
 
 /// One section of a document to write: where it ends, its page and its headers and footers.
@@ -491,10 +556,19 @@ pub fn tree_from_json(
         code: "INVALID_TREE",
         message: format!("invalid document tree: {error}"),
     })?;
-    let layout = input
+    let mut layout = input
         .page
         .as_ref()
         .map_or_else(PageLayout::default, layout_of);
+    if let Some(font) = input.default_font {
+        layout.font_family = font
+            .family
+            .map(|family| family.trim().to_owned())
+            .filter(|family| !family.is_empty());
+        layout.font_size_half_points = font
+            .size_half_points
+            .filter(|size| (2..=3_276).contains(size));
+    }
     let blocks = input.blocks.len();
     let sections = input
         .sections
@@ -517,6 +591,14 @@ pub fn tree_from_json(
         comments: input.comments,
         objects,
         macro_project: None,
+        fonts: DocumentFonts {
+            families: input
+                .fonts
+                .into_iter()
+                .take(rely_office_core::MAX_FONTS)
+                .collect(),
+            files: Vec::new(),
+        },
     })
 }
 
@@ -527,6 +609,7 @@ pub struct DocxWriter {
     media: Vec<Media>,
     objects: Vec<EmbeddedObject>,
     macro_project: Option<MacroProject>,
+    font_files: Vec<Vec<u8>>,
 }
 
 #[wasm_bindgen]
@@ -545,6 +628,37 @@ impl DocxWriter {
             bytes,
         });
         self.media.len() - 1
+    }
+
+    /// Add a font file the tree's `fonts` embed and return the index their faces name it by;
+    /// a file that is not a font, or one past the limits, is refused with `None`.
+    #[wasm_bindgen(js_name = addFontFile)]
+    pub fn add_font_file(&mut self, bytes: Vec<u8>) -> Option<usize> {
+        let total: u64 = self.font_files.iter().map(|file| file.len() as u64).sum();
+        if !rely_office_core::is_font_file(&bytes)
+            || self.font_files.len() >= rely_office_core::MAX_FONT_FILES
+            || bytes.len() as u64 > rely_office_core::MAX_FONT_FILE_BYTES
+            || total + bytes.len() as u64 > rely_office_core::MAX_TOTAL_FONT_BYTES
+        {
+            return None;
+        }
+        self.font_files.push(bytes);
+        Some(self.font_files.len() - 1)
+    }
+
+    /// The tree of its JSON with the images, objects and font files added so far.
+    fn take_tree(&mut self, tree_json: &str, objects: bool) -> Result<DocumentTree, Failure> {
+        let mut tree = tree_from_json(
+            tree_json,
+            std::mem::take(&mut self.media),
+            if objects {
+                std::mem::take(&mut self.objects)
+            } else {
+                Vec::new()
+            },
+        )?;
+        tree.fonts.files = std::mem::take(&mut self.font_files);
+        Ok(tree)
     }
 
     /// Add an object embedded in the document, shown by image `media`, and return its index;
@@ -573,12 +687,9 @@ impl DocxWriter {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen]
     pub fn write(&mut self, tree_json: &str) -> Result<Vec<u8>, JsError> {
-        let mut tree = tree_from_json(
-            tree_json,
-            std::mem::take(&mut self.media),
-            std::mem::take(&mut self.objects),
-        )
-        .map_err(|failure| throw(&failure))?;
+        let mut tree = self
+            .take_tree(tree_json, true)
+            .map_err(|failure| throw(&failure))?;
         tree.macro_project = self.macro_project.take();
         write_docx(&tree).map_err(|error| throw(&error.into()))
     }
@@ -605,7 +716,8 @@ impl DocxWriter {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = writeOdt)]
     pub fn write_odt_js(&mut self, tree_json: &str) -> Result<Vec<u8>, JsError> {
-        let tree = tree_from_json(tree_json, std::mem::take(&mut self.media), Vec::new())
+        let tree = self
+            .take_tree(tree_json, false)
             .map_err(|failure| throw(&failure))?;
         write_odt(&tree).map_err(|error| throw(&error.into()))
     }
@@ -617,7 +729,8 @@ impl DocxWriter {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = writeMarkdown)]
     pub fn write_markdown_js(&mut self, tree_json: &str) -> Result<String, JsError> {
-        let tree = tree_from_json(tree_json, std::mem::take(&mut self.media), Vec::new())
+        let tree = self
+            .take_tree(tree_json, false)
             .map_err(|failure| throw(&failure))?;
         Ok(write_markdown(&tree))
     }
@@ -629,7 +742,8 @@ impl DocxWriter {
     /// An `Error` whose message starts with the failure code.
     #[wasm_bindgen(js_name = writeHtml)]
     pub fn write_html_js(&mut self, tree_json: &str, title: &str) -> Result<String, JsError> {
-        let tree = tree_from_json(tree_json, std::mem::take(&mut self.media), Vec::new())
+        let tree = self
+            .take_tree(tree_json, false)
             .map_err(|failure| throw(&failure))?;
         Ok(write_html(&tree, title))
     }
@@ -644,6 +758,42 @@ fn throw(failure: &Failure) -> JsError {
 #[must_use]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_owned()
+}
+
+/// The kind a font family is, from the name JavaScript gives it; anything else is `auto`.
+fn font_generic_of(generic: Option<&str>) -> rely_office_core::FontGeneric {
+    use rely_office_core::FontGeneric;
+    match generic {
+        Some("roman") => FontGeneric::Roman,
+        Some("swiss") => FontGeneric::Swiss,
+        Some("modern") => FontGeneric::Modern,
+        Some("script") => FontGeneric::Script,
+        Some("decorative") => FontGeneric::Decorative,
+        _ => FontGeneric::Auto,
+    }
+}
+
+/// A CSS font stack for a family: the family, its bundled metric-compatible substitute, then
+/// the generic family; `generic` is `roman`, `swiss`, `modern`, `script` or `decorative`.
+#[wasm_bindgen(js_name = fontStack)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "wasm-bindgen hands an optional string over owned; it has no Option<&str>"
+)]
+#[must_use]
+pub fn font_stack_js(family: &str, generic: Option<String>) -> String {
+    rely_office_core::css_font_stack(family, font_generic_of(generic.as_deref()))
+}
+
+/// The bundled family of the same metrics as `family`, or the nearest of its kind.
+#[wasm_bindgen(js_name = fontSubstitute)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "wasm-bindgen hands an optional string over owned; it has no Option<&str>"
+)]
+#[must_use]
+pub fn font_substitute_js(family: &str, generic: Option<String>) -> String {
+    rely_office_core::font_substitute(family, font_generic_of(generic.as_deref())).to_owned()
 }
 
 #[wasm_bindgen(js_name = detectFormat)]

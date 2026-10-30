@@ -14,6 +14,8 @@ import type {
   Note,
   PageSize,
   Section,
+  DefaultFont,
+  DocumentFont,
 } from '../model.js';
 
 /**
@@ -31,6 +33,12 @@ export interface DocumentAside {
   objects?: EmbeddedObject[];
   /** The macros of a docm, written back as they came and never run. */
   macroProject?: Uint8Array;
+  /** The families the file lists, with the faces it embeds. */
+  fonts?: DocumentFont[];
+  /** The font files the faces of `fonts` name by index. */
+  fontFiles?: Uint8Array[];
+  /** The font and size of body text, which the editor's text is set in. */
+  defaultFont?: DefaultFont;
 }
 
 /**

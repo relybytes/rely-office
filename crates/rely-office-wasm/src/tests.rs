@@ -382,3 +382,72 @@ fn reads_markdown_and_html_by_their_names_and_writes_them_back() {
     assert_eq!(rely_office_core::write_markdown(&tree), "**x**\n");
     assert!(rely_office_core::write_html(&tree, "T").contains("<p><strong>x</strong></p>"));
 }
+
+const CARLITO: &[u8] = include_bytes!("../../../fonts/Carlito-Regular.ttf");
+
+#[test]
+fn carries_the_fonts_of_a_document_through_javascript() {
+    let mut writer = DocxWriter::new();
+    assert_eq!(writer.add_font_file(b"not a font".to_vec()), None);
+    let file = writer.add_font_file(CARLITO.to_vec()).unwrap();
+    let json = format!(
+        concat!(
+            r#"{{"blocks":[{{"type":"paragraph","content":[{{"type":"text","text":"x","marks":"#,
+            r#"[{{"type":"textStyle","fontFamily":"Carlito"}}]}}]}}],"#,
+            r#""fonts":[{{"name":"Carlito","generic":"swiss","pitch":"variable","faces":[{{"style":"regular","file":{}}}]}}],"#,
+            r#""defaultFont":{{"family":"Carlito","sizeHalfPoints":24}}}}"#
+        ),
+        file
+    );
+    let tree = writer.take_tree(&json, true).unwrap();
+    assert_eq!(tree.layout.font_family.as_deref(), Some("Carlito"));
+    assert_eq!(tree.layout.font_size_half_points, Some(24));
+    assert_eq!(tree.fonts.files.len(), 1);
+    let docx = write_docx(&tree).unwrap();
+
+    let mut handle = document_tree(&docx, None, None, None).unwrap();
+    let read = parse(&handle.json());
+    assert_eq!(read["fonts"][0]["name"], "Carlito");
+    assert_eq!(
+        read["fonts"][0]["faces"][0],
+        json!({ "style": "regular", "file": 0 })
+    );
+    assert_eq!(read["fontFiles"][0]["byteLength"], CARLITO.len());
+    assert_eq!(
+        read["defaultFont"],
+        json!({ "family": "Carlito", "sizeHalfPoints": 24 })
+    );
+    assert_eq!(handle.font_file_count(), 1);
+    assert_eq!(handle.take_font_file_bytes(0).unwrap(), CARLITO);
+    assert_eq!(handle.take_font_file_bytes(0).unwrap(), Vec::<u8>::new());
+    assert_eq!(handle.take_font_file_bytes(1), None);
+}
+
+#[test]
+fn writes_font_stacks_for_javascript() {
+    assert_eq!(
+        font_stack_js("Calibri", None),
+        "'Calibri', 'Carlito', sans-serif"
+    );
+    assert_eq!(
+        font_stack_js("Mystery", Some("roman".to_owned())),
+        "'Mystery', 'Liberation Serif', serif"
+    );
+    assert_eq!(font_substitute_js("Consolas", None), "Liberation Mono");
+    assert_eq!(
+        font_substitute_js("Mystery", Some("modern".to_owned())),
+        "Liberation Mono"
+    );
+    assert_eq!(
+        font_substitute_js("Mystery", Some("script".to_owned())),
+        "Carlito"
+    );
+    assert_eq!(
+        font_substitute_js("Mystery", Some("decorative".to_owned())),
+        "Carlito"
+    );
+    assert_eq!(
+        font_substitute_js("Mystery", Some("swiss".to_owned())),
+        "Liberation Sans"
+    );
+}

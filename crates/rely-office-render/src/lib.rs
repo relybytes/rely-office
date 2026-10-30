@@ -136,6 +136,8 @@ pub struct TypstSource {
     /// `(path, bytes)`, paths absolute inside the project root, as the source names them.
     pub files: Vec<(String, Vec<u8>)>,
     pub truncated: bool,
+    /// The font files the document embeds, set with for this render only.
+    pub fonts: Vec<Vec<u8>>,
 }
 
 /// Write a document out as Typst source, with line heights for fonts of unknown metrics;
@@ -187,6 +189,7 @@ fn source_with(
                 source,
                 files,
                 truncated,
+                fonts: tree.fonts.files,
             })
         }
         DocumentFormat::Xlsx
@@ -218,6 +221,7 @@ fn source_with(
                 source,
                 files,
                 truncated,
+                fonts: Vec::new(),
             })
         }
         DocumentFormat::Pptx | DocumentFormat::Odp | DocumentFormat::Ppt => {
@@ -236,6 +240,7 @@ fn source_with(
                 source,
                 files,
                 truncated,
+                fonts: Vec::new(),
             })
         }
         DocumentFormat::Unknown => Err(RenderError::UnsupportedFormat(format)),
@@ -273,6 +278,7 @@ fn text_only(
         source: plain::text_source(&extracted.text),
         files: Vec::new(),
         truncated: extracted.truncated,
+        fonts: Vec::new(),
     })
 }
 
@@ -358,10 +364,26 @@ impl Renderer {
         source: &TypstSource,
         request: &RenderRequest,
     ) -> Result<Rendered, RenderError> {
+        // The faces a document embeds join the renderer's for this render only.
+        let embedded: Vec<Font> = source
+            .fonts
+            .iter()
+            .flat_map(|data| Font::iter(Bytes::new(data.clone())))
+            .collect();
+        let (book, fonts) = if embedded.is_empty() {
+            (None, None)
+        } else {
+            let mut fonts = embedded;
+            fonts.extend(self.fonts.iter().cloned());
+            (
+                Some(LazyHash::new(FontBook::from_fonts(&fonts))),
+                Some(fonts),
+            )
+        };
         let world = world::OfficeWorld::new(
             &self.library,
-            &self.book,
-            &self.fonts,
+            book.as_ref().unwrap_or(&self.book),
+            fonts.as_deref().unwrap_or(&self.fonts),
             &source.source,
             &source.files,
         );

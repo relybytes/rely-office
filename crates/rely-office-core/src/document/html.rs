@@ -1001,11 +1001,25 @@ pub fn write_html(tree: &DocumentTree, title: &str) -> String {
     let body = writer.blocks(&tree.blocks);
     let mut page = String::from("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n");
     let _ = writeln!(page, "<title>{}</title>", escape_text(title));
-    page.push_str(
-        "<style>body{font-family:sans-serif;max-width:48em;margin:2em auto;line-height:1.5}\
-         table{border-collapse:collapse}td,th{border:1px solid #999;padding:4px 8px}\
-         blockquote{border-left:3px solid #ccc;margin-left:0;padding-left:1em}</style>\n",
+    page.push_str("<style>");
+    page.push_str(&font_faces(tree));
+    let family = tree.layout.font_family.as_deref().map_or_else(
+        || "sans-serif".to_owned(),
+        |family| super::css_font_stack(family, super::font_generic(family)),
     );
+    let size = tree
+        .layout
+        .font_size_half_points
+        .map_or_else(String::new, |size| {
+            format!("font-size:{}pt;", f64::from(size) / 2.0)
+        });
+    let _ = write!(
+        page,
+        "body{{font-family:{family};{size}max-width:48em;margin:2em auto;line-height:1.5}}\
+         table{{border-collapse:collapse}}td,th{{border:1px solid #999;padding:4px 8px}}\
+         blockquote{{border-left:3px solid #ccc;margin-left:0;padding-left:1em}}"
+    );
+    page.push_str("</style>\n");
     page.push_str("</head>\n<body>\n");
     page.push_str(&body);
     if !writer.notes.is_empty() {
@@ -1024,6 +1038,45 @@ pub fn write_html(tree: &DocumentTree, title: &str) -> String {
     }
     page.push_str("</body>\n</html>\n");
     page
+}
+
+/// The largest embedded face a page carries inline, in bytes.
+pub const MAX_HTML_FONT_FACE_BYTES: usize = 512 * 1024;
+/// The most bytes of embedded faces a page carries inline together; past it, the rest are left
+/// to the substitute of their stack.
+pub const MAX_HTML_FONT_BYTES: usize = 2 * 1024 * 1024;
+
+/// The `@font-face` rules of the faces the document embeds, inline as `data:` addresses while
+/// they are small: a page that stands alone has nowhere else to load them from.
+fn font_faces(tree: &DocumentTree) -> String {
+    let mut css = String::new();
+    let mut total = 0;
+    for family in &tree.fonts.families {
+        for face in &family.faces {
+            let Some(bytes) = tree.fonts.files.get(face.file) else {
+                continue;
+            };
+            if bytes.len() > MAX_HTML_FONT_FACE_BYTES || total + bytes.len() > MAX_HTML_FONT_BYTES {
+                continue;
+            }
+            total += bytes.len();
+            let _ = write!(
+                css,
+                "@font-face{{font-family:'{}';font-weight:{};font-style:{};src:url(data:font/ttf;base64,{})}}",
+                family
+                    .name
+                    .replace(['\'', '"', ';', '{', '}', '<', '>'], ""),
+                if face.style.bold() { "bold" } else { "normal" },
+                if face.style.italic() {
+                    "italic"
+                } else {
+                    "normal"
+                },
+                crate::base64::encode(bytes)
+            );
+        }
+    }
+    css
 }
 
 struct HtmlWriter<'t> {
@@ -1296,8 +1349,8 @@ fn open_tag(mark: &Mark) -> String {
             if let Some(family) = font_family {
                 let _ = write!(
                     style,
-                    "font-family:'{}';",
-                    family.replace(['\'', '"', ';'], "")
+                    "font-family:{};",
+                    super::css_font_stack(family, super::FontGeneric::Auto)
                 );
             }
             if let Some(size) = font_size {

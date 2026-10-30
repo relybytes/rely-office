@@ -86,6 +86,8 @@ export interface DocumentEditorLabels {
   fontFamily: string;
   fontSize: string;
   defaultFont: string;
+  /** Beside a family the browser does not have, the bundled one it is shown with. */
+  fontShownAs: (substitute: string) => string;
   lineSpacing: string;
   styleTitle: string;
   styleSubtitle: string;
@@ -192,6 +194,7 @@ export const ENGLISH_DOCUMENT_EDITOR_LABELS: DocumentEditorLabels = {
   fontFamily: 'Font',
   fontSize: 'Font size',
   defaultFont: 'Default',
+  fontShownAs: (substitute) => `shown as ${substitute}`,
   lineSpacing: 'Line spacing',
   styleTitle: 'Title',
   styleSubtitle: 'Subtitle',
@@ -296,6 +299,7 @@ export const ITALIAN_DOCUMENT_EDITOR_LABELS: DocumentEditorLabels = {
   fontFamily: 'Carattere',
   fontSize: 'Dimensione carattere',
   defaultFont: 'Predefinito',
+  fontShownAs: (substitute) => `mostrato con ${substitute}`,
   lineSpacing: 'Interlinea',
   styleTitle: 'Titolo',
   styleSubtitle: 'Sottotitolo',

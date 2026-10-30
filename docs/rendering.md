@@ -38,9 +38,17 @@ The rules follow Word, the program most docx files come from, rather than Typst'
   but the last.
 - **Lines fill greedily** (`linebreaks: "simple"`), as office suites break them, not with Typst's
   optimized breaking.
-- **Fonts are substituted by metrics**: Calibri by Carlito, Cambria by Caladea, Arial and Helvetica
-  by Liberation Sans, Times New Roman by Liberation Serif, Courier New by Liberation Mono. The
-  document's own family is listed first, so a renderer given the real font uses it.
+- **Fonts are substituted by metrics**: Calibri, Calibri Light and Aptos by Carlito, Cambria by
+  Caladea, Arial, Helvetica, Segoe UI, Verdana, Tahoma and Trebuchet MS by Liberation Sans, Times
+  New Roman, Georgia, Garamond and Book Antiqua by Liberation Serif, Courier New and Consolas by
+  Liberation Mono (`SUBSTITUTES` in rely-office-core, the table the editor's `fontStack` shares).
+  A family the table does not know falls back by the kind the document's font table gives it:
+  roman to Liberation Serif, swiss to Liberation Sans, modern to Liberation Mono. The document's
+  own family is listed first, then its alternative name, so a renderer given the real font uses
+  it.
+- **Embedded faces are used**: the faces a docx or odt carries (de-obfuscated, see
+  [document-tree.md](document-tree.md)) join the renderer's fonts for that render only, so a
+  document set in a font the server lacks is drawn in it.
 - **Headings** keep their PDF bookmarks but draw only their style's look; a heading whose style
   names no size takes the sizes of Word's default template.
 - **Images** Typst cannot decode fail the whole document in Typst, so a failed render with images

@@ -66,6 +66,7 @@ A document is a `Uint8Array` (a Node `Buffer` is one), an `ArrayBuffer` or any t
 | `writeDocx({ blocks, media?, page?, sections?, comments?, objects? })` | a document tree | the docx bytes |
 | `writeOdt(tree)`, `writeMarkdown(tree)`, `writeHtml(tree, title?)` | a document tree | the odt bytes, the Markdown or the HTML page as UTF-8 bytes |
 | `writePptx({ widthEmu, heightEmu, slides, media? })`, `writeOdp(...)` | slides | the pptx or the odp bytes |
+| `fontStack(family, generic?)`, `fontSubstitute(family, generic?)` | a font family | a CSS stack ending with the bundled family of the same metrics, or that family |
 | `convertToDocx(bytes, limits?)` | doc, odt, docx | the docx bytes |
 | `convertToPptx(bytes, limits?)` | ppt, odp, pptx | the pptx bytes |
 | `createSheet(options?)`, `openSheet(bytes, fileName?, options?)` | xlsx, xls, ods, csv, tsv | a `SheetDocument` |

@@ -41,7 +41,7 @@ const RELATIONSHIP_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 /// The relationships of the main part the writer always declares: styles, numbering, settings,
 /// footnotes and endnotes.
-const MAIN_FIXED_RELATIONSHIPS: usize = 5;
+const MAIN_FIXED_RELATIONSHIPS: usize = 6;
 const W14: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
 const W15: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
 const COMMENTS_EXTENDED_RELATIONSHIP: &str =
@@ -186,9 +186,31 @@ pub fn write_docx(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
     );
     add("_rels/.rels", package_relationships().as_bytes());
     add("word/document.xml", document.as_bytes());
-    add("word/styles.xml", STYLES.as_bytes());
+    add("word/styles.xml", styles_part(&tree.layout).as_bytes());
     add("word/numbering.xml", numbering(&lists).as_bytes());
-    add("word/settings.xml", settings(tree, sections).as_bytes());
+    let (font_table, font_relationships, font_parts) = super::docx_font_table(tree);
+    add(
+        "word/settings.xml",
+        settings(tree, sections, !font_parts.is_empty()).as_bytes(),
+    );
+    add("word/fontTable.xml", font_table.as_bytes());
+    if !font_relationships.is_empty() {
+        let mut xml = String::from(concat!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+        ));
+        for (id, target) in &font_relationships {
+            let _ = write!(
+                xml,
+                r#"<Relationship Id="{id}" Type="{RELATIONSHIP_TYPE}/font" Target="{target}"/>"#
+            );
+        }
+        xml.push_str("</Relationships>");
+        add("word/_rels/fontTable.xml.rels", xml.as_bytes());
+    }
+    for (target, bytes) in &font_parts {
+        add(&format!("word/{target}"), bytes);
+    }
     add(
         "word/footnotes.xml",
         notes_part("footnotes", "footnote", &writer.footnotes).as_bytes(),
@@ -1626,7 +1648,7 @@ fn section_properties(section: &Section, references: &str) -> String {
     )
 }
 
-fn settings(tree: &DocumentTree, sections: &[Section]) -> String {
+fn settings(tree: &DocumentTree, sections: &[Section], embeds_fonts: bool) -> String {
     let even = if sections.iter().any(|section| {
         section.headers_footers.even_header.is_some()
             || section.headers_footers.even_footer.is_some()
@@ -1638,12 +1660,18 @@ fn settings(tree: &DocumentTree, sections: &[Section]) -> String {
     format!(
         concat!(
             r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings {}>"#,
-            r#"<w:defaultTabStop w:val="{}"/>{}"#,
+            r#"{}<w:defaultTabStop w:val="{}"/>{}"#,
             r#"<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>"#,
             r#"<w:endnotePr><w:endnote w:id="-1"/><w:endnote w:id="0"/></w:endnotePr>"#,
             "{}</w:settings>"
         ),
         NAMESPACES,
+        // The faces stay with the file, as Word's "Embed fonts in the file" keeps them.
+        if embeds_fonts {
+            "<w:embedTrueTypeFonts/>"
+        } else {
+            ""
+        },
         tree.layout.default_tab_twips,
         even,
         // Word since 2007 keeps the larger of two spaces; this asks for their sum.
@@ -1710,12 +1738,16 @@ fn content_types(header_parts: &[String], objects: &[(String, String)]) -> Strin
         ("settings", "settings"),
         ("footnotes", "footnotes"),
         ("endnotes", "endnotes"),
+        ("fontTable", "fontTable"),
     ] {
         let _ = write!(
             xml,
             r#"<Override PartName="/word/{part}.xml" ContentType="{WORD_CONTENT_TYPE}.{kind}+xml"/>"#
         );
     }
+    xml.push_str(
+        r#"<Default Extension="odttf" ContentType="application/vnd.openxmlformats-officedocument.obfuscatedFont"/>"#,
+    );
     for part in header_parts {
         let kind = if part.starts_with("header") {
             "header"
@@ -1768,6 +1800,7 @@ fn relationships_part(relationships: &[Relationship], main: bool) -> String {
             ("settings", "settings.xml"),
             ("footnotes", "footnotes.xml"),
             ("endnotes", "endnotes.xml"),
+            ("fontTable", "fontTable.xml"),
         ]
         .iter()
         .enumerate()
@@ -1856,13 +1889,31 @@ fn numbering(lists: &[(u32, bool, u32)]) -> String {
     xml
 }
 
+/// The styles part: the document's body font and size as its defaults, Calibri 11 when it
+/// names none, then [`STYLES`].
+fn styles_part(layout: &PageLayout) -> String {
+    let family = escape(layout.font_family.as_deref().map_or("Calibri", str::trim));
+    let size = layout
+        .font_size_half_points
+        .filter(|size| (2..=3_276).contains(size))
+        .unwrap_or(22);
+    format!(
+        concat!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+            r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+            r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="{family}" w:hAnsi="{family}" w:eastAsia="{family}" w:cs="{family}"/>"#,
+            r#"<w:sz w:val="{size}"/><w:szCs w:val="{size}"/><w:lang w:val="it-IT"/></w:rPr></w:rPrDefault>"#,
+            r#"<w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>"#,
+            "{styles}"
+        ),
+        family = family,
+        size = size,
+        styles = STYLES,
+    )
+}
+
 /// Word's built-in styles the writer uses, with the look of Word's default template.
 const STYLES: &str = concat!(
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
-    r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
-    r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/>"#,
-    r#"<w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="it-IT"/></w:rPr></w:rPrDefault>"#,
-    r#"<w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>"#,
     r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>"#,
     r#"<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>"#,
     r#"<w:pPr><w:keepNext/><w:spacing w:before="240" w:after="0"/><w:outlineLvl w:val="0"/></w:pPr>"#,

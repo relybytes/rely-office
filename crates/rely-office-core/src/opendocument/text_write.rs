@@ -219,13 +219,15 @@ pub fn write_odt(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
     content.push_str(&body);
     content.push_str("</office:text></office:body></office:document-content>");
 
+    let (font_faces, font_files) = crate::document::odf_font_faces(tree);
     let styles = styles_xml(
         &tree.layout,
+        &font_faces,
         &page_layouts,
         &writer.styles_styles.xml,
         &masters,
     );
-    let settings = settings_xml(tree.layout.spacing_adds_up);
+    let settings = settings_xml(tree.layout.spacing_adds_up, !font_files.is_empty());
     let mut manifest = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8"?>"#,
         r#"<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.3">"#,
@@ -239,6 +241,12 @@ pub fn write_odt(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
         let _ = write!(
             manifest,
             r#"<manifest:file-entry manifest:full-path="{path}" manifest:media-type="{content_type}"/>"#
+        );
+    }
+    for (path, _) in &font_files {
+        let _ = write!(
+            manifest,
+            r#"<manifest:file-entry manifest:full-path="{path}" manifest:media-type="application/x-font-ttf"/>"#
         );
     }
     manifest.push_str("</manifest:manifest>");
@@ -257,6 +265,7 @@ pub fn write_odt(tree: &DocumentTree) -> Result<Vec<u8>, OfficeError> {
     for (path, _, bytes) in &writer.picture_files {
         members.push((path.clone(), bytes.to_vec()));
     }
+    members.extend(font_files);
     package(&members)
 }
 
@@ -1225,7 +1234,13 @@ fn page_layout_xml(name: &str, layout: &PageLayout, headers: &HeadersFooters) ->
     xml
 }
 
-fn styles_xml(layout: &PageLayout, page_layouts: &str, automatic: &str, masters: &str) -> String {
+fn styles_xml(
+    layout: &PageLayout,
+    font_faces: &str,
+    page_layouts: &str,
+    automatic: &str,
+    masters: &str,
+) -> String {
     let mut default = String::new();
     if let Some(family) = &layout.font_family {
         let _ = write!(
@@ -1256,14 +1271,20 @@ fn styles_xml(layout: &PageLayout, page_layouts: &str, automatic: &str, masters:
         );
     }
     format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-styles {NAMESPACES}><office:styles><style:default-style style:family="paragraph"><style:paragraph-properties style:tab-stop-distance="{}"/><style:text-properties{default}/></style:default-style>{NAMED_STYLES}{headings}</office:styles><office:automatic-styles>{page_layouts}{automatic}</office:automatic-styles><office:master-styles>{masters}</office:master-styles></office:document-styles>"#,
+        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-styles {NAMESPACES}>{font_faces}<office:styles><style:default-style style:family="paragraph"><style:paragraph-properties style:tab-stop-distance="{}"/><style:text-properties{default}/></style:default-style>{NAMED_STYLES}{headings}</office:styles><office:automatic-styles>{page_layouts}{automatic}</office:automatic-styles><office:master-styles>{masters}</office:master-styles></office:document-styles>"#,
         length(layout.default_tab_twips.max(1))
     )
 }
 
-fn settings_xml(spacing_adds_up: bool) -> String {
+fn settings_xml(spacing_adds_up: bool, embeds_fonts: bool) -> String {
+    // `LibreOffice` keeps the embedded faces on its next save only when asked to.
+    let embed = if embeds_fonts {
+        r#"<config:config-item config:name="EmbedFonts" config:type="boolean">true</config:config-item>"#
+    } else {
+        ""
+    };
     format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-settings {NAMESPACES}><office:settings><config:config-item-set config:name="ooo:configuration-settings"><config:config-item config:name="AddParaTableSpacing" config:type="boolean">{spacing_adds_up}</config:config-item></config:config-item-set></office:settings></office:document-settings>"#
+        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-settings {NAMESPACES}><office:settings><config:config-item-set config:name="ooo:configuration-settings"><config:config-item config:name="AddParaTableSpacing" config:type="boolean">{spacing_adds_up}</config:config-item>{embed}</config:config-item-set></office:settings></office:document-settings>"#
     )
 }
 

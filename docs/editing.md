@@ -37,6 +37,8 @@ this crate read the file the same way:
 | page number and page count runs | `fldSimple` with `PAGE` and `NUMPAGES` |
 | `hardBreak`, tabs | `w:br`, `w:tab` |
 | `image` | an inline drawing of its size, cut to the text width, the image stored once in `word/media/`; EMF and WMF pictures are kept as they are |
+| `defaultFont` | the document defaults of `word/styles.xml` (`w:rFonts`, `w:sz`); Calibri 11 when the tree names none |
+| the families the text uses, with `fonts` | `word/fontTable.xml` lists each family the body or a run sets, with its alternative name, PANOSE, character set, kind and pitch when the tree knows them and the kind of the common families otherwise; each face the tree embeds is written to `word/fonts/` obfuscated with a key taken from its bytes (so the same file writes the same package), with `w:embedTrueTypeFonts` in the settings, as Word's "Embed fonts in the file" does |
 | an `image` an embedded object names | a `w:object` with a VML shape of the picture and an `o:OLEObject` naming the object, stored in `word/embeddings/` as a package (`relationships/package`) or an OLE compound file (`relationships/oleObject`, `.bin`) |
 | `math` | Office Math, `m:oMath` in the line or `m:oMathPara` on a line of its own |
 | `comment` marks, `commentAnchor` and `comments` | `w:commentRangeStart`, `w:commentRangeEnd` and `w:commentReference`, the comments in `comments.xml` and their replies and done states in `commentsExtended.xml` |
@@ -94,6 +96,7 @@ Word open, its looks in automatic styles and its structure in LibreOffice's own 
 | `comment` marks, `commentAnchor` and `comments` | `office:annotation` and `office:annotation-end` around the text, replies after their parent with `loext:parent-name`, a comment on no text at its point |
 | `insertion` and `deletion` marks | `text:tracked-changes` with each change's author and date, `text:change-start` and `text:change-end` in the text, deleted text inside the change |
 | page number and page count runs | `text:page-number` and `text:page-count` |
+| the families the text uses, with `fonts` | `office:font-face-decls` in `styles.xml` with each family's kind and pitch; a face the tree embeds as a `svg:font-face-uri` to its file under `Fonts/` (`application/x-font-ttf` in the manifest), and `EmbedFonts` in the settings so LibreOffice keeps them on its next save |
 | `headersFooters`, `sections` | a master page per section with its page layout, headers and footers in `styles.xml`, each section starting on its master page |
 
 The `mimetype` member comes first and uncompressed, as OpenDocument asks. Reading the written file
@@ -120,7 +123,12 @@ name) with CommonMark and its common extensions, and an HTML page (by its name o
 `write_markdown(&tree)` writes CommonMark with the same extensions, keeping in inline HTML what
 Markdown cannot say, and the images as `data:` URLs; `write_html(&tree, title)` writes a page of
 its own with the images inside, the notes at its end, a floating image floated to its side and
-math as LaTeX in a `span` a math renderer can typeset. Text is escaped in both, and a link that is
+math as LaTeX in a `span` a math renderer can typeset. Every font it names is a stack ending
+with the bundled family of the same metrics and the generic family (`'Calibri', 'Carlito',
+sans-serif`, `css_font_stack`), the body in the document's own font and size, and the faces the
+tree embeds come inline as `@font-face` rules while they are small: 512 KB a face and 2 MB
+together (`MAX_HTML_FONT_FACE_BYTES`, `MAX_HTML_FONT_BYTES`); past them a family falls back to
+its stack. Text is escaped in both, and a link that is
 not to the web or to mail is written as text.
 
 ## Writing a pptx

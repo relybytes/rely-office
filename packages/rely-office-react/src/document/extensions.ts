@@ -17,6 +17,7 @@ import { imageNodeView } from './image-view.js';
 import { RelyPagination } from './pagination.js';
 import { RelySearch } from './search.js';
 import { RelyTrackRecording, TRACK_SKIP, restoreFormatting } from './track-changes.js';
+import { fontStack, stackFamily } from './fonts.js';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -179,13 +180,20 @@ export const RelyTextStyle = Mark.create({
       default: null,
       parseHTML: (element: HTMLElement) => element.style.getPropertyValue(property) || null,
     });
-    return { fontFamily: style('font-family'), fontSize: style('font-size'), color: style('color') };
+    return {
+      fontFamily: {
+        default: null,
+        parseHTML: (element: HTMLElement) => stackFamily(element.style.getPropertyValue('font-family')),
+      },
+      fontSize: style('font-size'),
+      color: style('color'),
+    };
   },
   parseHTML: () => [{ tag: 'span[style]' }],
   renderHTML: ({ mark, HTMLAttributes }) => {
     const { fontFamily, fontSize, color } = mark.attrs as Record<string, string | null>;
     const style = [
-      fontFamily ? `font-family: ${fontFamily}` : '',
+      fontFamily ? `font-family: ${fontStack(fontFamily)}` : '',
       fontSize ? `font-size: ${fontSize}` : '',
       color ? `color: ${color}` : '',
     ]

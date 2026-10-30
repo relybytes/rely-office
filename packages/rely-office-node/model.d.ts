@@ -309,6 +309,44 @@ export interface ImportReport {
    * `writeDocx`, left out of a doc; never run.
    */
   macros?: boolean;
+  /** Embedded font faces left out: unreadable, not a font, or past the limits. */
+  fontsLeftOut?: number;
+}
+
+/** The kind of a typeface, as Word's font table and OpenDocument name it. */
+export type FontGeneric = 'auto' | 'roman' | 'swiss' | 'modern' | 'script' | 'decorative';
+
+/** Which face of a family an embedded font file is. */
+export type FaceStyle = 'regular' | 'bold' | 'italic' | 'boldItalic';
+
+/** A face of a family a document carries; `file` indexes `fontFiles`. */
+export interface FontFace {
+  style: FaceStyle;
+  file: number;
+}
+
+/**
+ * A family a document names, from a docx font table or the font face declarations of an odt,
+ * with the faces it embeds. A writer lists it again with what is known of it.
+ */
+export interface DocumentFont {
+  name: string;
+  /** Another name the family goes by. */
+  altName?: string;
+  generic?: FontGeneric;
+  pitch?: 'default' | 'fixed' | 'variable';
+  /** Word's character set, two hexadecimal digits. */
+  charset?: string;
+  /** The PANOSE classification, twenty hexadecimal digits. */
+  panose?: string;
+  faces?: FontFace[];
+}
+
+/** The font and size of body text, the document's defaults. */
+export interface DefaultFont {
+  family?: string;
+  /** In half points: 22 is 11 pt. */
+  sizeHalfPoints?: number;
 }
 
 export interface Note {
@@ -364,6 +402,12 @@ export interface DocumentTree {
   objects?: EmbeddedObject[];
   /** The macros of a docm, an opaque value `writeDocx` writes back as they were. */
   macroProject?: Uint8Array;
+  /** The families the document names, when its file lists any. */
+  fonts?: DocumentFont[];
+  /** The font files the document embeds, plain TrueType or OpenType; `FontFace.file` indexes them. */
+  fontFiles?: Uint8Array[];
+  /** The font and size of body text, when the document sets them. */
+  defaultFont?: DefaultFont;
 }
 
 /**
@@ -431,6 +475,19 @@ export interface DocxInput {
   objects?: EmbeddedObject[];
   /** The macros `readDocumentTree` gave; the file written is then a docm. */
   macroProject?: Uint8Array;
+  /**
+   * The families to list in the font table, as `readDocumentTree` gives them; a family the
+   * text uses and this leaves out is listed with what is known of it.
+   */
+  fonts?: DocumentFont[];
+  /**
+   * The font files the faces of `fonts` embed: a docx carries them obfuscated with
+   * `embedTrueTypeFonts`, an odt under `Fonts/`, an HTML page inline while small. A file that is
+   * not a font, or past the limits, is left out with its faces.
+   */
+  fontFiles?: DocumentBytes[];
+  /** The font and size of body text; Calibri 11 when left out. */
+  defaultFont?: DefaultFont;
 }
 
 /** A point of a path, in EMU from the top-left corner of its frame. */

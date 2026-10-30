@@ -21,6 +21,7 @@ import init, {
 } from '../../wasm/rely_office_wasm.js';
 import type {
   DocumentBytes,
+  DocumentFont,
   DocumentFormat,
   DocumentTree,
   DocxInput,
@@ -99,9 +100,10 @@ export function readDocumentTree(
     ),
   );
   try {
-    const tree = JSON.parse(handle.json) as Omit<DocumentTree, 'media' | 'objects'> & {
+    const tree = JSON.parse(handle.json) as Omit<DocumentTree, 'media' | 'objects' | 'fontFiles'> & {
       media: { index: number; contentType: string }[];
       objects?: (Omit<EmbeddedObject, 'bytes'> & { index: number })[];
+      fontFiles?: { index: number }[];
     };
     const media: MediaItem[] = tree.media.map((item) => ({
       index: item.index,
@@ -115,10 +117,16 @@ export function readDocumentTree(
       package: item.package,
       bytes: handle.takeObjectBytes(item.index) ?? new Uint8Array(0),
     }));
-    const { objects: _objects, ...rest } = tree;
-    const read: DocumentTree = objects === undefined ? { ...rest, media } : { ...rest, media, objects };
+    const fontFiles = tree.fontFiles?.map((item) => handle.takeFontFileBytes(item.index) ?? new Uint8Array(0));
+    const { objects: _objects, fontFiles: _fontFiles, ...rest } = tree;
     const macroProject = handle.takeMacroProject();
-    return macroProject === undefined ? read : { ...read, macroProject };
+    return {
+      ...rest,
+      media,
+      ...(objects === undefined ? {} : { objects }),
+      ...(fontFiles === undefined ? {} : { fontFiles }),
+      ...(macroProject === undefined ? {} : { macroProject }),
+    };
   } finally {
     handle.free();
   }
@@ -126,44 +134,51 @@ export function readDocumentTree(
 
 /** A document tree as a docx Word opens and `readDocumentTree` reads back to the same tree. */
 export function writeDocx(tree: DocxInput): Uint8Array {
-  ready();
-  const { blocks, page, media, notes, headersFooters, sections, comments, objects, macroProject } = tree;
-  const writer = new DocxWriter();
-  try {
-    for (const item of media ?? []) {
-      writer.addMedia(toBytes(item));
-    }
-    for (const object of objects ?? []) {
-      writer.addObject(
-        object.media,
-        toBytes(object.bytes),
-        object.name ?? 'oleObject.bin',
-        object.program,
-      );
-    }
-    if (macroProject !== undefined) {
-      call(() => writer.setMacroProject(macroProject));
-    }
-    return call(() =>
-      writer.write(
-        JSON.stringify({ blocks: blocks ?? [], page, notes, headersFooters, sections, comments }),
-      ),
-    );
-  } finally {
-    writer.free();
-  }
+  return withTreeWriter(tree, (writer, json) => writer.write(json), true);
 }
 
-/** The tree in a writer with its images added, for `write` to turn into a file. */
-function withTreeWriter<T>(tree: DocxInput, write: (writer: DocxWriter, json: string) => T): T {
+/**
+ * The fonts of a tree with their files added to a writer: a face whose file the writer refuses
+ * (not a font, or past the limits) is dropped, the others name the files as the writer numbered
+ * them.
+ */
+function addFonts(writer: DocxWriter, fonts: DocumentFont[] | undefined, files: DocumentBytes[] | undefined): DocumentFont[] {
+  const indexes = (files ?? []).map((bytes) => writer.addFontFile(toBytes(bytes)));
+  return (fonts ?? []).map((font) => ({
+    ...font,
+    faces: (font.faces ?? []).flatMap((face) => {
+      const file = indexes[face.file];
+      return file === undefined || file === null ? [] : [{ ...face, file }];
+    }),
+  }));
+}
+
+/** The tree in a writer with its images and fonts added, for `write` to turn into a file. */
+function withTreeWriter<T>(tree: DocxInput, write: (writer: DocxWriter, json: string) => T, withObjects = false): T {
   ready();
-  const { blocks, page, media, notes, headersFooters, sections, comments } = tree;
+  const { blocks, page, media, notes, headersFooters, sections, comments, objects, fonts, fontFiles, defaultFont, macroProject } =
+    tree;
   const writer = new DocxWriter();
   try {
     for (const item of media ?? []) {
       writer.addMedia(toBytes(item));
     }
-    const json = JSON.stringify({ blocks: blocks ?? [], page, notes, headersFooters, sections, comments });
+    if (withObjects) {
+      for (const object of objects ?? []) {
+        writer.addObject(object.media, toBytes(object.bytes), object.name ?? 'oleObject.bin', object.program);
+      }
+      if (macroProject !== undefined) call(() => writer.setMacroProject(macroProject));
+    }
+    const json = JSON.stringify({
+      blocks: blocks ?? [],
+      page,
+      notes,
+      headersFooters,
+      sections,
+      comments,
+      fonts: addFonts(writer, fonts, fontFiles),
+      defaultFont,
+    });
     return call(() => write(writer, json));
   } finally {
     writer.free();

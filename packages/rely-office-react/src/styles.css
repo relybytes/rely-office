@@ -148,6 +148,8 @@
   padding: 72px 64px;
   outline: none;
   line-height: 1.5;
+  font-family: var(--rely-document-font, inherit);
+  font-size: var(--rely-document-size, inherit);
 }
 
 .rely-document-content p {

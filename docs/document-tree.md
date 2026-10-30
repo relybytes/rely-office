@@ -14,7 +14,8 @@ structures.
 {
   blocks: Block[], media: MediaItem[], report: ImportReport,
   notes: Note[], headersFooters: HeadersFooters, page: PageSize, sections?: Section[],
-  comments?: Comment[], objects?: EmbeddedObject[]
+  comments?: Comment[], objects?: EmbeddedObject[],
+  fonts?: DocumentFont[], fontFiles?: Uint8Array[], defaultFont?: DefaultFont
 }
 ```
 
@@ -41,6 +42,25 @@ structures.
   (`Excel.Sheet.12`), `package` says whether `bytes` is an Office package (xlsx, docx, pptx)
   rather than a compound file holding an OLE object. `writeDocx` writes each back under
   `word/embeddings`, where Word and LibreOffice open it as the object again.
+- `fonts`: present when the file lists families, each `{ name, altName?, generic, pitch,
+  charset?, panose?, faces? }`: a docx's font table (`word/fontTable.xml`), the font face
+  declarations of an odt, or the font names of a doc. `generic` is the kind (`roman`, `swiss`,
+  `modern`, `script`, `decorative`, `auto`) a reader without the face picks the nearest by;
+  `faces` are the faces the file embeds, `{ style: "regular" | "bold" | "italic" | "boldItalic",
+  file }`, `file` indexing `fontFiles`.
+- `fontFiles`: the embedded font files, plain TrueType or OpenType. A docx stores them obfuscated
+  (`w:embedRegular` and its kin with a `w:fontKey`): the first 32 bytes are combined by exclusive
+  or with the key's GUID read from its last pair of digits to its first, as ECMA-376 Part 2
+  says, and the tree holds them already de-obfuscated. An odt names them under `Fonts/` from
+  `svg:font-face-uri`; their face is read from the `macStyle` of their `head` table. At most 32
+  files, 16 MB each and 48 MB together (`MAX_FONT_FILES`, `MAX_FONT_FILE_BYTES`,
+  `MAX_TOTAL_FONT_BYTES`); a face past them, unreadable or not a font is counted in
+  `fontsLeftOut` and its family kept without it.
+- `defaultFont`: `{ family?, sizeHalfPoints? }`, the font of body text: a docx's document defaults
+  and default paragraph style, an odt's default paragraph style. A theme reference
+  (`w:asciiTheme="minorHAnsi"`) is resolved against the document's theme (`+mn-lt` and `+mj-lt`,
+  Aptos and Aptos Display in Office 2023); a docx without a theme part keeps Word 2007's Calibri
+  and Cambria.
 
 ## Blocks
 
@@ -198,6 +218,7 @@ Counts of what the tree leaves out or changes:
 | `trackedInsertions` | tracked insertions and moves in: accepted, their text is in the tree, or kept, marked `insertion` |
 | `trackedDeletions` | tracked deletions, moves out and deleted rows: accepted, their text is gone, or kept, marked `deletion` |
 | `hiddenRuns` | runs formatted as hidden, left out |
+| `fontsLeftOut` | embedded font faces left out: unreadable, not a font, or past the limits |
 
 ## Example
 

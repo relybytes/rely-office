@@ -16,7 +16,17 @@ const PLACEHOLDER_COMMENT: Comment = { author: '', date: '', blocks: [], resolve
 const PLACEHOLDER_NOTE: Note = { kind: 'footnote', blocks: [] };
 
 /** The parts of the aside that are replaced whole, the last writer's winning. */
-const WHOLE_KEYS = ['report', 'headersFooters', 'page', 'sections', 'objects'] as const;
+const WHOLE_KEYS = [
+  'report',
+  'headersFooters',
+  'page',
+  'sections',
+  'objects',
+  'fonts',
+  'fontFiles',
+  'defaultFont',
+  'macroProject',
+] as const;
 
 /**
  * The first index at or past `length` that belongs to `slot`: two clients adding a comment, a
