@@ -38,7 +38,7 @@
     <text x="0" y="28" class="stat">17</text><text x="0" y="50" class="unit">FORMATS</text>
     <text x="118" y="28" class="stat">502</text><text x="118" y="50" class="unit">SHEET FUNCTIONS</text>
     <text x="268" y="28" class="stat">4</text><text x="268" y="50" class="unit">REACT EDITORS</text>
-    <text x="398" y="28" class="stat">11/11</text><text x="398" y="50" class="unit">PAGES MATCH LIBREOFFICE</text>
+    <text x="398" y="28" class="stat">17/17</text><text x="398" y="50" class="unit">PAGES MATCH LIBREOFFICE</text>
   </g>
   <g transform="translate(56 330)" class="chip" text-anchor="middle">
     <rect x="0" y="0" width="70" height="26" rx="13" fill="#1d4ed8"/><text x="35" y="18" fill="#dbeafe">docx</text>

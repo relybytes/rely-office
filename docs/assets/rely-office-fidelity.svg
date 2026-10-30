@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 452" width="960" height="452" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 608" width="960" height="608" role="img" aria-labelledby="title desc">
   <title id="title">Pages compared with LibreOffice</title>
-  <desc id="desc">Distance of each of the 11 corpus pages from the page LibreOffice prints, from 0 (equal) to 1; every page is under the pass threshold of 0.03, the worst at 0.023.</desc>
+  <desc id="desc">Distance of each of the 17 corpus pages and slides from the page LibreOffice prints, from 0 (equal) to 1; every page is under the pass threshold of 0.03, the worst at 0.023.</desc>
   <defs>
     <style>
       text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #1f2328; }
@@ -11,19 +11,19 @@
     </style>
     <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#22c55e"/><stop offset="1" stop-color="#16a34a"/></linearGradient>
   </defs>
-  <rect x="0.5" y="0.5" width="959" height="451" rx="16" fill="#ffffff" stroke="#d0d7de"/>
-  <text x="32" y="44" font-size="18" font-weight="700">11 of 11 pages match LibreOffice</text>
+  <rect x="0.5" y="0.5" width="959" height="607" rx="16" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="32" y="44" font-size="18" font-weight="700">17 of 17 pages match LibreOffice</text>
   <text x="32" y="68" class="small muted">Mean grey-level distance per page against LibreOffice's own print, 8-pixel blocks, 72 dpi. Lower is closer; a page passes at 0.03.</text>
-  <line x1="250.0" y1="88" x2="250.0" y2="382" stroke="#eaeef2"/>
-  <text x="250.0" y="402" class="small muted" text-anchor="middle">0.00</text>
-  <line x1="400.0" y1="88" x2="400.0" y2="382" stroke="#eaeef2"/>
-  <text x="400.0" y="402" class="small muted" text-anchor="middle">0.01</text>
-  <line x1="550.0" y1="88" x2="550.0" y2="382" stroke="#eaeef2"/>
-  <text x="550.0" y="402" class="small muted" text-anchor="middle">0.02</text>
-  <line x1="700.0" y1="88" x2="700.0" y2="382" stroke="#eaeef2"/>
-  <text x="700.0" y="402" class="small muted" text-anchor="middle">0.03</text>
-  <line x1="850.0" y1="88" x2="850.0" y2="382" stroke="#eaeef2"/>
-  <text x="850.0" y="402" class="small muted" text-anchor="middle">0.04</text>
+  <line x1="250.0" y1="88" x2="250.0" y2="538" stroke="#eaeef2"/>
+  <text x="250.0" y="558" class="small muted" text-anchor="middle">0.00</text>
+  <line x1="400.0" y1="88" x2="400.0" y2="538" stroke="#eaeef2"/>
+  <text x="400.0" y="558" class="small muted" text-anchor="middle">0.01</text>
+  <line x1="550.0" y1="88" x2="550.0" y2="538" stroke="#eaeef2"/>
+  <text x="550.0" y="558" class="small muted" text-anchor="middle">0.02</text>
+  <line x1="700.0" y1="88" x2="700.0" y2="538" stroke="#eaeef2"/>
+  <text x="700.0" y="558" class="small muted" text-anchor="middle">0.03</text>
+  <line x1="850.0" y1="88" x2="850.0" y2="538" stroke="#eaeef2"/>
+  <text x="850.0" y="558" class="small muted" text-anchor="middle">0.04</text>
   <text x="238" y="112" class="label" text-anchor="end">Customer register (xlsx) p.1</text>
   <rect x="250" y="101" width="145.7" height="15" rx="4" fill="url(#bar)"/>
   <text x="403.7" y="113" class="value">0.010</text>
@@ -45,19 +45,37 @@
   <text x="238" y="268" class="label" text-anchor="end">Priced quote</text>
   <rect x="250" y="257" width="138.7" height="15" rx="4" fill="url(#bar)"/>
   <text x="396.7" y="269" class="value">0.009</text>
-  <text x="238" y="294" class="label" text-anchor="end">Technical report p.1</text>
-  <rect x="250" y="283" width="321.1" height="15" rx="4" fill="url(#bar)"/>
-  <text x="579.1" y="295" class="value">0.021</text>
-  <text x="238" y="320" class="label" text-anchor="end">Technical report p.2</text>
-  <rect x="250" y="309" width="97.5" height="15" rx="4" fill="url(#bar)"/>
-  <text x="355.5" y="321" class="value">0.006</text>
-  <text x="238" y="346" class="label" text-anchor="end">Monthly sales (xlsx)</text>
-  <rect x="250" y="335" width="216.6" height="15" rx="4" fill="url(#bar)"/>
-  <text x="474.6" y="347" class="value">0.014</text>
-  <text x="238" y="372" class="label" text-anchor="end">Meeting minutes</text>
-  <rect x="250" y="361" width="343.1" height="15" rx="4" fill="url(#bar)"/>
-  <text x="601.1" y="373" class="value">0.023</text>
-  <line x1="700.0" y1="82" x2="700.0" y2="386" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="238" y="294" class="label" text-anchor="end">Agenda (pptx) slide 1</text>
+  <rect x="250" y="283" width="151.0" height="15" rx="4" fill="url(#bar)"/>
+  <text x="409.0" y="295" class="value">0.010</text>
+  <text x="238" y="320" class="label" text-anchor="end">Agenda (pptx) slide 2</text>
+  <rect x="250" y="309" width="130.5" height="15" rx="4" fill="url(#bar)"/>
+  <text x="388.5" y="321" class="value">0.009</text>
+  <text x="238" y="346" class="label" text-anchor="end">Sales process (pptx)</text>
+  <rect x="250" y="335" width="137.1" height="15" rx="4" fill="url(#bar)"/>
+  <text x="395.1" y="347" class="value">0.009</text>
+  <text x="238" y="372" class="label" text-anchor="end">Technical report p.1</text>
+  <rect x="250" y="361" width="321.1" height="15" rx="4" fill="url(#bar)"/>
+  <text x="579.1" y="373" class="value">0.021</text>
+  <text x="238" y="398" class="label" text-anchor="end">Technical report p.2</text>
+  <rect x="250" y="387" width="97.5" height="15" rx="4" fill="url(#bar)"/>
+  <text x="355.5" y="399" class="value">0.006</text>
+  <text x="238" y="424" class="label" text-anchor="end">Quarterly results (pptx) slide 1</text>
+  <rect x="250" y="413" width="81.7" height="15" rx="4" fill="url(#bar)"/>
+  <text x="339.7" y="425" class="value">0.005</text>
+  <text x="238" y="450" class="label" text-anchor="end">Quarterly results (pptx) slide 2</text>
+  <rect x="250" y="439" width="214.4" height="15" rx="4" fill="url(#bar)"/>
+  <text x="472.4" y="451" class="value">0.014</text>
+  <text x="238" y="476" class="label" text-anchor="end">Quarterly results (pptx) slide 3</text>
+  <rect x="250" y="465" width="122.9" height="15" rx="4" fill="url(#bar)"/>
+  <text x="380.9" y="477" class="value">0.008</text>
+  <text x="238" y="502" class="label" text-anchor="end">Monthly sales (xlsx)</text>
+  <rect x="250" y="491" width="216.6" height="15" rx="4" fill="url(#bar)"/>
+  <text x="474.6" y="503" class="value">0.014</text>
+  <text x="238" y="528" class="label" text-anchor="end">Meeting minutes</text>
+  <rect x="250" y="517" width="343.1" height="15" rx="4" fill="url(#bar)"/>
+  <text x="601.1" y="529" class="value">0.023</text>
+  <line x1="700.0" y1="82" x2="700.0" y2="542" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4"/>
   <text x="706.0" y="92" class="small" style="fill:#dc2626;font-weight:600">pass threshold 0.03</text>
-  <text x="250" y="426" class="small muted">Measured 2026-10-28, LibreOffice on Windows, Ghostscript as rasterizer. Method in docs/rendering.md.</text>
+  <text x="250" y="582" class="small muted">Measured 2026-10-30, LibreOffice on Windows, Ghostscript as rasterizer. Method in docs/rendering.md.</text>
 </svg>

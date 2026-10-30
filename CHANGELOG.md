@@ -7,18 +7,6 @@ below 1.0, a minor version may change the API.
 
 ### Added
 
-- A sheet kept whole and put back where it was: `Workbook::sheet_snapshot` and
-  `Workbook::restore_sheet` (`SheetSnapshot`, at most 16 MB), `sheetSnapshot` and `restoreSheet`
-  on the `SheetDocument` of both packages. The sheet travels as an xlsx of its own with the looks
-  of its cells and the language of its pivot tables; parts another sheet took the names of since
-  are renamed. `encode_base64` and `decode_base64` in `rely-office-core`.
-- Editing a spreadsheet together, a sheet's removal is undone: the sheet comes back at its place
-  with all it held, and the formulas, rules, validations, names and charts of the other sheets
-  that named it are put back, guarded and moved past what the others did since
-  (`restoreSheet`, `restoredSheet` on a `SheetOperation`). Redoing removes it again.
-- `scripts/pivot-check.mjs` compares the pivot tables of a workbook with the ones LibreOffice
-  builds from the same definitions.
-
 ### Changed
 
 - rely-office is licensed under the Apache License 2.0 from this release, with the attribution in
@@ -45,6 +33,9 @@ below 1.0, a minor version may change the API.
 - A chart or picture anchored to move but keep its size, a `twoCellAnchor` with
   `editAs="oneCell"`, keeps its width and height over rows and columns of other heights and widths
   when rows or columns are inserted or deleted, rather than the number of rows it spans.
+- The lines of a slide's text are as tall as PowerPoint and Impress make them: the first baseline
+  of a frame or a paragraph stood the typographic ascender below its top, a third of a line short
+  in Liberation Sans, and a paragraph closed up on the one before it.
 
 ## 0.10.1
 

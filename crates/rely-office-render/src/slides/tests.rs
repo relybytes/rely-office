@@ -507,3 +507,26 @@ fn fills_shapes_and_pages_with_gradients_and_pictures() {
         "images left out"
     );
 }
+
+#[test]
+fn gives_every_line_of_a_paragraph_and_the_next_one_height() {
+    let mut tight = paragraph(vec![run("Stretta")]);
+    tight.line_spacing_percent = 80;
+    let slide = Slide {
+        background: None,
+        shapes: vec![shape(
+            ShapeGeometry::Rectangle,
+            ShapeContent::Text(body(vec![paragraph(vec![run("Prima")]), tight])),
+        )],
+        ..Slide::default()
+    };
+    let (markup, _) = source(&presentation(vec![slide], Vec::new()), true);
+    assert!(
+        markup.contains("size: 24pt, top-edge: 21.6pt, bottom-edge: -7.2pt, par(leading: 0pt)"),
+        "the ascent over the baseline, the rest of 1.2 lines under it: {markup}"
+    );
+    assert!(
+        markup.contains("size: 24pt, top-edge: 21.6pt, bottom-edge: -1.44pt, par(leading: 0pt)"),
+        "80% of the line, taken from under the baseline: {markup}"
+    );
+}

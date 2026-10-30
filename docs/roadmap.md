@@ -23,8 +23,8 @@ every platform, no native build in the Drive's image.
 
 **The 95% gate.** The gate was written to decide when the Drive could drop Gotenberg for previews.
 Gotenberg was dropped by decision on 2026-10-25, so the gate now measures quality rather than
-deciding anything. On 2026-10-28, 11 of 11 corpus pages pass the threshold (100%), the worst at
-0.023: the drift per heading came from summing the spaces between paragraphs where Word since 2007
+deciding anything. On 2026-10-30, 17 of 17 corpus pages pass the threshold (100%), six of them
+slides of pptx decks, the worst at 0.023: the drift per heading came from summing the spaces between paragraphs where Word since 2007
 and LibreOffice keep the larger, and the last page from the room a double border takes in a table
 row. [rendering.md](rendering.md) has the method and the figures.
 
@@ -158,14 +158,17 @@ autosave, and where an inserted image goes, all through the components' props.
 | 10.6 | A README that shows the library at work, and a demo of two people on one document | done (0.10.0) |
 | 10.7 | Charts and pictures moved and sized with their rows and columns; several pivot values along the rows; empty pivot cells for blank records | done (0.10.1) |
 | 10.8 | Undo of a shared deletion puts back the formulas it broke; a structural edit follows a concurrent rename | done (0.10.1) |
+| 10.9 | The fonts a doc compresses with MicroType Express, read; pptx slides in the comparison with LibreOffice, their lines as tall as an office suite sets them | done |
 
 ## Next
 
-- A real Word 6 or 95 sample in the tests, beside the synthetic ones.
-- A larger corpus with documents made by Word and pptx and odp pages, and the corpus figure as a
-  CI gate once it is stable.
+- A real Word 6 or 95 sample in the tests, beside the synthetic ones: LibreOffice still reads the
+  format but no longer writes it, so one has to come from Word itself.
+- A doc whose fonts Word compressed with MicroType Express, to check the decoder against Word's
+  encoder rather than one built from the same submission.
+- Documents made by Word and odp pages in the corpus, and the corpus figure as a CI gate once it
+  is stable.
 - Publishing to the public npm registry (issue #1).
-- Fonts compressed with MicroType Express inside a doc.
 
 ## Known risks
 

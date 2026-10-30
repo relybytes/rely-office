@@ -8,8 +8,8 @@
 // Build the comparison corpus and measure rely-office-render against LibreOffice.
 //
 // 1. LibreOffice writes every source of corpus/sources as an office document: HTML as docx,
-//    CSV (semicolon separated, UTF-8) as xlsx. The documents are LibreOffice's own, with its
-//    styles, not hand-made XML.
+//    CSV (semicolon separated, UTF-8) as xlsx, Flat ODP as pptx. The documents are LibreOffice's
+//    own, with its styles, not hand-made XML.
 // 2. LibreOffice prints each document to PDF, and the rasterizer turns each page into a grey PNG
 //    at 72 dpi: these are the reference pages.
 // 3. rely-office-corpus renders each document at 72 dpi and compares it page by page.
@@ -52,6 +52,7 @@ for (const directory of [documents, pdfs, references]) {
 const files = readdirSync(sources).sort();
 const html = files.filter((file) => extname(file) === '.html').map((file) => join(sources, file));
 const csv = files.filter((file) => extname(file) === '.csv').map((file) => join(sources, file));
+const decks = files.filter((file) => extname(file) === '.fodp').map((file) => join(sources, file));
 if (html.length > 0) {
   libreoffice([
     '--infilter=HTML (StarWriter)',
@@ -72,6 +73,10 @@ if (csv.length > 0) {
     documents,
     ...csv,
   ]);
+}
+
+if (decks.length > 0) {
+  libreoffice(['--convert-to', 'pptx:Impress MS PowerPoint 2007 XML', '--outdir', documents, ...decks]);
 }
 
 const built = readdirSync(documents).sort().map((file) => join(documents, file));
