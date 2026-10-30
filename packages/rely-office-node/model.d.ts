@@ -896,7 +896,14 @@ export interface PivotTableDefinition {
   subtotals?: PivotSubtotals;
   /** Every row shows the labels of its groups, in the outline and tabular forms. */
   repeatLabels?: boolean;
+  /** The axis several values lay along, Excel's `Σ Values`: `columns` (the default) or `rows`. */
+  valuesAxis?: PivotValuesAxis;
+  /** Where `Σ Values` sits among the fields of its axis, from 0 for the outermost; after the last when left out. On the columns the values are drawn innermost. */
+  valuesPosition?: number | null;
 }
+
+/** The axis a pivot table lays several values along. */
+export type PivotValuesAxis = 'columns' | 'rows';
 
 /** How a pivot table lays out its row labels. */
 export type PivotLayout = 'compact' | 'outline' | 'tabular';
@@ -924,6 +931,8 @@ export interface SheetPivotTable {
   layout: PivotLayout;
   subtotals: PivotSubtotals;
   repeatLabels: boolean;
+  valuesAxis: PivotValuesAxis;
+  valuesPosition: number | null;
   fields: string[];
 }
 

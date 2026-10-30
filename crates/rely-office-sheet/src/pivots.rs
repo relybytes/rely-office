@@ -148,6 +148,16 @@ impl PivotFunction {
         }
     }
 
+    /// What a cell of the table shows for the values of its records: empty when every one is
+    /// blank, as in Excel, whatever the function, else the function over them.
+    pub(crate) fn summarise_cell(self, values: &[Value]) -> Value {
+        if values.iter().all(|value| matches!(value, Value::Empty)) {
+            Value::Empty
+        } else {
+            self.summarise(values)
+        }
+    }
+
     /// The function over the values of one cell of the table.
     pub(crate) fn summarise(self, values: &[Value]) -> Value {
         let numbers: Vec<f64> = values
@@ -262,6 +272,34 @@ impl PivotSubtotals {
     }
 }
 
+/// The axis a table with several value fields lays them along, Excel's `Σ Values`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PivotValuesAxis {
+    /// A column per value under each column of labels: Excel's default.
+    #[default]
+    Columns,
+    /// A row per value under each row of labels.
+    Rows,
+}
+
+impl PivotValuesAxis {
+    pub const ALL: [Self; 2] = [Self::Columns, Self::Rows];
+
+    /// The stable name an API passes: `columns`, `rows`.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Columns => "columns",
+            Self::Rows => "rows",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|axis| axis.name() == name)
+    }
+}
+
 /// A column of the source placed on an axis or as a filter, by its position in the source, with
 /// the items it leaves out, by label.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -300,6 +338,11 @@ pub struct PivotTable {
     /// Every row shows the labels of the groups it belongs to, not only a group's first row; the
     /// compact form, with one label column, ignores it.
     pub repeat_labels: bool,
+    /// The axis the values lay along when there are several.
+    pub values_axis: PivotValuesAxis,
+    /// Where `Σ Values` sits among the fields of its axis, from 0 for the outermost; after the
+    /// last field when `None` or past them. On the column axis the values are always innermost.
+    pub values_position: Option<usize>,
     /// The language of the captions the table writes: `Grand Total`, `Totale complessivo`.
     pub locale: Locale,
     /// The cells the table filled when it was last computed.
@@ -327,6 +370,8 @@ impl PivotTable {
             layout: PivotLayout::default(),
             subtotals: PivotSubtotals::default(),
             repeat_labels: false,
+            values_axis: PivotValuesAxis::default(),
+            values_position: None,
             locale: Locale::default(),
             area: None,
             snapshot: Vec::new(),
@@ -434,26 +479,54 @@ impl PivotTable {
             .collect()
     }
 
-    /// The columns the row labels take: one in the compact form, one per row field otherwise,
-    /// none without row fields.
+    /// Whether the values lay along the rows: several of them, `Σ Values` on the row axis.
+    pub(crate) fn values_in_rows(&self) -> bool {
+        self.values.len() > 1 && self.values_axis == PivotValuesAxis::Rows
+    }
+
+    /// Where `Σ Values` sits among the row fields, when the values lay along the rows.
+    fn values_row_level(&self) -> Option<usize> {
+        self.values_in_rows().then(|| {
+            self.values_position
+                .map_or(self.rows.len(), |position| position.min(self.rows.len()))
+        })
+    }
+
+    /// What each level of the row axis holds, outermost first: a row field, or the values.
+    fn row_entries(&self) -> Vec<RowEntry> {
+        let mut entries: Vec<RowEntry> = (0..self.rows.len()).map(RowEntry::Field).collect();
+        if let Some(level) = self.values_row_level() {
+            entries.insert(level, RowEntry::Values);
+        }
+        entries
+    }
+
+    /// The columns the row labels take: one in the compact form, one per row field and one for
+    /// the values when they lay along the rows otherwise, none without either.
     pub(crate) fn label_columns(&self) -> usize {
-        if self.rows.is_empty() {
+        let entries = self.rows.len() + usize::from(self.values_in_rows());
+        if entries == 0 {
             0
         } else if self.layout == PivotLayout::Compact {
             1
         } else {
-            self.rows.len()
+            entries
         }
     }
 
     /// The rows of the header above the first row of labels: the captions, the column labels of
-    /// each column field, and the value captions when there are several.
+    /// each column field, and the value captions when there are several across.
     pub(crate) fn header_rows(&self) -> usize {
         if self.columns.is_empty() || self.values.is_empty() {
             1
         } else {
-            1 + self.columns.len() + usize::from(self.values.len() > 1)
+            1 + self.columns.len() + usize::from(self.values.len() > 1 && !self.values_in_rows())
         }
+    }
+
+    /// The caption of `Σ Values` as a header shows it.
+    fn values_caption(&self) -> &'static str {
+        pick(self.italian(), "Valori", "Values")
     }
 
     fn total_of(&self, label: &str) -> String {
@@ -524,16 +597,21 @@ impl PivotTable {
             });
             1
         };
-        let row_headers: Vec<Value> = if self.rows.is_empty() {
+        let entries = self.row_entries();
+        let in_rows = self.values_in_rows();
+        let row_headers: Vec<Value> = if entries.is_empty() {
             Vec::new()
         } else if self.layout == PivotLayout::Compact {
             vec![Value::Text(
                 pick(self.italian(), "Etichette di riga", "Row Labels").to_owned(),
             )]
         } else {
-            self.rows
+            entries
                 .iter()
-                .map(|field| Value::Text(name_of(field.field)))
+                .map(|entry| match entry {
+                    RowEntry::Field(index) => Value::Text(name_of(self.rows[*index].field)),
+                    RowEntry::Values => Value::Text(self.values_caption().to_owned()),
+                })
                 .collect()
         };
         let captions: Vec<String> = self
@@ -541,6 +619,13 @@ impl PivotTable {
             .iter()
             .map(|value| self.value_caption(value, header))
             .collect();
+        // The captions across each slot: one column per value, or one column when the values
+        // lay along the rows.
+        let across: Vec<String> = if in_rows {
+            vec![String::new()]
+        } else {
+            captions.clone()
+        };
         if column_area {
             let mut top = vec![Value::Empty; labels];
             if let (Some(first), [caption]) = (top.first_mut(), captions.as_slice()) {
@@ -558,7 +643,7 @@ impl PivotTable {
                 );
             }
             grid.cells.push(top);
-            let several = self.values.len() > 1;
+            let several = across.len() > 1;
             let levels = self.columns.len() + usize::from(several);
             for level in 0..levels {
                 let mut line = if level + 1 == levels {
@@ -568,7 +653,7 @@ impl PivotTable {
                 };
                 line.resize(labels, Value::Empty);
                 for slot in &slots {
-                    for (index, caption) in captions.iter().enumerate() {
+                    for (index, caption) in across.iter().enumerate() {
                         line.push(self.slot_heading(slot, level, index, caption, several));
                     }
                 }
@@ -577,27 +662,55 @@ impl PivotTable {
         } else {
             let mut line = row_headers;
             line.resize(labels, Value::Empty);
-            line.extend(captions.iter().cloned().map(Value::Text));
+            if in_rows {
+                // One column of values under a blank caption: each row says which value it shows.
+                line.push(Value::Empty);
+            } else {
+                line.extend(captions.iter().cloned().map(Value::Text));
+            }
             grid.cells.push(line);
         }
         let mut lines = Vec::new();
-        if self.rows.is_empty() {
+        if entries.is_empty() {
             lines.push(Line {
                 labels: Vec::new(),
                 indent: 0,
                 records: Some(all.clone()),
+                value: None,
             });
         } else {
-            let mut pending = vec![false; self.rows.len()];
-            self.row_lines(&row_tree, &mut pending, &mut lines);
-            if self.row_grand_totals {
-                let mut total = vec![Value::Text(self.grand_total().to_owned())];
-                total.resize(labels, Value::Empty);
-                lines.push(Line {
-                    labels: total,
-                    indent: 0,
-                    records: Some(all.clone()),
-                });
+            let mut pending = vec![false; entries.len()];
+            let root = RowNode {
+                group: &row_tree,
+                value: None,
+                path: Vec::new(),
+            };
+            self.row_lines(&root, &entries, &captions, &mut pending, &mut lines);
+            if self.row_grand_totals && !self.rows.is_empty() {
+                let totals: Vec<(String, Option<usize>)> = if in_rows {
+                    captions
+                        .iter()
+                        .enumerate()
+                        .map(|(index, caption)| {
+                            (
+                                format!("{} {caption}", pick(self.italian(), "Totale", "Total")),
+                                Some(index),
+                            )
+                        })
+                        .collect()
+                } else {
+                    vec![(self.grand_total().to_owned(), None)]
+                };
+                for (text, value) in totals {
+                    let mut total = vec![Value::Text(text)];
+                    total.resize(labels, Value::Empty);
+                    lines.push(Line {
+                        labels: total,
+                        indent: 0,
+                        records: Some(all.clone()),
+                        value,
+                    });
+                }
             }
         }
         for line in lines {
@@ -608,13 +721,17 @@ impl PivotTable {
                 for row in rows {
                     buckets[if column_area { leaf_of[*row] } else { 0 }].push(kept[*row]);
                 }
+                let shown: Vec<&PivotValue> = match line.value {
+                    Some(index) => self.values.get(index).into_iter().collect(),
+                    None => self.values.iter().collect(),
+                };
                 for slot in &slots {
                     let inside: Vec<&Vec<Value>> = buckets[slot.leaves.clone()]
                         .iter()
                         .flatten()
                         .copied()
                         .collect();
-                    for value in &self.values {
+                    for value in &shown {
                         cells.push(if inside.is_empty() {
                             Value::Empty
                         } else {
@@ -627,7 +744,7 @@ impl PivotTable {
                                         .unwrap_or(Value::Empty)
                                 })
                                 .collect();
-                            value.function.summarise(&column)
+                            value.function.summarise_cell(&column)
                         });
                     }
                 }
@@ -759,40 +876,52 @@ impl PivotTable {
         }
     }
 
-    /// The rows of a group of the row fields as the layout sets them.
-    fn row_lines(&self, group: &Group, pending: &mut [bool], lines: &mut Vec<Line>) {
-        let depth = group.key.len();
-        let fields = self.rows.len();
+    /// The rows of a node of the row axis as the layout sets them: its own row, its children,
+    /// its subtotals. A node is a group of the row fields, with the value it shows when
+    /// `Σ Values` lies above it.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the three forms place a node's own row, children and subtotals in one pass"
+    )]
+    fn row_lines(
+        &self,
+        node: &RowNode<'_>,
+        entries: &[RowEntry],
+        captions: &[String],
+        pending: &mut [bool],
+        lines: &mut Vec<Line>,
+    ) {
+        let path = &node.path;
+        let depth = path.len();
         let compact = self.layout == PivotLayout::Compact;
+        let in_rows = self.values_in_rows();
         let labelled = |column: usize, text: Value| -> Vec<Value> {
             if compact {
                 return vec![text];
             }
-            let mut labels = vec![Value::Empty; fields];
+            let mut labels = vec![Value::Empty; entries.len()];
             if self.repeat_labels {
-                for (level, key) in group.key.iter().enumerate().take(column) {
-                    labels[level] = self.shown(key);
-                }
+                labels[..column].clone_from_slice(&path[..column]);
             }
             labels[column] = text;
             labels
         };
-        #[expect(clippy::cast_possible_truncation, reason = "at most 64 fields deep")]
+        #[expect(clippy::cast_possible_truncation, reason = "at most 65 levels deep")]
         let indent = if compact {
             depth.saturating_sub(1) as u8
         } else {
             0
         };
-        let label = group.key.last().map(|key| self.shown(key));
-        if depth == fields {
+        let label = path.last().cloned();
+        if depth == entries.len() {
             let Some(label) = label else {
                 return;
             };
             let mut labels = labelled(depth - 1, label);
             if self.layout == PivotLayout::Tabular {
-                for (level, key) in group.key.iter().enumerate().take(depth - 1) {
+                for (level, shown) in path.iter().enumerate().take(depth - 1) {
                     if pending[level] || self.repeat_labels {
-                        labels[level] = self.shown(key);
+                        labels[level] = shown.clone();
                     }
                     pending[level] = false;
                 }
@@ -800,10 +929,20 @@ impl PivotTable {
             lines.push(Line {
                 labels,
                 indent,
-                records: Some(group.records.clone()),
+                records: Some(node.group.records.clone()),
+                value: node.value,
             });
             return;
         }
+        // The node is an item of `Σ Values` when the level above it holds the values.
+        let values_node = depth > 0 && entries[depth - 1] == RowEntry::Values;
+        // Whether one value is known here: the values lay along the columns, or above it.
+        let known = !in_rows || node.value.is_some();
+        // A group has totals of its own only over a field below it: when nothing but the
+        // values lies below, their rows are its totals.
+        let deeper = entries[depth..]
+            .iter()
+            .any(|entry| matches!(entry, RowEntry::Field(_)));
         if depth > 0 {
             if self.layout == PivotLayout::Tabular {
                 pending[depth - 1] = true;
@@ -811,27 +950,87 @@ impl PivotTable {
                 lines.push(Line {
                     labels: labelled(depth - 1, label),
                     indent,
-                    records: (self.subtotals == PivotSubtotals::Top).then(|| group.records.clone()),
+                    records: (self.subtotals == PivotSubtotals::Top
+                        && known
+                        && deeper
+                        && !values_node)
+                        .then(|| node.group.records.clone()),
+                    value: node.value,
                 });
             }
         }
-        for child in &group.children {
-            self.row_lines(child, pending, lines);
+        match entries[depth] {
+            RowEntry::Values => {
+                for (index, caption) in captions.iter().enumerate() {
+                    let mut below = path.clone();
+                    below.push(Value::Text(caption.clone()));
+                    let child = RowNode {
+                        group: node.group,
+                        value: Some(index),
+                        path: below,
+                    };
+                    self.row_lines(&child, entries, captions, pending, lines);
+                }
+            }
+            RowEntry::Field(_) => {
+                for group in &node.group.children {
+                    let mut below = path.clone();
+                    below.push(group.key.last().map_or(Value::Empty, |key| self.shown(key)));
+                    let child = RowNode {
+                        group,
+                        value: node.value,
+                        path: below,
+                    };
+                    self.row_lines(&child, entries, captions, pending, lines);
+                }
+            }
         }
-        let below = depth > 0
-            && match self.subtotals {
-                PivotSubtotals::Off => false,
-                PivotSubtotals::Top => self.layout == PivotLayout::Tabular,
-                PivotSubtotals::Bottom => true,
-            };
-        if below && let Some(label) = label {
+        if depth == 0 || values_node || !deeper {
+            return;
+        }
+        let below = match self.subtotals {
+            PivotSubtotals::Off => false,
+            PivotSubtotals::Top => self.layout == PivotLayout::Tabular || !known,
+            PivotSubtotals::Bottom => true,
+        };
+        let Some(label) = label.filter(|_| below) else {
+            return;
+        };
+        let text = item_label(&label);
+        let totals: Vec<(String, Option<usize>)> = if known {
+            vec![(self.total_of(&text), node.value)]
+        } else {
+            // `Σ Values` lies below: a subtotal row per value, `Nord Sum of Amount`.
+            captions
+                .iter()
+                .enumerate()
+                .map(|(index, caption)| (format!("{text} {caption}"), Some(index)))
+                .collect()
+        };
+        for (text, value) in totals {
             lines.push(Line {
-                labels: labelled(depth - 1, Value::Text(self.total_of(&item_label(&label)))),
+                labels: labelled(depth - 1, Value::Text(text)),
                 indent,
-                records: Some(group.records.clone()),
+                records: Some(node.group.records.clone()),
+                value,
             });
         }
     }
+}
+
+/// What a level of the row axis holds: a row field, by its place among them, or `Σ Values`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowEntry {
+    Field(usize),
+    Values,
+}
+
+/// A node of the row axis: a group of the row fields, the value it shows when `Σ Values` lies
+/// above it, and the labels of the levels down to it.
+struct RowNode<'g> {
+    group: &'g Group,
+    value: Option<usize>,
+    path: Vec<Value>,
 }
 
 /// The cells a pivot table writes, and the rows whose label is indented, by how many steps.
@@ -925,12 +1124,14 @@ enum SlotKind {
     Grand,
 }
 
-/// A row of the row area: its labels, the indent of its label in the compact form, and the
-/// records its values summarise; `None` for a group's row that shows no values.
+/// A row of the row area: its labels, the indent of its label in the compact form, the records
+/// its values summarise, `None` for a group's row that shows no values, and the one value it
+/// shows when the values lay along the rows.
 struct Line {
     labels: Vec<Value>,
     indent: u8,
     records: Option<Vec<usize>>,
+    value: Option<usize>,
 }
 
 /// The text an item of a field is matched and hidden by: a number as a formula writes it.

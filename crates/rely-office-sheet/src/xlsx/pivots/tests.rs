@@ -268,3 +268,89 @@ fn reads_the_forms_excel_writes() {
     let compact = field("", "").replace(r#" compact="0" compactData="0""#, "");
     assert_eq!(read(&compact).layout, PivotLayout::Compact);
 }
+
+#[test]
+fn the_values_along_the_rows_survive_an_xlsx() {
+    for position in [None, Some(0)] {
+        let mut workbook = sales();
+        let mut table = by_region("F1");
+        table.rows.push(PivotField {
+            field: 1,
+            hidden: Vec::new(),
+        });
+        table.values.push(PivotValue {
+            field: 3,
+            function: PivotFunction::Count,
+            name: None,
+        });
+        table.values_axis = PivotValuesAxis::Rows;
+        table.values_position = position;
+        workbook.add_pivot_table(0, table).unwrap();
+        let written = workbook.sheets()[0].pivot_tables()[0].clone();
+        let bytes = write_xlsx(&workbook).unwrap();
+        let xml = member(&bytes, "xl/pivotTables/relyPivotTable1.xml");
+        assert!(xml.contains(r#"dataOnRows="1""#));
+        assert!(xml.contains(match position {
+            None => r#"<rowFields count="3"><field x="0"/><field x="1"/><field x="-2"/>"#,
+            Some(_) => r#"<rowFields count="3"><field x="-2"/><field x="0"/><field x="1"/>"#,
+        }));
+        assert!(!xml.contains("<colFields"));
+        let mut read =
+            read_spreadsheet(&bytes, Some("a.xlsx"), &Limits::default(), Locale::English).unwrap();
+        let table = &read.sheets()[0].pivot_tables()[0];
+        assert_eq!(table.values_axis, PivotValuesAxis::Rows);
+        assert_eq!(table.values_position, position);
+        assert_eq!(table.rows, written.rows);
+        assert_eq!(table.area(), written.area());
+        let before: Vec<Value> = (0..30)
+            .map(|row| read.value(0, CellRef::new(row, 7)))
+            .collect();
+        read.refresh_pivot_table(0, 0).unwrap();
+        let after: Vec<Value> = (0..30)
+            .map(|row| read.value(0, CellRef::new(row, 7)))
+            .collect();
+        assert_eq!(after, before);
+    }
+}
+
+#[test]
+fn reads_the_values_of_a_file_from_their_field_or_data_position() {
+    let definition = |fields: &str, extra: &str| {
+        format!(
+            concat!(
+                r#"<pivotTableDefinition name="T" cacheId="1"{}>"#,
+                r#"<location ref="F1:H9" firstHeaderRow="1" firstDataRow="1" firstDataCol="1"/>"#,
+                r#"<pivotFields count="4"><pivotField axis="axisRow" showAll="0"/>"#,
+                r#"<pivotField axis="axisRow" showAll="0"/><pivotField showAll="0"/>"#,
+                r#"<pivotField dataField="1" showAll="0"/></pivotFields>{}"#,
+                r#"<dataFields count="2"><dataField fld="3"/><dataField fld="3" subtotal="count"/></dataFields>"#,
+                r#"</pivotTableDefinition>"#
+            ),
+            extra, fields
+        )
+    };
+    let cache = CacheSource {
+        sheet: Some("Foglio1".to_owned()),
+        range: CellRange::parse("A1:D7"),
+        fields: Vec::new(),
+    };
+    let read = |xml: &str| read_table(xml, &cache, "Foglio1", Locale::English).unwrap();
+    let between = read(&definition(
+        r#"<rowFields count="3"><field x="0"/><field x="-2"/><field x="1"/></rowFields>"#,
+        "",
+    ));
+    assert_eq!(between.values_axis, PivotValuesAxis::Rows);
+    assert_eq!(between.values_position, Some(1));
+    let flagged = read(&definition(
+        r#"<rowFields count="2"><field x="0"/><field x="1"/></rowFields>"#,
+        r#" dataOnRows="1" dataPosition="0""#,
+    ));
+    assert_eq!(flagged.values_axis, PivotValuesAxis::Rows);
+    assert_eq!(flagged.values_position, Some(0));
+    let across = read(&definition(
+        r#"<rowFields count="2"><field x="0"/><field x="1"/></rowFields><colFields count="1"><field x="-2"/></colFields>"#,
+        "",
+    ));
+    assert_eq!(across.values_axis, PivotValuesAxis::Columns);
+    assert_eq!(across.values_position, None);
+}

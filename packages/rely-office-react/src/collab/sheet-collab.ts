@@ -453,6 +453,8 @@ export class SheetCollaboration {
       layout: table.layout,
       subtotals: table.subtotals,
       repeatLabels: table.repeatLabels,
+      valuesAxis: table.valuesAxis,
+      valuesPosition: table.valuesPosition,
     };
   }
 

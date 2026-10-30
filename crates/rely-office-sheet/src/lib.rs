@@ -58,7 +58,7 @@ pub use ods::write_ods;
 pub use pivots::{
     MAX_PIVOT_COLUMN_KEYS, MAX_PIVOT_FIELDS, MAX_PIVOT_ROW_KEYS, MAX_PIVOT_SOURCE_CELLS,
     MAX_PIVOT_TABLES, PivotField, PivotFunction, PivotLayout, PivotSubtotals, PivotTable,
-    PivotValue, SourceField, item_label,
+    PivotValue, PivotValuesAxis, SourceField, item_label,
 };
 pub use region::{MAX_REGION_CELLS, Region, RegionCell, RegionComment, RegionReply};
 pub use rely_office_core::{

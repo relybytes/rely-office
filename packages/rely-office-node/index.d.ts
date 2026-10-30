@@ -65,6 +65,7 @@ import type {
   PivotFunction,
   PivotLayout,
   PivotSubtotals,
+  PivotValuesAxis,
   PivotFieldPlacement,
   PivotValueField,
   PivotTableDefinition,

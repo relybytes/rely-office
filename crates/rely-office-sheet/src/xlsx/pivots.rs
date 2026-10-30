@@ -21,7 +21,8 @@ use crate::address::CellRef;
 use crate::formula::number_text;
 use crate::model::Workbook;
 use crate::pivots::{
-    Key, PivotField, PivotFunction, PivotLayout, PivotSubtotals, PivotTable, PivotValue, item_label,
+    Key, PivotField, PivotFunction, PivotLayout, PivotSubtotals, PivotTable, PivotValue,
+    PivotValuesAxis, item_label,
 };
 use crate::value::{Locale, Value};
 
@@ -285,7 +286,7 @@ pub(super) fn table_definition_xml(
             r#"applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" "#,
             r#"dataCaption="{}" updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" "#,
             r#"itemPrintTitles="1" createdVersion="6" {}"#,
-            r#"multipleFieldFilters="0"{}{}>"#,
+            r#"multipleFieldFilters="0"{}{}{}>"#,
             r#"<location ref="{}" firstHeaderRow="1" firstDataRow="{}" firstDataCol="{}"{}/>"#
         ),
         escape(&table.name),
@@ -310,6 +311,7 @@ pub(super) fn table_definition_xml(
         } else {
             r#" colGrandTotals="0""#
         },
+        values_placement(table),
         range_reference(&location),
         table.header_rows(),
         table.label_columns(),
@@ -379,24 +381,32 @@ pub(super) fn table_definition_xml(
         }
     }
     xml.push_str("</pivotFields>");
-    if !table.rows.is_empty() {
-        let _ = write!(xml, r#"<rowFields count="{}">"#, table.rows.len());
-        for field in &table.rows {
-            let _ = write!(xml, r#"<field x="{}"/>"#, field.field);
-        }
-        xml.push_str("</rowFields>");
-    }
     let several_values = table.values.len() > 1;
-    let column_count = table.columns.len() + usize::from(several_values);
-    if column_count > 0 {
-        let _ = write!(xml, r#"<colFields count="{column_count}">"#);
-        for field in &table.columns {
-            let _ = write!(xml, r#"<field x="{}"/>"#, field.field);
+    let on_rows = several_values && table.values_axis == PivotValuesAxis::Rows;
+    for (fields, element, data) in [
+        (&table.rows, "rowFields", on_rows),
+        (&table.columns, "colFields", several_values && !on_rows),
+    ] {
+        let mut indexes: Vec<i64> = fields.iter().map(|field| i64::from(field.field)).collect();
+        if data {
+            // The values sit on the column axis innermost, wherever the file put them.
+            let at = if on_rows {
+                table
+                    .values_position
+                    .map_or(indexes.len(), |position| position.min(indexes.len()))
+            } else {
+                indexes.len()
+            };
+            indexes.insert(at, -2);
         }
-        if several_values {
-            xml.push_str(r#"<field x="-2"/>"#);
+        if indexes.is_empty() {
+            continue;
         }
-        xml.push_str("</colFields>");
+        let _ = write!(xml, r#"<{element} count="{}">"#, indexes.len());
+        for index in indexes {
+            let _ = write!(xml, r#"<field x="{index}"/>"#);
+        }
+        let _ = write!(xml, "</{element}>");
     }
     if !table.filters.is_empty() {
         let _ = write!(xml, r#"<pageFields count="{}">"#, table.filters.len());
@@ -442,6 +452,19 @@ pub(super) fn table_definition_xml(
         r#"showRowStripes="0" showColStripes="0" showLastColumn="1"/></pivotTableDefinition>"#
     ));
     xml
+}
+
+/// The attributes of a definition that place the values: `dataOnRows` when they lay along the
+/// rows, and `dataPosition` when a position is set.
+fn values_placement(table: &PivotTable) -> String {
+    let mut attributes = String::new();
+    if table.values_axis == PivotValuesAxis::Rows {
+        attributes.push_str(r#" dataOnRows="1""#);
+    }
+    if let Some(position) = table.values_position {
+        let _ = write!(attributes, r#" dataPosition="{position}""#);
+    }
+    attributes
 }
 
 /// The attributes of a placed field that set the table's form and its subtotals.
@@ -598,6 +621,11 @@ fn read_table(
     let mut columns = Vec::new();
     let mut pages: Vec<(u32, Option<usize>)> = Vec::new();
     let mut values = Vec::new();
+    let mut data_on_rows = false;
+    let mut data_position: Option<usize> = None;
+    // Where the `-2` field, `Σ Values`, sits among the fields of an axis.
+    let mut data_row_place: Option<usize> = None;
+    let mut data_column_place: Option<usize> = None;
     loop {
         let event = reader.read_event().ok()?;
         let (element, empty) = match &event {
@@ -626,6 +654,9 @@ fn read_table(
                 row_totals = flag("rowGrandTotals");
                 column_totals = flag("colGrandTotals");
                 table_compact = flag("compact");
+                data_on_rows = matches!(attribute(&found, "dataOnRows"), Some("1" | "true"));
+                data_position =
+                    number("dataPosition").and_then(|value| usize::try_from(value).ok());
             }
             "location" => {
                 location = attribute(&found, "ref").and_then(CellRange::parse);
@@ -662,6 +693,11 @@ fn read_table(
             }
             "rowFields" => section = "rows",
             "colFields" => section = "columns",
+            "field" if number("x") == Some(-2) => match section {
+                "rows" => data_row_place = Some(rows.len()),
+                "columns" => data_column_place = Some(columns.len()),
+                _ => {}
+            },
             "field" => {
                 if let Some(index) = number("x").and_then(|index| u32::try_from(index).ok()) {
                     match section {
@@ -757,6 +793,18 @@ fn read_table(
         .collect();
     table.row_grand_totals = row_totals;
     table.column_grand_totals = column_totals;
+    // `Σ Values` on the rows when the definition says so or lists it among the row fields; its
+    // position from where it is listed, else from `dataPosition`.
+    if data_on_rows || data_row_place.is_some() {
+        table.values_axis = PivotValuesAxis::Rows;
+        table.values_position = data_row_place
+            .filter(|position| *position < table.rows.len())
+            .or(data_position);
+    } else {
+        table.values_position = data_column_place
+            .filter(|position| *position < table.columns.len())
+            .or(data_position);
+    }
     // The first row field sets the form, else the first column field.
     if let Some(form) = table
         .rows

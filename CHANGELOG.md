@@ -3,6 +3,23 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## Unreleased
+
+### Added
+
+- Several values of a pivot table along the rows, Excel's `Σ Values` among the row fields:
+  `values_axis` (`PivotValuesAxis`) and `values_position` on a `PivotTable`, `valuesAxis` and
+  `valuesPosition` from JavaScript and in collaboration, and a "Values" control in the grid's pivot
+  panel. Each group gets a row per value, a group over a field below the values a total row per
+  value, and the grand total a row per value. They are written to and read from xlsx (the field
+  `-2` among `rowFields`, `dataOnRows`, `dataPosition`) and ods (the data layout field among the
+  row fields).
+
+### Changed
+
+- A cell of a pivot table whose records hold only blanks for its field is empty, as in Excel,
+  rather than 0 or a count of 0; `GETPIVOTDATA` gives the same empty value.
+
 ## 0.10.0
 
 ### Added

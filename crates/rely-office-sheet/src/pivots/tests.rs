@@ -78,7 +78,7 @@ fn a_table_sums_the_records_of_each_row_label() {
         grid(&workbook, "F1:G5"),
         vec![
             vec![text("Regione"), text("Sum of Importo")],
-            vec![text("Centro"), Value::Number(0.0)],
+            vec![text("Centro"), Value::Empty],
             vec![text("Nord"), Value::Number(33.0)],
             vec![text("Sud"), Value::Number(12.0)],
             vec![text("Grand Total"), Value::Number(45.0)],
@@ -110,12 +110,7 @@ fn columns_spread_the_values_with_their_totals() {
                 text("Gen"),
                 text("Grand Total")
             ],
-            vec![
-                text("Centro"),
-                Value::Number(0.0),
-                Value::Empty,
-                Value::Number(0.0)
-            ],
+            vec![text("Centro"), Value::Empty, Value::Empty, Value::Empty],
             vec![
                 text("Nord"),
                 Value::Number(3.0),
@@ -556,8 +551,8 @@ fn the_compact_form_indents_each_field_in_one_column() {
         grid(&workbook, "F1:G9"),
         vec![
             vec![text("Row Labels"), text("Sum of Importo")],
-            vec![text("Centro"), number(0.0)],
-            vec![text("Pere"), number(0.0)],
+            vec![text("Centro"), Value::Empty],
+            vec![text("Pere"), Value::Empty],
             vec![text("Nord"), number(33.0)],
             vec![text("Mele"), number(13.0)],
             vec![text("Pere"), number(20.0)],
@@ -590,8 +585,8 @@ fn the_outline_form_puts_each_group_on_its_own_row() {
         vec![
             vec![text("Regione"), text("Prodotto"), text("Sum of Importo")],
             vec![text("Centro"), Value::Empty, Value::Empty],
-            vec![Value::Empty, text("Pere"), number(0.0)],
-            vec![text("Centro Total"), Value::Empty, number(0.0)],
+            vec![Value::Empty, text("Pere"), Value::Empty],
+            vec![text("Centro Total"), Value::Empty, Value::Empty],
             vec![text("Nord"), Value::Empty, Value::Empty],
             vec![Value::Empty, text("Mele"), number(13.0)],
             vec![Value::Empty, text("Pere"), number(20.0)],
@@ -609,8 +604,8 @@ fn the_outline_form_puts_each_group_on_its_own_row() {
     assert_eq!(
         grid(&workbook, "F2:H4"),
         vec![
-            vec![text("Centro"), Value::Empty, number(0.0)],
-            vec![text("Centro"), text("Pere"), number(0.0)],
+            vec![text("Centro"), Value::Empty, Value::Empty],
+            vec![text("Centro"), text("Pere"), Value::Empty],
             vec![text("Nord"), Value::Empty, number(33.0)],
         ]
     );
@@ -625,8 +620,8 @@ fn the_tabular_form_labels_a_group_beside_its_first_item() {
         grid(&workbook, "F1:H9"),
         vec![
             vec![text("Regione"), text("Prodotto"), text("Sum of Importo")],
-            vec![text("Centro"), text("Pere"), number(0.0)],
-            vec![text("Centro Total"), Value::Empty, number(0.0)],
+            vec![text("Centro"), text("Pere"), Value::Empty],
+            vec![text("Centro Total"), Value::Empty, Value::Empty],
             vec![text("Nord"), text("Mele"), number(13.0)],
             vec![Value::Empty, text("Pere"), number(20.0)],
             vec![text("Nord Total"), Value::Empty, number(33.0)],
@@ -642,7 +637,7 @@ fn the_tabular_form_labels_a_group_beside_its_first_item() {
     assert_eq!(
         grid(&workbook, "F2:H5"),
         vec![
-            vec![text("Centro"), text("Pere"), number(0.0)],
+            vec![text("Centro"), text("Pere"), Value::Empty],
             vec![text("Nord"), text("Mele"), number(13.0)],
             vec![text("Nord"), text("Pere"), number(20.0)],
             vec![text("Sud"), text("Mele"), number(12.0)],
@@ -708,12 +703,12 @@ fn column_fields_nest_with_their_subtotals_and_several_values() {
             vec![
                 text("Centro"),
                 empty(),
-                number(0.0),
-                number(0.0),
+                Value::Empty,
+                Value::Empty,
                 empty(),
                 empty(),
                 empty(),
-                number(0.0)
+                Value::Empty
             ],
             vec![
                 text("Nord"),
@@ -738,7 +733,7 @@ fn column_fields_nest_with_their_subtotals_and_several_values() {
             vec![
                 text("Grand Total"),
                 number(8.0),
-                number(0.0),
+                Value::Empty,
                 number(8.0),
                 number(17.0),
                 number(20.0),
@@ -788,12 +783,12 @@ fn column_fields_nest_with_their_subtotals_and_several_values() {
             ],
             vec![
                 text("Centro"),
-                number(0.0),
-                number(0.0),
+                Value::Empty,
+                Value::Empty,
                 empty(),
                 empty(),
-                number(0.0),
-                number(0.0)
+                Value::Empty,
+                Value::Empty
             ],
         ]
     );
@@ -1041,4 +1036,253 @@ fn pivotby_measures_against_rows_columns_or_the_whole_and_nests_columns() {
         ),
         vec![vec![Value::Error(ErrorKind::Value)]]
     );
+}
+
+/// Sum and count of the amount by region, the values along the rows.
+fn values_in_rows(layout: PivotLayout) -> PivotTable {
+    let mut table = by_region("F1");
+    table.layout = layout;
+    table.values_axis = PivotValuesAxis::Rows;
+    table.values.push(PivotValue {
+        field: 3,
+        function: PivotFunction::Count,
+        name: None,
+    });
+    table
+}
+
+#[test]
+fn the_values_lay_along_the_rows_under_each_item() {
+    let mut workbook = sales();
+    workbook
+        .add_pivot_table(0, values_in_rows(PivotLayout::Compact))
+        .unwrap();
+    let table = &workbook.sheets()[0].pivot_tables()[0];
+    assert_eq!(table.area(), Some(range("F1:G12")));
+    let sum = || text("Sum of Importo");
+    let count = || text("Count of Importo");
+    assert_eq!(
+        grid(&workbook, "F1:G12"),
+        vec![
+            vec![text("Row Labels"), Value::Empty],
+            vec![text("Centro"), Value::Empty],
+            vec![sum(), Value::Empty],
+            vec![count(), Value::Empty],
+            vec![text("Nord"), Value::Empty],
+            vec![sum(), number(33.0)],
+            vec![count(), number(3.0)],
+            vec![text("Sud"), Value::Empty],
+            vec![sum(), number(12.0)],
+            vec![count(), number(2.0)],
+            vec![text("Total Sum of Importo"), number(45.0)],
+            vec![text("Total Count of Importo"), number(5.0)],
+        ]
+    );
+    let indent = |address: &str| workbook.style(0, cell(address)).indent;
+    assert_eq!(indent("F2"), 0);
+    assert_eq!(indent("F3"), 1);
+    assert_eq!(indent("F11"), 0);
+}
+
+#[test]
+fn the_values_sit_where_their_position_puts_them() {
+    let mut workbook = sales();
+    let mut table = values_in_rows(PivotLayout::Compact);
+    table.values_position = Some(0);
+    workbook.add_pivot_table(0, table).unwrap();
+    assert_eq!(
+        grid(&workbook, "F1:G11"),
+        vec![
+            vec![text("Row Labels"), Value::Empty],
+            vec![text("Sum of Importo"), Value::Empty],
+            vec![text("Centro"), Value::Empty],
+            vec![text("Nord"), number(33.0)],
+            vec![text("Sud"), number(12.0)],
+            vec![text("Count of Importo"), Value::Empty],
+            vec![text("Centro"), Value::Empty],
+            vec![text("Nord"), number(3.0)],
+            vec![text("Sud"), number(2.0)],
+            vec![text("Total Sum of Importo"), number(45.0)],
+            vec![text("Total Count of Importo"), number(5.0)],
+        ]
+    );
+}
+
+#[test]
+fn the_values_between_two_row_fields_give_each_group_a_total_per_value() {
+    let mut workbook = sales();
+    let mut table = values_in_rows(PivotLayout::Outline);
+    table.rows.push(PivotField {
+        field: 1,
+        hidden: Vec::new(),
+    });
+    table.values_position = Some(1);
+    workbook.add_pivot_table(0, table).unwrap();
+    let e = || Value::Empty;
+    let sum = || text("Sum of Importo");
+    let count = || text("Count of Importo");
+    assert_eq!(
+        grid(&workbook, "F1:I26"),
+        vec![
+            vec![text("Regione"), text("Values"), text("Prodotto"), e()],
+            vec![text("Centro"), e(), e(), e()],
+            vec![e(), sum(), e(), e()],
+            vec![e(), e(), text("Pere"), e()],
+            vec![e(), count(), e(), e()],
+            vec![e(), e(), text("Pere"), e()],
+            vec![text("Centro Sum of Importo"), e(), e(), e()],
+            vec![text("Centro Count of Importo"), e(), e(), e()],
+            vec![text("Nord"), e(), e(), e()],
+            vec![e(), sum(), e(), e()],
+            vec![e(), e(), text("Mele"), number(13.0)],
+            vec![e(), e(), text("Pere"), number(20.0)],
+            vec![e(), count(), e(), e()],
+            vec![e(), e(), text("Mele"), number(2.0)],
+            vec![e(), e(), text("Pere"), number(1.0)],
+            vec![text("Nord Sum of Importo"), e(), e(), number(33.0)],
+            vec![text("Nord Count of Importo"), e(), e(), number(3.0)],
+            vec![text("Sud"), e(), e(), e()],
+            vec![e(), sum(), e(), e()],
+            vec![e(), e(), text("Mele"), number(12.0)],
+            vec![e(), count(), e(), e()],
+            vec![e(), e(), text("Mele"), number(2.0)],
+            vec![text("Sud Sum of Importo"), e(), e(), number(12.0)],
+            vec![text("Sud Count of Importo"), e(), e(), number(2.0)],
+            vec![text("Total Sum of Importo"), e(), e(), number(45.0)],
+            vec![text("Total Count of Importo"), e(), e(), number(5.0)],
+        ]
+    );
+}
+
+#[test]
+fn the_values_along_the_rows_take_one_column_under_each_column_label() {
+    let mut workbook = sales();
+    let mut table = values_in_rows(PivotLayout::Tabular);
+    table.columns.push(PivotField {
+        field: 2,
+        hidden: Vec::new(),
+    });
+    workbook.add_pivot_table(0, table).unwrap();
+    let table = &workbook.sheets()[0].pivot_tables()[0];
+    assert_eq!(table.header_rows(), 2);
+    assert_eq!(table.label_columns(), 2);
+    let e = || Value::Empty;
+    assert_eq!(
+        grid(&workbook, "F1:J10"),
+        vec![
+            vec![e(), e(), text("Mese"), e(), e()],
+            vec![
+                text("Regione"),
+                text("Values"),
+                text("Feb"),
+                text("Gen"),
+                text("Grand Total")
+            ],
+            vec![text("Centro"), text("Sum of Importo"), e(), e(), e()],
+            vec![e(), text("Count of Importo"), e(), e(), e()],
+            vec![
+                text("Nord"),
+                text("Sum of Importo"),
+                number(3.0),
+                number(30.0),
+                number(33.0)
+            ],
+            vec![
+                e(),
+                text("Count of Importo"),
+                number(1.0),
+                number(2.0),
+                number(3.0)
+            ],
+            vec![
+                text("Sud"),
+                text("Sum of Importo"),
+                number(5.0),
+                number(7.0),
+                number(12.0)
+            ],
+            vec![
+                e(),
+                text("Count of Importo"),
+                number(1.0),
+                number(1.0),
+                number(2.0)
+            ],
+            vec![
+                text("Total Sum of Importo"),
+                e(),
+                number(8.0),
+                number(37.0),
+                number(45.0)
+            ],
+            vec![
+                text("Total Count of Importo"),
+                e(),
+                number(2.0),
+                number(3.0),
+                number(5.0)
+            ],
+        ]
+    );
+}
+
+#[test]
+fn one_value_along_the_rows_lays_out_as_along_the_columns() {
+    let mut along_rows = sales();
+    let mut table = by_region("F1");
+    table.values_axis = PivotValuesAxis::Rows;
+    along_rows.add_pivot_table(0, table).unwrap();
+    let mut along_columns = sales();
+    along_columns.add_pivot_table(0, by_region("F1")).unwrap();
+    assert_eq!(grid(&along_rows, "F1:G5"), grid(&along_columns, "F1:G5"));
+}
+
+#[test]
+fn a_group_whose_values_are_all_blank_shows_an_empty_cell() {
+    for function in PivotFunction::ALL {
+        assert_eq!(
+            function.summarise_cell(&[Value::Empty, Value::Empty]),
+            Value::Empty,
+            "{}",
+            function.name()
+        );
+    }
+    assert_eq!(
+        PivotFunction::Count.summarise_cell(&[Value::Empty, text("x")]),
+        number(1.0)
+    );
+    assert_eq!(
+        PivotFunction::CountNumbers.summarise_cell(&[text("x")]),
+        number(0.0)
+    );
+    let mut workbook = sales();
+    workbook
+        .add_pivot_table(0, values_in_rows(PivotLayout::Compact))
+        .unwrap();
+    workbook
+        .set_input(
+            0,
+            cell("Z1"),
+            r#"=GETPIVOTDATA("Count of Importo",F1,"Regione","Nord")"#,
+            Locale::English,
+        )
+        .unwrap();
+    assert_eq!(workbook.value(0, cell("Z1")), number(3.0));
+    workbook
+        .set_input(
+            0,
+            cell("Z2"),
+            r#"=GETPIVOTDATA("Importo",F1,"Regione","Centro")"#,
+            Locale::English,
+        )
+        .unwrap();
+    assert_eq!(workbook.value(0, cell("Z2")), Value::Empty);
+}
+
+#[test]
+fn the_values_axes_have_stable_names() {
+    for axis in PivotValuesAxis::ALL {
+        assert_eq!(PivotValuesAxis::parse(axis.name()), Some(axis));
+    }
+    assert_eq!(PivotValuesAxis::parse("diagonal"), None);
 }
