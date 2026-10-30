@@ -27,7 +27,7 @@ and in the browser. A server gets previews, thumbnails, search text and conversi
 gets four React editors, for documents, spreadsheets, slides and plain text, that several people can
 use at the same time.
 
-It is built and maintained by [RelyBytes Consulting](https://relybytes.com) for the Drive of the
+It is built and maintained by [RelyBytes SRL](https://relybytes.com) for the Drive of the
 [Rely Platform](https://relyplatform.app), where it previews, indexes, edits and exports every
 file a team stores, and it is published under the Mozilla Public License 2.0 so that it stays open.
 
@@ -54,29 +54,9 @@ workbook one editable spreadsheet, a presentation one list of slides. So a `.doc
 `.odt` and a `.docx` are drawn, indexed, edited and saved by the same code, and an editor never
 knows which format it opened.
 
-```mermaid
-flowchart LR
-  subgraph rust["Rust workspace, unsafe code forbidden"]
-    core["rely-office-core<br/>detect · read · tree · write"]
-    sheet["rely-office-sheet<br/>formulas · pivots · charts"]
-    render["rely-office-render<br/>Typst · PDF · PNG"]
-  end
-  subgraph wasm["WebAssembly fronts"]
-    wcore["rely-office-wasm"]
-    wsheet["rely-office-sheet-wasm"]
-    wrender["rely-office-render-wasm"]
-  end
-  core --> wcore
-  sheet --> wsheet
-  render --> wrender
-  wcore --> node["@relybytes/rely-office<br/>Node backend"]
-  wsheet --> node
-  wrender --> node
-  wcore --> react["@relybytes/rely-office-react<br/>browser runtime + editors"]
-  wsheet --> react
-  react <-->|"WebSocket frames"| room["CollabRoom<br/>in your server"]
-  node -.->|"same model.d.ts"| react
-```
+<p align="center">
+  <img src="docs/assets/rely-office-architecture.svg" width="100%" alt="Three Rust crates, core, sheet and render, compile to three WebAssembly fronts that make two npm packages: @relybytes/rely-office for a Node server, and @relybytes/rely-office-react for pages, with the editors and the collaboration channel to a CollabRoom in the server.">
+</p>
 
 | Layer | What it gives | Where it runs |
 | --- | --- | --- |
@@ -161,27 +141,9 @@ each seeing the others' carets and selections, each undoing only their own edits
 carries both ends of the channel and no transport: the host owns the WebSocket, who may join, and
 where the room and the versions are stored.
 
-```mermaid
-sequenceDiagram
-  participant A as Anna's page<br/>CollabSession
-  participant R as Your server<br/>CollabRoom
-  participant M as Marco's page<br/>CollabSession
-  A->>R: hello (session key)
-  R-->>A: welcome · seed: true
-  A->>R: the file, seeded into the shared document
-  M->>R: hello
-  R-->>M: welcome · the shared document
-  par edits merge
-    A->>R: Yjs update
-    R-->>M: Yjs update
-  and presence
-    M->>R: awareness: caret, selection
-    R-->>A: awareness
-  end
-  A->>R: saved as version 42
-  Note over R: the host checks the claim,<br/>then markSaved()
-  R-->>M: saved · nothing unsaved
-```
+<p align="center">
+  <img src="docs/assets/rely-office-collaboration.svg" width="100%" alt="Anna's page says hello to the room in your server and seeds the file; Marco joins and gets the shared document; edits and presence pass through the room; when Anna saves, the host checks the claim and the room tells Marco nothing is unsaved.">
+</p>
 
 | Kind | Shared as | Why |
 | --- | --- | --- |
@@ -285,7 +247,7 @@ The design is in [docs/](docs/README.md): [architecture](docs/architecture.md),
 
 Mozilla Public License 2.0, see [LICENSE](LICENSE). In short: you may use rely-office in any
 software, open or closed; changes to the files of rely-office itself must be published under the
-same licence, and the copyright notices of RelyBytes Consulting must be kept. See [NOTICE](NOTICE)
+same licence, and the copyright notices of RelyBytes SRL must be kept. See [NOTICE](NOTICE)
 for the attribution and for the licences of the dependencies; the fonts in `fonts/` carry their own
 licence texts.
 

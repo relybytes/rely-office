@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 470" width="960" height="470" role="img" aria-labelledby="title desc">
+  <title id="title">How rely-office is built</title>
+  <desc id="desc">Three Rust crates, core, sheet and render, are compiled to three WebAssembly fronts. They make two npm packages: @relybytes/rely-office for Node, which uses all three, and @relybytes/rely-office-react for the browser, which uses core and sheet and carries the editors. Pages exchange WebSocket frames with a CollabRoom that runs in the host server.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#57606a"/>
+    </marker>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #1f2328; }
+      .muted { fill: #57606a; }
+      .label { font-size: 12px; letter-spacing: 0.06em; font-weight: 600; }
+      .name { font-size: 14px; font-weight: 700; }
+      .small { font-size: 12px; }
+      .flow { stroke: #8c959f; stroke-width: 1.5; fill: none; }
+    </style>
+  </defs>
+  <rect x="0.5" y="0.5" width="959" height="469" rx="16" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="32" y="44" font-size="18" font-weight="700">How it is built</text>
+  <text x="190" y="44" class="small muted">one Rust workspace, unsafe code forbidden, compiled once for every place it runs</text>
+  <text x="32" y="84" class="label muted">RUST CRATES</text>
+  <text x="282" y="84" class="label muted">WEBASSEMBLY</text>
+  <text x="532" y="84" class="label muted">NPM PACKAGES</text>
+  <text x="782" y="84" class="label muted">YOUR APP</text>
+  <rect x="32" y="100" width="218" height="80" rx="12" fill="#fff7ed" stroke="#f97316"/>
+  <text x="48" y="126" class="name" style="fill:#c2410c">rely-office-core</text>
+  <text x="48" y="146" class="small muted">detect · read · tree</text>
+  <text x="48" y="163" class="small muted">writers for every format</text>
+  <rect x="32" y="200" width="218" height="80" rx="12" fill="#fff7ed" stroke="#f97316"/>
+  <text x="48" y="226" class="name" style="fill:#c2410c">rely-office-sheet</text>
+  <text x="48" y="246" class="small muted">502 functions · pivots</text>
+  <text x="48" y="263" class="small muted">charts · xlsx, ods, csv</text>
+  <rect x="32" y="300" width="218" height="80" rx="12" fill="#fff7ed" stroke="#f97316"/>
+  <text x="48" y="326" class="name" style="fill:#c2410c">rely-office-render</text>
+  <text x="48" y="346" class="small muted">Typst typesetting</text>
+  <text x="48" y="363" class="small muted">PDF and PNG pages</text>
+  <rect x="282" y="100" width="218" height="80" rx="12" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="298" y="126" class="name" style="fill:#334155">rely-office-wasm</text>
+  <text x="298" y="146" class="small muted">documents and slides</text>
+  <path class="flow" d="M250 140 H280" marker-end="url(#arrow)"/>
+  <rect x="282" y="200" width="218" height="80" rx="12" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="298" y="226" class="name" style="fill:#334155">rely-office-sheet-wasm</text>
+  <text x="298" y="246" class="small muted">the editable workbook</text>
+  <path class="flow" d="M250 240 H280" marker-end="url(#arrow)"/>
+  <rect x="282" y="300" width="218" height="80" rx="12" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="298" y="326" class="name" style="fill:#334155">rely-office-render-wasm</text>
+  <text x="298" y="346" class="small muted">pages, 27 MB, lazy</text>
+  <path class="flow" d="M250 340 H280" marker-end="url(#arrow)"/>
+  <rect x="532" y="110" width="218" height="96" rx="12" fill="#eff6ff" stroke="#2563eb"/>
+  <text x="548" y="136" class="name" style="fill:#1d4ed8">@relybytes/rely-office</text>
+  <text x="548" y="156" class="small muted">Node 18+, synchronous</text>
+  <text x="548" y="173" class="small muted">previews, search text,</text>
+  <text x="548" y="190" class="small muted">conversions</text>
+  <rect x="532" y="256" width="218" height="114" rx="12" fill="#f5f3ff" stroke="#7c3aed"/>
+  <text x="548" y="282" class="name" style="fill:#6d28d9">@relybytes/rely-office-react</text>
+  <text x="548" y="302" class="small muted">the browser runtime</text>
+  <text x="548" y="319" class="small muted">DocumentEditor, SheetGrid,</text>
+  <text x="548" y="336" class="small muted">SlideEditor, TextEditor</text>
+  <text x="548" y="353" class="small muted">the collaboration channel</text>
+  <path class="flow" d="M500 140 C516 140 516 158 530 158" marker-end="url(#arrow)"/>
+  <path class="flow" d="M500 240 C516 240 516 158 530 158" marker-end="url(#arrow)"/>
+  <path class="flow" d="M500 340 C516 340 516 158 530 158" marker-end="url(#arrow)"/>
+  <path class="flow" d="M500 140 C516 140 516 313 530 313" marker-end="url(#arrow)"/>
+  <path class="flow" d="M500 240 C516 240 516 313 530 313" marker-end="url(#arrow)"/>
+  <rect x="782" y="110" width="150" height="96" rx="12" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="798" y="136" class="name" style="fill:#15803d">Your server</text>
+  <text x="798" y="156" class="small muted">a Node service:</text>
+  <text x="798" y="173" class="small muted">render, index,</text>
+  <text x="798" y="190" class="small muted">convert</text>
+  <rect x="782" y="256" width="150" height="114" rx="12" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="798" y="282" class="name" style="fill:#15803d">Your pages</text>
+  <text x="798" y="302" class="small muted">editors in React,</text>
+  <text x="798" y="319" class="small muted">each page a</text>
+  <text x="798" y="336" class="small muted">CollabSession</text>
+  <path class="flow" d="M750 158 H780" marker-end="url(#arrow)"/>
+  <path class="flow" d="M750 313 H780" marker-end="url(#arrow)"/>
+  <rect x="782" y="396" width="150" height="50" rx="12" fill="#fefce8" stroke="#ca8a04"/>
+  <text x="798" y="418" class="name" style="fill:#a16207">CollabRoom</text>
+  <text x="798" y="436" class="small muted">in your server</text>
+  <path d="M857 372 V394" stroke="#ca8a04" stroke-width="1.5" fill="none" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="866" y="388" class="small" style="fill:#a16207">WebSocket</text>
+  <path d="M641 206 V254" stroke="#8c959f" stroke-width="1.5" stroke-dasharray="5 4" fill="none"/>
+  <text x="650" y="234" class="small muted">same model.d.ts</text>
+  <text x="32" y="420" class="small muted">The render module stays on the backend: the browser package reads,</text>
+  <text x="32" y="438" class="small muted">edits and writes, and leaves typesetting pages to the server.</text>
+</svg>
