@@ -14,7 +14,7 @@ import { removeFormulaSheet, renameFormulaSheet, shiftFormula, type ReferenceShi
 import { shiftIndex, shiftSpan, transformSheetOperation, type SheetOperation } from '../src/collab/sheet-operations.js';
 import { SharedPresentation, applyKeyChanges, matchKeys } from '../src/collab/slides-collab.js';
 import type { EditorDocument } from '../src/document/editor-document.js';
-import type { Presentation, SlideShape } from '../src/model.js';
+import type { ChartDefinition, Presentation, SlideShape } from '../src/model.js';
 import { createSheet, openSheet, type SheetDocument } from '../src/runtime/index.js';
 import { CollabNetwork } from './collab-network.js';
 import { loadWasm } from './wasm.js';
@@ -298,11 +298,14 @@ describe('formulas carried past structure, against the workbook', () => {
     edit: SheetOperation,
     change: SheetOperation,
     read: (sheet: Workbook) => unknown,
+    setup: (sheet: Workbook) => void = () => {},
   ): Promise<[unknown, unknown]> {
     const first = await workbook(locale);
+    setup(first);
     apply(first, edit);
     apply(first, named(change, first));
     const second = await workbook(locale);
+    setup(second);
     const sent = named(change, second);
     apply(second, sent);
     const moved = transformSheetOperation(edit, sent);
@@ -398,6 +401,45 @@ describe('formulas carried past structure, against the workbook', () => {
         );
         expect(movedNames, `${label} scope ${scope}`).toEqual(madeNames);
       }
+    }
+  });
+  it('moves the placement and the ranges of a chart as the workbook moves those of one it holds', async () => {
+    const chart = (column: string, values: string): ChartDefinition => ({
+      chartType: 'column',
+      stacked: false,
+      title: 'Vendite',
+      legend: true,
+      categories: `Uno!$${column}$2:$${column}$15`,
+      series: [{ name: `Uno!$${values}$20`, values: `Uno!$${values}$2:$${values}$15` }],
+    });
+    const placed = { row: 5, column: 1, offsetX: 12_700, offsetY: 25_400, width: 3_000_000, height: 2_000_000 };
+    const read = (sheet: Workbook) => sheet.charts(0).map((each) => ({ spec: each.spec, placement: each.placement }));
+    const existing = (sheet: Workbook) => {
+      sheet.addChart(0, chart('D', 'E'), { row: 2, column: 6, offsetX: 0, offsetY: 0, width: 1_000_000, height: 1_000_000 });
+    };
+    const others: SheetOperation[] = [
+      ...changes(0),
+      ...changes(1).slice(0, 2),
+      { method: 'renameSheet', args: [0, 'Primo foglio'], locale: 'en' },
+      { method: 'removeSheet', args: [2], locale: 'en' },
+    ];
+    for (const change of others) {
+      const label = JSON.stringify(change);
+      const [madeAdded, movedAdded] = await bothWays(
+        'en',
+        { method: 'addChart', args: [0, chart('D', 'E'), placed], locale: 'en' },
+        change,
+        read,
+      );
+      expect(movedAdded, `addChart past ${label}`).toEqual(madeAdded);
+      const [madeSet, movedSet] = await bothWays(
+        'en',
+        { method: 'setChart', args: [0, 0, { chart: chart('E', 'F'), placement: { ...placed, row: 9, column: 2 } }], locale: 'en' },
+        change,
+        read,
+        existing,
+      );
+      expect(movedSet, `setChart past ${label}`).toEqual(madeSet);
     }
   });
 });

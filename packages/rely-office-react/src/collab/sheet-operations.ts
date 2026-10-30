@@ -11,6 +11,7 @@
 import type {
   CellRange,
   CellWindow,
+  ChartDefinition,
   ChartPlacement,
   Condition,
   ConditionalFormat,
@@ -213,10 +214,28 @@ function shiftRuleRanges<T extends { ranges: CellRange[] }>(items: T[], shift: S
   });
 }
 
+/** The cells of a sheet along each axis. */
+const GRID_SIZE: Record<Axis, number> = { row: 1_048_576, column: 16_384 };
+
+/**
+ * Where a chart lands, as the workbook moves the corner of one it placed: pushed down or right by
+ * an insertion at or before its cell, kept on the grid, and on a deleted row or column moved to
+ * the edge of the deletion with no offset into it.
+ */
 function shiftPlacement(placement: ChartPlacement, shift: Shift): ChartPlacement {
-  const point = shiftPoint(placement.row, placement.column, shift);
-  if (point) return { ...placement, row: point[0], column: point[1] };
-  return { ...placement, row: shift.axis === 'row' ? shift.at : placement.row, column: shift.axis === 'column' ? shift.at : placement.column };
+  const index = shift.axis === 'row' ? placement.row : placement.column;
+  let moved = index;
+  let toEdge = false;
+  if (shift.inserted) {
+    if (index >= shift.at) moved = Math.min(index + shift.count, GRID_SIZE[shift.axis] - 1);
+  } else if (index >= shift.at + shift.count) {
+    moved = index - shift.count;
+  } else if (index >= shift.at) {
+    moved = shift.at;
+    toEdge = true;
+  }
+  if (shift.axis === 'row') return { ...placement, row: moved, ...(toEdge ? { offsetY: 0 } : {}) };
+  return { ...placement, column: moved, ...(toEdge ? { offsetX: 0 } : {}) };
 }
 
 /** The operation moved past rows or columns another one inserted or deleted: its cells, then its formulas. */
@@ -459,6 +478,15 @@ function pastRemovedChart(operation: SheetOperation, sheet: number, index: numbe
 }
 
 /** A cell's input with its references moved, when it is a formula; other text as it is. */
+function mapChart(chart: ChartDefinition, map: (formula: string) => string): ChartDefinition {
+  const optional = (formula: string | null | undefined) => (typeof formula === 'string' ? map(formula) : formula);
+  return {
+    ...chart,
+    categories: optional(chart.categories),
+    series: chart.series.map((series) => ({ ...series, name: optional(series.name), values: map(series.values) })),
+  };
+}
+
 function mapInput(input: string, map: (formula: string) => string): string {
   return input.startsWith('=') ? map(input) : input;
 }
@@ -487,8 +515,7 @@ function mapCondition(condition: Condition, map: (formula: string) => string): C
 /**
  * The operation with every formula it carries passed through `map`, given the sheet the formula
  * belongs to: cell inputs, a region put back, the rules of conditional formats and validations,
- * and a defined name. The same operation when none changes. Chart ranges are left as they are,
- * as the workbook leaves those of a chart it holds.
+ * a defined name, and the ranges a chart plots. The same operation when none changes.
  */
 function mapFormulas(operation: SheetOperation, map: (formula: string, home: number) => string): SheetOperation {
   const args = operation.args;
@@ -536,6 +563,14 @@ function mapFormulas(operation: SheetOperation, map: (formula: string, home: num
       // A name without a sheet writes its unqualified references on the first sheet.
       const home = typeof args[2] === 'number' ? args[2] : 0;
       if (typeof args[1] === 'string') replace(1, map(args[1], home));
+      break;
+    }
+    case 'addChart':
+      replace(1, mapChart(args[1] as ChartDefinition, own));
+      break;
+    case 'setChart': {
+      const change = (args[2] ?? {}) as { chart?: ChartDefinition; placement?: ChartPlacement };
+      if (change.chart) replace(2, { ...change, chart: mapChart(change.chart, own) });
       break;
     }
     default:
