@@ -232,10 +232,28 @@ function shiftRuleRanges<T extends { ranges: CellRange[] }>(items: T[], shift: S
   });
 }
 
+/** The cells of a sheet along each axis. */
+const GRID_SIZE: Record<Axis, number> = { row: 1_048_576, column: 16_384 };
+
+/**
+ * Where a chart lands, as the workbook moves the corner of one it placed: pushed down or right by
+ * an insertion at or before its cell, kept on the grid, and on a deleted row or column moved to
+ * the edge of the deletion with no offset into it.
+ */
 function shiftPlacement(placement: ChartPlacement, shift: Shift): ChartPlacement {
-  const point = shiftPoint(placement.row, placement.column, shift);
-  if (point) return { ...placement, row: point[0], column: point[1] };
-  return { ...placement, row: shift.axis === 'row' ? shift.at : placement.row, column: shift.axis === 'column' ? shift.at : placement.column };
+  const index = shift.axis === 'row' ? placement.row : placement.column;
+  let moved = index;
+  let toEdge = false;
+  if (shift.inserted) {
+    if (index >= shift.at) moved = Math.min(index + shift.count, GRID_SIZE[shift.axis] - 1);
+  } else if (index >= shift.at + shift.count) {
+    moved = index - shift.count;
+  } else if (index >= shift.at) {
+    moved = shift.at;
+    toEdge = true;
+  }
+  if (shift.axis === 'row') return { ...placement, row: moved, ...(toEdge ? { offsetY: 0 } : {}) };
+  return { ...placement, column: moved, ...(toEdge ? { offsetX: 0 } : {}) };
 }
 
 /** The operation moved past rows or columns another one inserted or deleted: its cells, then its formulas. */

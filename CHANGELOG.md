@@ -17,6 +17,13 @@ below 1.0, a minor version may change the API.
 - The ranges of a chart added or changed while another client inserted or deleted rows or columns,
   renamed or removed a sheet move as the workbook moves those of a chart it holds; a series whose
   cells were deleted is dropped rather than refused.
+- The charts and pictures of a sheet move with its inserted and deleted rows and columns as Excel
+  moves them: one that moves and sizes with its cells has both corners follow them, one that keeps
+  its size has its top-left corner follow its cell, one placed on the sheet stays; one whose cells
+  are all deleted moves to the edge of the deletion with its size.
+- Editing a spreadsheet together, a chart added or moved while another client inserted or deleted
+  rows or columns lands where the workbook moves a chart it holds, and the ranges it plots move,
+  rename and break the way the workbook's own chart formulas do.
 
 ## 0.10.0
 

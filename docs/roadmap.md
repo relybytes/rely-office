@@ -164,7 +164,6 @@ autosave, and where an inserted image goes, all through the components' props.
   CI gate once it is stable.
 - Publishing to the public npm registry (issue #1).
 - Fonts compressed with MicroType Express inside a doc.
-- A chart anchored to cells moving with inserted and deleted rows and columns.
 
 ## Known risks
 

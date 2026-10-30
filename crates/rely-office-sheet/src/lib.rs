@@ -17,6 +17,7 @@
 //! as delimited text.
 
 mod address;
+mod anchors;
 mod arrange;
 mod charts;
 mod csv;

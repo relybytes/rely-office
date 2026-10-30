@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use rely_office_core::CellRange;
 
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS};
+use crate::anchors::move_drawing_anchors;
 use crate::charts::rewrite_chart_formulas;
 use crate::formula::{CellAddress, Expr, RangeAddress};
 use crate::model::{DefinedName, EditError, Sheet};
@@ -27,7 +28,7 @@ pub(crate) enum Shift {
 }
 
 impl Shift {
-    fn rows(self) -> bool {
+    pub(crate) fn rows(self) -> bool {
         matches!(self, Self::InsertRows { .. } | Self::DeleteRows { .. })
     }
 
@@ -257,6 +258,7 @@ pub(crate) fn shift(
         .filter_map(|(cell, stored)| shift.cell(cell).map(|cell| (cell, stored)))
         .collect();
     move_pivot_tables(sheets, target, shift);
+    move_drawing_anchors(&mut sheets[target], shift);
 
     let target_name = sheets[target].name.to_lowercase();
     for (index, sheet) in sheets.iter_mut().enumerate() {

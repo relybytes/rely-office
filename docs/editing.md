@@ -526,8 +526,7 @@ pictures and charts no editor can describe, stays as the file had it. A chart pa
 whose series read ranges is described, so a chart made here, or a simple one from Excel or
 LibreOffice, stays editable after a save. The parts are written with explicit colours, so the
 chart looks the same in a workbook without a theme, and with no cached values: Excel and
-LibreOffice compute them from the cells. Charts stay anchored to their cells as they were when
-rows or columns move.
+LibreOffice compute them from the cells.
 
 `Workbook::pictures(sheet)` draws the pictures and charts of a sheet, each chart from the values
 its cells hold now, so a chart follows an edit; the drawing is kept until the workbook changes, a
@@ -544,6 +543,21 @@ references after the edit shift, ranges grow or shrink, a reference to a deleted
 rewrites the formulas that name it; removing one turns them into `#REF!`; the last sheet stays.
 The formulas the charts read, every `<c:f>` and `<cx:f>` of their parts, follow the same way, so a
 chart keeps plotting the cells it plotted, and one whose cells are all deleted reads `#REF!`.
+
+The anchors of the sheet's drawing, its charts and pictures, move with the rows and columns as
+Excel moves them:
+
+| Anchor | Inserted or deleted rows and columns |
+| --- | --- |
+| `twoCellAnchor`, moving and sizing with its cells (the default) | both corners follow the cells under them: rows inserted inside it make it taller, rows deleted inside it make it shorter |
+| `oneCellAnchor`, or a `twoCellAnchor` with `editAs="oneCell"`, moving but keeping its size | its top-left corner follows its cell; a chart made or placed here is one |
+| `absoluteAnchor`, or `editAs="absolute"` | stays where it is |
+
+Rows inserted where an anchor ends, flush with the top of the row, fall below it. A corner on a
+deleted row or column goes to the edge of the deletion with no offset into it, and an anchor whose
+cells are all deleted moves there keeping its size rather than going. A corner pushed past the last
+row or column stays on the grid. With rows of different heights, an anchor that keeps its size
+keeps the number of rows it spans, which Excel would recompute from their heights.
 `copy_range` pastes a rectangle with relative references moved by the offset and absolute ones
 kept, clearing the target first, as a spreadsheet's paste does.
 
@@ -559,8 +573,8 @@ its computed value cached, so a viewer that does not recalculate (this crate's o
 included) shows the results, and asks Excel to recalculate on opening; numbers, inline text,
 booleans, number formats, styles, merged cells, column widths and row heights are kept. The
 pictures and charts of each sheet, and the workbook's theme they take their colours from, are
-written back exactly as the file had them: they stay anchored to the cells they had, so rows
-inserted above a chart leave it where it was. Conditional formats are written with their
+written back as the file had them, their anchors moved by the rows and columns inserted and
+deleted since (see [Edits that move cells](#edits-that-move-cells)). Conditional formats are written with their
 differential formats and validations with their messages; pivot tables are described in
 [Pivot tables](#pivot-tables). LibreOffice
 opens and recalculates the files (checked by hand on the corpus); the round trip is tested in

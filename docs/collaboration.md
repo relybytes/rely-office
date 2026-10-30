@@ -120,7 +120,7 @@ same calls with the edits shared, and the binding itself as `SheetGrid`'s `colla
   drops what was inside it (`shiftIndex`, `shiftSpan`).
 - The formulas an operation carries move with it, as the workbook moves the formulas it holds:
   cell inputs, a region put back by undo, the rules of conditional formats and validations (their
-  ranges too), defined names and the ranges of a chart. A reference to inserted or deleted rows or columns shifts, a
+  ranges too), defined names and the ranges a chart plots. A reference to inserted or deleted rows or columns shifts, a
   range grows or shrinks, one whose cells were all deleted becomes `#REF!`, as does one pushed past
   the last row or column; a renamed sheet is written with its new name, quoted when it must be, and
   a removed one becomes `#REF!` (`shiftFormula`, `renameFormulaSheet`, `removeFormulaSheet` in
@@ -128,6 +128,9 @@ same calls with the edits shared, and the binding itself as `SheetGrid`'s `colla
   function names such as `LOG10(`, defined names, tables and external references are left alone.
   A chart added or changed with ranges whose cells another client deleted loses those series, as
   the workbook takes no `#REF!` range from a call, and is not made when none is left.
+- The placement a chart is added or moved to follows inserted and deleted rows and columns as the
+  workbook moves the corner of a chart it placed: pushed by an insertion at or before its cell,
+  moved to the edge of a deletion with no offset into it.
 - Unqualified references belong to the sheet the formula is on (the first sheet for a workbook
   name, which the workbook writes there); a qualified one is matched by name, so an insertion,
   deletion, rename or removal carries the name of its sheet (`sheetName`, set by the binding for
