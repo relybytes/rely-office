@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! The cell styles of an xlsx (`xl/styles.xml`): fonts, fills, borders, alignment and number
 //! formats, resolved into one style per cell format, with theme and palette colours turned into

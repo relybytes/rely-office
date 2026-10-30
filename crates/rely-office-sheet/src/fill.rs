@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! The fill handle: dragging a selection over its neighbours continues it as a spreadsheet does.
 //! Numbers follow their trend, a date goes on a day at a time, a text ending in a number counts

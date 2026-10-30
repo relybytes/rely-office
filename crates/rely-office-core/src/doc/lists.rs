@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! Lists ([MS-DOC] 2.9.147 and 2.9.150): each list's levels with their number format, label
 //! template, start, follow character and modifiers, and the overrides paragraphs name.

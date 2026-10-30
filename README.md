@@ -27,7 +27,7 @@ and in the browser. A server gets previews, thumbnails, search text and conversi
 gets four React editors, for documents, spreadsheets, slides and plain text, that several people can
 use at the same time.
 
-It is built and maintained by [RelyBytes SRL](https://relybytes.com) for the Drive of the
+It is built and maintained by [RelyBytes S.r.l.](https://relybytes.com) for the Drive of the
 [Rely Platform](https://relyplatform.app), where it previews, indexes, edits and exports every
 file a team stores, and it is published under the Mozilla Public License 2.0 so that it stays open.
 
@@ -247,7 +247,7 @@ The design is in [docs/](docs/README.md): [architecture](docs/architecture.md),
 
 Mozilla Public License 2.0, see [LICENSE](LICENSE). In short: you may use rely-office in any
 software, open or closed; changes to the files of rely-office itself must be published under the
-same licence, and the copyright notices of RelyBytes SRL must be kept. See [NOTICE](NOTICE)
+same licence, and the copyright notices of RelyBytes S.r.l. must be kept. See [NOTICE](NOTICE)
 for the attribution and for the licences of the dependencies; the fonts in `fonts/` carry their own
 licence texts.
 

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! The outlines `OpenDocument` draws in SVG terms: the `svg:points` of a polygon or a
 //! polyline and the `svg:d` of a path, in the coordinates of the shape's `svg:viewBox`.

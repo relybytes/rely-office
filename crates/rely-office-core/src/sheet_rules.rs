@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! The rules a sheet puts on its cells: conditional formats, which change how a cell looks by
 //! its value, and data validations, which limit what may be typed in it. Formulas are kept in

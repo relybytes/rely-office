@@ -3,7 +3,7 @@
   "version": "0.10.0",
   "description": "Office documents in the browser, for the frontend: docx, doc, odt, Markdown, HTML, pptx, ppt, odp, xlsx, xls, ods, csv and plain text read and written through WebAssembly, React editor components for documents, spreadsheets, slides and text, and real-time collaboration over Yjs.",
   "license": "MPL-2.0",
-  "author": "RelyBytes Consulting (https://relybytes.com)",
+  "author": "RelyBytes S.r.l. (https://relybytes.com)",
   "homepage": "https://github.com/relybytes/rely-office#readme",
   "repository": {
     "type": "git",

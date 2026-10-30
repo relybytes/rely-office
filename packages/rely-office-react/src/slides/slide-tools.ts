@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 // What the slide editor does beyond moving one shape: preset shapes drawn as paths, the guides
 // a moved shape snaps to, rotation, several shapes at once, tables and the steps of a show.

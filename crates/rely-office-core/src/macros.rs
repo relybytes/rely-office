@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! The macros of a macro-enabled Office file (docm, xlsm, pptm): the VBA project and the parts
 //! it relates to, carried as bytes and written back into the saved file. Nothing here reads,

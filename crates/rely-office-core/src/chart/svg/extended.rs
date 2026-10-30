@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! The charts of Office 2016 drawn as SVG: a waterfall's floating bars and their totals, a
 //! funnel, a treemap's nested rectangles, a sunburst's rings, a histogram's bins with its

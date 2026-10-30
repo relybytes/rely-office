@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! Pictures and drawings: an inline picture's `PICF` in the Data stream ([MS-DOC] 2.9.192), the
 //! `OfficeArt` records that hold the image bytes ([MS-ODRAW]), and the floating shapes the

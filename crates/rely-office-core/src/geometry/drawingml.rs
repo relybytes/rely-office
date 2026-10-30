@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! `DrawingML` geometry: the guide formulas of ECMA-376 20.1.9, evaluated against a shape's
 //! size into paths, for the preset shapes and for `a:custGeom`.

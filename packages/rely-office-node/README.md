@@ -310,4 +310,4 @@ docx, a doc and an odt give the same tree; `writeDocx` writes it back as a docx.
 ## Licence
 
 Mozilla Public License 2.0, see `LICENSE` and `NOTICE` in the package. Built and maintained by
-[RelyBytes Consulting](https://relybytes.com).
+[RelyBytes S.r.l.](https://relybytes.com).

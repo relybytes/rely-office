@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! Sections ([MS-DOC] 2.8.26 and 2.9.234): where each section ends and the page it lays out
 //! on, from the modifiers each one keeps in the `WordDocument` stream.

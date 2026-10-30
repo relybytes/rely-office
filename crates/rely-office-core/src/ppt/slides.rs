@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! A `PowerPoint` 97-2003 presentation read into the [`Presentation`] a pptx gives: each slide's
 //! background and shapes, the master's shapes behind them, with their frames, outlines, fills,

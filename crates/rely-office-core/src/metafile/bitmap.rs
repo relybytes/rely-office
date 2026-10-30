@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! The device-independent bitmaps a metafile draws, as PNG an SVG can embed. The PNG is
 //! written with stored deflate blocks, so no compressor is needed: an SVG of a preview is

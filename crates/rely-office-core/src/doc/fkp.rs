@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
+// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
 //! Formatted disk pages ([MS-DOC] 2.9.44 and 2.9.175): the property runs of characters and
 //! paragraphs, by their position in the `WordDocument` stream, and the plexes that list them.
