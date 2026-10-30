@@ -3,7 +3,7 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
-## Unreleased
+## 0.9.0
 
 ### Added
 

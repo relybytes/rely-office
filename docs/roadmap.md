@@ -133,17 +133,18 @@ autosave, and where an inserted image goes, all through the components' props.
 | 8.6 | Charts of a sheet made from a selection, changed, moved and removed; the pictures and charts of an ods kept on save | done (0.8.0) |
 | 8.7 | Floating images edited in the document editor and written to docx, odt and HTML | done (0.8.0) |
 
-## Phase 9: the rest of a spreadsheet user's file (unreleased)
+## Phase 9: together, and the rest of an Office user's file (0.9.0)
 
 | Step | Content | Status |
 | --- | --- | --- |
-| 9.1 | The threaded comments of Excel 365: replies, dates and resolved state, read, edited and written in xlsx, one annotation in ods | done |
-| 9.2 | Macros kept and never run: the VBA project of a docm, an xlsm and a pptm written back, the macros of a doc, an xls and a ppt reported when a conversion leaves them out | done |
-| 9.3 | Pivot tables made, changed, refreshed and removed, written to and read from xlsx and ods, with `GETPIVOTDATA`, `GROUPBY` and `PIVOTBY` | done |
-| 9.4 | Editing together: documents, presentations and text as a shared Yjs document, a sheet as the operations a room orders, presence, and undo of one's own edits | done |
-| 9.5 | Plain text files edited with their encoding, byte order mark and line ending kept | done |
-| 9.6 | The functions left that stay inside the workbook, 502 in all, and the stored value of those that reach outside | done |
-| 9.7 | The adjust values of the old arrows, ribbons and action buttons of ppt and doc | done |
+| 9.1 | The threaded comments of Excel 365: replies, dates and resolved state, read, edited and written in xlsx, one annotation in ods | done (0.9.0) |
+| 9.2 | Macros kept and never run: the VBA project of a docm, an xlsm and a pptm written back, the macros of a doc, an xls and a ppt reported when a conversion leaves them out | done (0.9.0) |
+| 9.3 | Pivot tables made, changed, refreshed and removed, written to and read from xlsx and ods, with `GETPIVOTDATA`, `GROUPBY` and `PIVOTBY` | done (0.9.0) |
+| 9.4 | Editing together: documents, presentations and text as a shared Yjs document, a sheet as the operations a room orders, presence, and undo of one's own edits | done (0.9.0) |
+| 9.5 | Plain text files edited with their encoding, byte order mark and line ending kept | done (0.9.0) |
+| 9.6 | The functions left that stay inside the workbook, 502 in all, and the stored value of those that reach outside | done (0.9.0) |
+| 9.7 | The adjust values of the old arrows, ribbons and action buttons of ppt and doc | done (0.9.0) |
+| 9.8 | The fonts of a document: the font table, embedded faces, theme and default fonts read, written and drawn, the editor's font picker and substitutes | done (0.9.0) |
 
 ## Next
 

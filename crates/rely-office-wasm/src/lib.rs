@@ -15,10 +15,9 @@
 use rely_office_core::{
     Block, Comment, DocumentFont, DocumentFonts, DocumentTree, EmbeddedObject, HeadersFooters,
     ImportReport, Limits, MacroProject, Media, Note, OfficeError, PageLayout, Section, Sheet,
-    TrackedChanges,
-    TreeOptions, detect_format, extract_text, read_document_tree, read_document_tree_named,
-    read_presentation, read_workbook, sniff_image_type, write_docx, write_html, write_markdown,
-    write_odt, write_pptx,
+    TrackedChanges, TreeOptions, detect_format, extract_text, read_document_tree,
+    read_document_tree_named, read_presentation, read_workbook, sniff_image_type, write_docx,
+    write_html, write_markdown, write_odt, write_pptx,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
