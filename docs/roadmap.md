@@ -146,12 +146,25 @@ autosave, and where an inserted image goes, all through the components' props.
 | 9.7 | The adjust values of the old arrows, ribbons and action buttons of ppt and doc | done (0.9.0) |
 | 9.8 | The fonts of a document: the font table, embedded faces, theme and default fonts read, written and drawn, the editor's font picker and substitutes | done (0.9.0) |
 
+## Phase 10: the limits closed (0.10.0)
+
+| Step | Content | Status |
+| --- | --- | --- |
+| 10.1 | Formulas written while another client inserts or deletes rows and columns, renames or removes a sheet, moved as the workbook moves them; the rules, validations and names too | done (0.10.0) |
+| 10.2 | Charts drawn in the grid from the live cells, in the sheet's locale, and their formulas kept on structural edits | done (0.10.0) |
+| 10.3 | Pivot tables in Excel's compact, outline and tabular forms, with subtotals and repeated labels, in xlsx and ods; the indent of a cell | done (0.10.0) |
+| 10.4 | Every argument of `GROUPBY` and `PIVOTBY`, with `PERCENTOF` | done (0.10.0) |
+| 10.5 | The fonts a Word 97-2003 document embeds, read into the document tree | done (0.10.0) |
+| 10.6 | A README that shows the library at work, and a demo of two people on one document | done (0.10.0) |
+
 ## Next
 
 - A real Word 6 or 95 sample in the tests, beside the synthetic ones.
 - A larger corpus with documents made by Word and pptx and odp pages, and the corpus figure as a
   CI gate once it is stable.
 - Publishing to the public npm registry (issue #1).
+- Fonts compressed with MicroType Express inside a doc.
+- A chart anchored to cells moving with inserted and deleted rows and columns.
 
 ## Known risks
 

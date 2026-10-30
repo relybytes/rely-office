@@ -3,10 +3,13 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
-## Unreleased
+## 0.10.0
 
 ### Added
 
+- The demo of the frontend package shows two people on one shared document (the view "Insieme"),
+  and the README shows the editors, the architecture, the collaboration handshake and the page
+  comparison with LibreOffice.
 - The fonts a Word 97-2003 document embeds are read: the faces `SttbTtmbd` lists come out of their
   Embedded OpenType structures into `fontFiles`, so a doc converted to docx keeps them and its
   pages are drawn with them. A face compressed with MicroType Express is counted in

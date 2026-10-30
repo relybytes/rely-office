@@ -21,6 +21,6 @@ name = "rely-office-corpus"
 path = "src/main.rs"
 
 [dependencies]
-rely-office-render = { path = "../rely-office-render", version = "0.9.0" }
+rely-office-render = { path = "../rely-office-render", version = "0.10.0" }
 serde_json = "1.0.149"
 tiny-skia = { version = "0.12.0", default-features = false, features = ["std", "png-format"] }
