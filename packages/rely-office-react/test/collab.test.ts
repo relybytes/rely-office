@@ -184,6 +184,36 @@ describe('sheet operations', () => {
     expect(transformSheetOperation(op('setInput', 0, 1, 1, 'x'), op('setInput', 0, 1, 1, 'y'))!.args[3]).toBe('x');
   });
 
+  it('carries the new name of a sheet on a change to its rows made before the rename', () => {
+    const rename: SheetOperation = { ...op('renameSheet', 1, 'Nuovo'), sheetName: 'Dati' };
+    expect(transformSheetOperation({ ...op('deleteRows', 1, 0, 1), sheetName: 'Dati' }, rename)!.sheetName).toBe('Nuovo');
+    expect(transformSheetOperation({ ...op('insertRows', 0, 0, 1), sheetName: 'Foglio1' }, rename)!.sheetName).toBe('Foglio1');
+    expect(transformSheetOperation({ ...op('renameSheet', 1, 'Altro'), sheetName: 'Dati' }, rename)!.sheetName).toBe('Nuovo');
+    expect(transformSheetOperation(op('setInput', 0, 0, 0, '=Dati!A1'), rename)!.args[3]).toBe('=Nuovo!A1');
+  });
+
+  it('moves what an undo puts back around the rows it inserts again, and keeps what others wrote', () => {
+    const follows = { sheet: 0, axis: 'row' as const, at: 1, count: 2 };
+    const restore: SheetOperation = { ...op('setInputs', 0, [[5, 2, '=A2'], [7, 2, '=A9']]), guarded: true, follows };
+    // An insertion after the band, in the rows as the others saw them: past a cell put back at 5 (3 for them).
+    const after = transformSheetOperation(restore, op('insertRows', 0, 4, 1))!;
+    expect(after.args).toEqual([0, [[5, 2, '=A2'], [8, 2, '=A10']]]);
+    expect(after.follows).toEqual(follows);
+    // An insertion above it moves the band too.
+    const above = transformSheetOperation(restore, op('insertRows', 0, 0, 1))!;
+    expect(above.args).toEqual([0, [[6, 2, '=A3'], [8, 2, '=A10']]]);
+    expect(above.follows).toEqual({ ...follows, at: 2 });
+    // A deletion across the band's place takes the rows on both sides of it.
+    const across = transformSheetOperation(restore, op('deleteRows', 0, 0, 2))!;
+    expect(across.follows).toEqual({ ...follows, at: 0 });
+    expect(across.args).toEqual([0, [[3, 2, '=A1'], [5, 2, '=A7']]]);
+    // A cell another client wrote since is left as they wrote it: 7 is 5 for them.
+    expect(transformSheetOperation(restore, op('setInput', 0, 5, 2, 'mine'))!.args).toEqual([0, [[5, 2, '=A2']]]);
+    expect(transformSheetOperation(restore, op('setInput', 0, 7, 2, 'mine'))!.args).toEqual(restore.args);
+    expect(transformSheetOperation({ ...op('setConditionalFormats', 0, []), guarded: true }, op('setConditionalFormats', 0, []))).toBeNull();
+    expect(transformSheetOperation({ ...op('setDefinedName', 'Somma', '=A1'), guarded: true }, op('setDefinedName', 'SOMMA', '=B1'))).toBeNull();
+  });
+
   it('moves comment threads and pivot tables past structure', () => {
     expect(transformSheetOperation(op('replyToComment', 0, 3, 0, 'ok'), op('insertRows', 0, 0, 2))!.args).toEqual([0, 5, 0, 'ok']);
     const pivot = { sourceSheet: 1, source: { top: 0, left: 0, bottom: 9, right: 2 }, anchor: { row: 4, column: 4 } };
@@ -355,6 +385,34 @@ describe('formulas carried past structure, against the workbook', () => {
             expect(moved, `${formula} on ${home} past ${JSON.stringify(change)}`).toEqual(made);
           }
         }
+      }
+    }
+  });
+
+  it('moves the ranges of a chart as the workbook moves those of a chart it holds', async () => {
+    const chart = {
+      chartType: 'column',
+      stacked: false,
+      legend: true,
+      categories: 'Uno!$A$2:$A$6',
+      series: [
+        { name: 'Uno!$B$1', values: 'Uno!$B$2:$B$6' },
+        { name: "'My Sheet'!$C$1", values: "'My Sheet'!$C$3:$C$4" },
+      ],
+    };
+    const placement = { row: 0, column: 8, offsetX: 0, offsetY: 0, width: 3_000_000, height: 2_000_000 };
+    for (const change of [...changes(0), ...changes(2).slice(3, 5), { method: 'renameSheet', args: [0, 'Primo'], locale: 'en' } as SheetOperation, { method: 'removeSheet', args: [2], locale: 'en' } as SheetOperation]) {
+      const [made, moved] = await bothWays(
+        'en',
+        { method: 'addChart', args: [1, chart, placement], locale: 'en' },
+        change,
+        (sheet) => sheet.charts(1).map((each) => each.spec),
+      );
+      if (JSON.stringify(made).includes('#REF!')) {
+        // The workbook keeps a chart whose data went as #REF!; one added after is made without it.
+        expect(JSON.stringify(moved), JSON.stringify(change)).not.toContain('#REF!');
+      } else {
+        expect(moved, JSON.stringify(change)).toEqual(made);
       }
     }
   });
@@ -543,6 +601,156 @@ describe('a shared workbook', () => {
       [0, 0, 'a'],
       [1, 0, 'b'],
     ]);
+  });
+
+  /** Everything a deletion can break, on every sheet. */
+  function everything(sheet: SheetDocument) {
+    return {
+      sheets: sheet.sheets().map((summary, index) => ({
+        name: summary.name,
+        cells: sheet
+          .cells(index, { top: 0, left: 0, bottom: 30, right: 10 })
+          .filter((cell) => cell.input !== '')
+          .map((cell) => [cell.row, cell.column, cell.input]),
+        formats: sheet.conditionalFormats(index),
+        validations: sheet.validations(index),
+        charts: sheet.charts(index).map((chart) => chart.spec),
+      })),
+      names: sheet.definedNames(),
+    };
+  }
+
+  /** A workbook whose other cells, rules, names and a chart point into rows 2 and 3 of the first sheet. */
+  function fill(grid: SheetDocument): void {
+    const first = grid.sheets()[0]!.name;
+    grid.setInputs(0, [
+      [0, 0, '1'],
+      [1, 0, '2'],
+      [2, 0, '3'],
+      [3, 0, '4'],
+      [4, 0, '5'],
+      [5, 2, '=A2'],
+      [6, 2, '=SOMMA(A2:A3)'],
+      [7, 2, '=SOMMA(A3:A5)'],
+      [8, 2, '=A5'],
+    ]);
+    grid.addSheet('Dati');
+    grid.setInput(1, 0, 0, `=${first}!A2+${first}!A4`);
+    grid.setDefinedName('Coppia', `=${first}!$A$2:$A$3`);
+    grid.setConditionalFormats(0, [
+      { ranges: [{ firstRow: 1, firstColumn: 0, lastRow: 3, lastColumn: 0 }], rules: [{ condition: { kind: 'expression', formula: 'A2>$A$3' } }] },
+    ]);
+    grid.setValidations(0, [
+      { ranges: [{ firstRow: 2, firstColumn: 1, lastRow: 4, lastColumn: 1 }], kind: 'custom', formulas: ['B3>$A$2'] },
+    ]);
+    grid.addChart(
+      1,
+      { chartType: 'column', stacked: false, legend: true, series: [{ values: `${first}!$A$2:$A$3` }] },
+      { row: 2, column: 3, offsetX: 0, offsetY: 0, width: 3_000_000, height: 2_000_000 },
+    );
+  }
+
+  it('undoes a row deletion with the formulas, rules, names and charts elsewhere it broke', async () => {
+    const network = new CollabNetwork<SheetOperation>(sheetRoom(), { transform: transformSheetOperation });
+    const a = await client(network);
+    const b = await client(network, bea);
+    fill(a.grid);
+    await network.flush();
+    const before = everything(a.sheet);
+    a.grid.deleteRows(0, 1, 2);
+    await network.flush();
+    expect(a.sheet.input(0, 3, 2)).toBe('=#REF!');
+    expect(a.sheet.input(1, 0, 0)).toContain('#REF!');
+    const deleted = everything(a.sheet);
+    expect(a.grid.undo()).toBe(true);
+    await network.flush();
+    expect(everything(a.sheet)).toEqual(before);
+    expect(everything(b.sheet)).toEqual(before);
+    expect(a.grid.redo()).toBe(true);
+    await network.flush();
+    expect(everything(b.sheet)).toEqual(deleted);
+    expect(a.grid.undo()).toBe(true);
+    await network.flush();
+    expect(everything(b.sheet)).toEqual(before);
+  });
+
+  it('undoes a column deletion with the formulas it broke', async () => {
+    const network = new CollabNetwork<SheetOperation>(sheetRoom(), { transform: transformSheetOperation });
+    const a = await client(network);
+    a.grid.setInputs(0, [
+      [0, 0, '1'],
+      [0, 1, '2'],
+      [0, 2, '3'],
+      [0, 3, '4'],
+      [3, 0, '=B1'],
+      [3, 1, '=SOMMA(B1:C1)'],
+      [3, 4, '=SOMMA(C1:D1)+A1'],
+    ]);
+    await network.flush();
+    const before = everything(a.sheet);
+    a.grid.deleteColumns(0, 1, 2);
+    await network.flush();
+    a.grid.undo();
+    await network.flush();
+    expect(everything(a.sheet)).toEqual(before);
+  });
+
+  it('undoes a deletion past what others did since, keeping a cell they wrote', async () => {
+    const network = new CollabNetwork<SheetOperation>(sheetRoom(), { transform: transformSheetOperation });
+    const a = await client(network);
+    const b = await client(network, bea);
+    const cells: [number, number, string][] = [
+      [0, 0, '1'],
+      [1, 0, '2'],
+      [2, 0, '3'],
+      [3, 0, '4'],
+      [4, 0, '5'],
+      [5, 2, '=A2'],
+      [6, 2, '=SOMMA(A2:A3)'],
+      [7, 2, '=SOMMA(A3:A5)'],
+      [8, 2, '=A5'],
+    ];
+    a.grid.setInputs(0, cells);
+    await network.flush();
+    a.grid.deleteRows(0, 1, 2);
+    await network.flush();
+    // For Bea the first two formulas are now on rows 4 and 5: a row goes between them, and she
+    // writes over the third, now on row 7.
+    b.grid.insertRows(0, 4, 1);
+    b.grid.setInput(0, 6, 2, 'mio');
+    await network.flush();
+    a.grid.undo();
+    await network.flush();
+    const engine = await createSheet({ locale: 'it' });
+    engine.setInputs(0, cells);
+    engine.insertRows(0, 6, 1);
+    engine.setInput(0, 8, 2, 'mio');
+    expect(contents(a.sheet)).toEqual(contents(engine));
+    expect(contents(b.sheet)).toEqual(contents(engine));
+    engine.free();
+  });
+
+  it('moves a formula past rows inserted on a sheet renamed at the same time', async () => {
+    const network = new CollabNetwork<SheetOperation>(sheetRoom(), { transform: transformSheetOperation });
+    const a = await client(network);
+    const b = await client(network, bea);
+    a.grid.addSheet('Dati');
+    await network.flush();
+    // Bea inserts a row on the sheet before she hears of its new name; Ada, who renamed it, then
+    // writes a formula naming it before she hears of the row.
+    a.grid.renameSheet(1, 'Nuovo');
+    b.grid.insertRows(1, 0, 1);
+    a.grid.setInput(0, 0, 0, '=Nuovo!A1+Nuovo!B3');
+    await network.flush();
+    expect(contents(a.sheet)).toEqual(contents(b.sheet));
+    const engine = await createSheet({ locale: 'it' });
+    engine.addSheet('Dati');
+    engine.renameSheet(1, 'Nuovo');
+    engine.setInput(0, 0, 0, '=Nuovo!A1+Nuovo!B3');
+    engine.insertRows(1, 0, 1);
+    expect(contents(a.sheet)).toEqual(contents(engine));
+    expect(a.sheet.input(0, 0, 0)).toBe('=Nuovo!A2+Nuovo!B4');
+    engine.free();
   });
 
   it('sends again what waited while it was cut off', async () => {

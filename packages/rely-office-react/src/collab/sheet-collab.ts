@@ -4,13 +4,16 @@
 //
 // Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
 
-import type { CellWindow, PivotTableDefinition, SheetDocument } from '../model.js';
+import type { CellRange, CellWindow, ChartDefinition, ConditionalFormat, PivotTableDefinition, SheetDocument } from '../model.js';
+import { shiftFormula, type ReferenceShift } from './formula-references.js';
 import type { SequencedOperation, SubmittedOperation } from './protocol.js';
 import type { CollabSession } from './session.js';
 import {
   SHEET_NAMED_MUTATORS,
   isSheetMutator,
+  shiftSpan,
   transformSheetOperation,
+  type RestoredBand,
   type SheetMutator,
   type SheetOperation,
 } from './sheet-operations.js';
@@ -20,6 +23,12 @@ export const MAX_SHARED_UNDO = 100;
 
 /** The most cells an edit's undo keeps; a larger edit cannot be undone. */
 const MAX_UNDO_AREA = 200_000;
+
+/** The most cells of a sheet read for the formulas a deletion breaks; a larger sheet is not read. */
+const MAX_SCANNED_AREA = 5_000_000;
+
+/** The most cells the workbook hands back in one read. */
+const MAX_WINDOW_CELLS = 250_000;
 
 interface PendingOperation extends SubmittedOperation<SheetOperation> {
   operation: SheetOperation;
@@ -45,6 +54,33 @@ export interface RemoteSelection {
 export interface SharedSelection {
   sheet: number;
   window: CellWindow;
+}
+
+/** The formulas of a conditional format's condition. */
+function conditionFormulas(condition: ConditionalFormat['rules'][number]['condition']): string[] {
+  const scale = (value: { kind: string; value?: string }) => (value.kind === 'formula' && typeof value.value === 'string' ? [value.value] : []);
+  switch (condition.kind) {
+    case 'cellIs':
+      return condition.formulas;
+    case 'expression':
+      return [condition.formula];
+    case 'colorScale':
+      return condition.points.flatMap((point) => scale(point.value));
+    case 'dataBar':
+      return [...scale(condition.min), ...scale(condition.max)];
+    case 'iconSet':
+      return condition.thresholds.flatMap(scale);
+    default:
+      return [];
+  }
+}
+
+/** The ranges of a chart, as formulas. */
+function chartFormulas(chart: ChartDefinition): string[] {
+  return [
+    ...(typeof chart.categories === 'string' ? [chart.categories] : []),
+    ...chart.series.flatMap((series) => [series.values, ...(typeof series.name === 'string' ? [series.name] : [])]),
+  ];
 }
 
 export interface SheetCollaborationOptions {
@@ -234,7 +270,8 @@ export class SheetCollaboration {
     for (const operation of step.operations) {
       const moved = this.movedSince(operation, step.base, this.session.sessionKey);
       if (!moved) continue;
-      const undo = this.inverseOf(moved);
+      // What an undo put back after the rows it inserted again goes with them: redoing deletes them.
+      const undo = moved.follows ? [] : this.inverseOf(moved);
       const result = this.submit(operation, step.base);
       inverse.unshift(...undo, ...this.creationInverse(moved, result));
     }
@@ -372,9 +409,11 @@ export class SheetCollaboration {
         const band: CellWindow = rows
           ? { top: at, left: 0, bottom: at + count - 1, right: Math.max(0, (extent?.columns ?? 1) - 1) }
           : { top: 0, left: at, bottom: Math.max(0, (extent?.rows ?? 1) - 1), right: at + count - 1 };
+        const follows: RestoredBand = { sheet, axis: rows ? 'row' : 'column', at, count };
         return [
           { method: rows ? 'insertRows' : 'insertColumns', args: [sheet, at, count], locale },
-          ...restore(sheet, band),
+          ...restore(sheet, band).map((operation) => ({ ...operation, follows })),
+          ...this.brokenFormulas(sheet, { ...follows, inserted: false }, band, locale).map((operation) => ({ ...operation, follows })),
         ];
       }
       case 'renameSheet': {
@@ -433,6 +472,81 @@ export class SheetCollaboration {
       default:
         return [];
     }
+  }
+
+  /**
+   * What putting the rows or columns back would not restore of a deletion: the formulas, rules,
+   * validations, names and charts elsewhere whose references it cut to `#REF!` or shrank, as
+   * they are now. The rows or columns a deletion takes are put back by the region of `band`.
+   */
+  private brokenFormulas(sheet: number, deletion: ReferenceShift, band: CellWindow, locale: SheetOperation['locale']): SheetOperation[] {
+    const sheets = this.sheet.sheets();
+    const name = sheets[sheet]?.name;
+    if (name === undefined) return [];
+    const insertion: ReferenceShift = { ...deletion, inserted: true };
+    const survives = (formula: string, home: number): boolean => {
+      const target = { sheetName: name, ownSheet: home === sheet };
+      return shiftFormula(shiftFormula(formula, deletion, target), insertion, target) === formula;
+    };
+    const rangeSurvives = (range: CellRange): boolean => {
+      const [first, last] = deletion.axis === 'row' ? [range.firstRow, range.lastRow] : [range.firstColumn, range.lastColumn];
+      const cut = shiftSpan(first, last, deletion);
+      if (!cut) return false;
+      const back = shiftSpan(cut[0], cut[1], insertion);
+      return back !== null && back[0] === first && back[1] === last;
+    };
+    const restores: SheetOperation[] = [];
+    let kept = 0;
+    sheets.forEach((summary, index) => {
+      const inputs = this.formulaCells(index, summary.rows, summary.columns).filter(
+        ([row, column, input]) =>
+          !(index === sheet && row >= band.top && row <= band.bottom && column >= band.left && column <= band.right) &&
+          !survives(input, index),
+      );
+      if (inputs.length > 0 && kept + inputs.length <= MAX_UNDO_AREA) {
+        kept += inputs.length;
+        restores.push({ method: 'setInputs', args: [index, inputs], locale, guarded: true });
+      }
+      const formats = this.sheet.conditionalFormats(index);
+      const formatBroken = formats.some(
+        (format) =>
+          (index === sheet && !format.ranges.every(rangeSurvives)) ||
+          !format.rules.every((rule) => conditionFormulas(rule.condition).every((formula) => survives(formula, index))),
+      );
+      if (formatBroken) restores.push({ method: 'setConditionalFormats', args: [index, formats], locale, guarded: true });
+      const validations = this.sheet.validations(index);
+      const validationBroken = validations.some(
+        (validation) =>
+          (index === sheet && !validation.ranges.every(rangeSurvives)) ||
+          !(validation.formulas ?? []).every((formula) => survives(formula, index)),
+      );
+      if (validationBroken) restores.push({ method: 'setValidations', args: [index, validations], locale, guarded: true });
+      for (const chart of this.sheet.charts(index)) {
+        if (chart.spec && !chartFormulas(chart.spec).every((formula) => survives(formula, index))) {
+          restores.push({ method: 'setChart', args: [index, chart.index, { chart: chart.spec }], locale, guarded: true });
+        }
+      }
+    });
+    for (const defined of this.sheet.definedNames()) {
+      if (!survives(defined.formula, defined.sheet ?? 0)) {
+        restores.push({ method: 'setDefinedName', args: [defined.name, defined.formula, defined.sheet], locale, guarded: true });
+      }
+    }
+    return restores;
+  }
+
+  /** The cells of a sheet that hold a formula, as `[row, column, input]`; none when the sheet is too large to read. */
+  private formulaCells(sheet: number, rows: number, columns: number): [number, number, string][] {
+    if (rows === 0 || columns === 0 || rows * columns > MAX_SCANNED_AREA) return [];
+    const stripe = Math.max(1, Math.floor(MAX_WINDOW_CELLS / columns));
+    const found: [number, number, string][] = [];
+    for (let top = 0; top < rows; top += stripe) {
+      const window = { top, left: 0, bottom: Math.min(rows, top + stripe) - 1, right: columns - 1 };
+      for (const cell of this.sheet.cells(sheet, window)) {
+        if (cell.input.startsWith('=')) found.push([cell.row, cell.column, cell.input]);
+      }
+    }
+    return found;
   }
 
   /** A pivot table as the definition that makes it again; null when its source sheet is gone. */

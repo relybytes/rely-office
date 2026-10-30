@@ -25,6 +25,7 @@ export {
   shiftSpan,
   transformSheetOperation,
   type SheetMutator,
+  type RestoredBand,
   type SheetOperation,
 } from './sheet-operations.js';
 export {

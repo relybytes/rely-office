@@ -3,6 +3,21 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## Unreleased
+
+### Fixed
+
+- Editing a spreadsheet together, undoing a deletion of rows or columns puts back what it broke
+  elsewhere: the formulas of every sheet, the rules and validations, the defined names and the
+  charts whose references became `#REF!` or shrank, as they were before. What another client
+  changed since is left as they made it (`guarded`), and the restore moves around the rows the
+  undo inserts again (`follows`, `RestoredBand`).
+- A row or column change made before another client renamed its sheet carries the new name, so a
+  formula written after the rename still moves with it.
+- The ranges of a chart added or changed while another client inserted or deleted rows or columns,
+  renamed or removed a sheet move as the workbook moves those of a chart it holds; a series whose
+  cells were deleted is dropped rather than refused.
+
 ## 0.10.0
 
 ### Added
