@@ -10,6 +10,7 @@
 mod anchor;
 mod convert;
 mod edges;
+mod fonts;
 mod format;
 mod html;
 mod look;
@@ -33,6 +34,12 @@ pub use anchor::{
 pub use edges::{
     Border, BorderStyle, Borders, CellLook, TabKind, TabLeader, TabStop, VerticalAlignment,
 };
+pub use fonts::{
+    DocumentFont, DocumentFonts, FaceStyle, FontFace, FontGeneric, FontPitch, MAX_FONT_FILE_BYTES,
+    MAX_FONT_FILES, MAX_FONTS, MAX_TOTAL_FONT_BYTES, SUBSTITUTES, css_font_stack, face_style_of,
+    font_generic, font_substitute, is_font_file, known_font, used_families,
+};
+pub(crate) use fonts::{docx_font_table, odf_font_faces, read_odf_fonts};
 pub use format::{LineSpacingFormat, NamedStyle, ParagraphFormat};
 pub use html::{read_html_tree, write_html};
 pub use look::{LabelSuffix, LineSpacing, ListLabel, PageField, ParagraphLook, RunLook, TableLook};
@@ -79,6 +86,8 @@ pub struct DocumentTree {
     pub comments: Vec<Comment>,
     /// The objects embedded in the text, each shown by the image of its picture.
     pub objects: Vec<EmbeddedObject>,
+    /// The families the document names and the font files it carries.
+    pub fonts: DocumentFonts,
 }
 
 /// A comment on a stretch of the document, or a reply to one.
@@ -566,6 +575,9 @@ pub struct ImportReport {
     pub tracked_deletions: usize,
     /// Runs formatted as hidden text, left out.
     pub hidden_runs: usize,
+    /// Embedded font faces left out: unreadable, not a font, or past the limits.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub fonts_left_out: usize,
 }
 
 /// Read a docx as a tree of blocks for an editor, with its images and an import report.
@@ -719,6 +731,14 @@ pub fn read_document_tree_with(
         &part_of("numbering", "word/numbering.xml"),
         limits,
     )?;
+    let theme = relationships
+        .iter()
+        .find(|relationship| !relationship.external && relationship.is_kind("theme"))
+        .and_then(|relationship| read_text_member(&mut package, &relationship.target, limits).ok())
+        .flatten()
+        .map(|xml| crate::theme::Theme::parse(&xml));
+    let _theme_fonts =
+        theme.map(|theme| look::ThemeFontsScope::enter(theme.major_font, theme.minor_font));
     let styles = styles::Styles::parse(styles.as_deref())?;
     let numbering = numbering::Numbering::parse(numbering.as_deref())?;
     let settings = read_text_member(
@@ -773,6 +793,11 @@ pub fn read_document_tree_with(
             .count(),
         ..ImportReport::default()
     };
+    let font_table = relationships
+        .iter()
+        .find(|relationship| !relationship.external && relationship.is_kind("fontTable"))
+        .map(|relationship| relationship.target.clone());
+    let fonts = fonts::read_docx_fonts(&mut package, font_table.as_deref(), limits, &mut report);
     let mut converter = convert::Converter::new(
         &mut package,
         &relationships,
@@ -838,6 +863,7 @@ pub fn read_document_tree_with(
         sections,
         comments,
         objects,
+        fonts,
     })
 }
 

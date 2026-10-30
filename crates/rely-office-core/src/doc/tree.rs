@@ -583,6 +583,16 @@ impl Converter<'_> {
             notes: self.notes,
             headers_footers: last.headers_footers,
             sections: tree_sections,
+            fonts: crate::DocumentFonts {
+                families: self
+                    .fonts
+                    .iter()
+                    .filter(|name| !name.trim().is_empty())
+                    .take(crate::MAX_FONTS)
+                    .map(|name| crate::known_font(name.trim()))
+                    .collect(),
+                files: Vec::new(),
+            },
         }
     }
 

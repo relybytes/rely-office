@@ -29,6 +29,7 @@ import { ENGLISH_DOCUMENT_EDITOR_LABELS, type DocumentEditorLabels } from './lab
 import { mediaDataUrl, sniffImageType } from './media.js';
 import { DEFAULT_PAGINATION, type PaginationOptions } from './pagination.js';
 import { contentReferences, type ContentReferences } from './references.js';
+import { fontStack, loadDocumentFonts, usedFamilies } from './fonts.js';
 
 /** Twentieths of a point as CSS pixels. */
 const TWIPS_PER_PIXEL = 15;
@@ -203,6 +204,27 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
     },
   });
 
+  const asideFonts = aside.fonts;
+  const asideFontFiles = aside.fontFiles;
+  useEffect(() => {
+    if (!asideFonts?.length || !asideFontFiles?.length) return;
+    let release: (() => void) | null = null;
+    let cancelled = false;
+    void loadDocumentFonts(asideFonts, asideFontFiles).then((loaded) => {
+      if (cancelled) loaded.release();
+      else release = loaded.release;
+    });
+    return () => {
+      cancelled = true;
+      release?.();
+    };
+  }, [asideFonts, asideFontFiles]);
+  const documentFamilies = useMemo(
+    () => [...(asideFonts ?? []).map((font) => font.name), ...usedFamilies(editor?.getJSON() ?? document.content)],
+    // The families in the text are read when the list of the file changes or the editor opens.
+    [asideFonts, editor, document.content],
+  );
+
   const page = aside.page;
   const margins = {
     top: page.marginsTwips[0] / TWIPS_PER_PIXEL,
@@ -310,8 +332,14 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
     [editor, current, document],
   );
 
+  const defaultFont = aside.defaultFont;
+  const fontStyle = {
+    ...(defaultFont?.family ? { '--rely-document-font': fontStack(defaultFont.family) } : {}),
+    ...(defaultFont?.sizeHalfPoints ? { '--rely-document-size': `${defaultFont.sizeHalfPoints / 2}pt` } : {}),
+  } as CSSProperties;
   const pageStyle: CSSProperties | undefined = pageView
     ? ({
+        ...fontStyle,
         '--rely-page-width': `${page.widthTwips / TWIPS_PER_PIXEL}px`,
         '--rely-page-margin-top': `${margins.top}px`,
         '--rely-page-margin-right': `${margins.right}px`,
@@ -319,7 +347,7 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
         '--rely-page-margin-left': `${margins.left}px`,
         '--rely-page-height': `${pageHeight}px`,
       } as CSSProperties)
-    : undefined;
+    : fontStyle;
 
   return (
     <div
@@ -345,6 +373,7 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
           pageView={pageView}
           onPageView={setPageView}
           findRequest={findRequest}
+          documentFamilies={documentFamilies}
         />
       ) : null}
       <div className="rely-document-body">

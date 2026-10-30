@@ -23,6 +23,10 @@ await runtime.initSheets(readFileSync(join(packagePath, 'wasm', 'rely_office_she
 const docx = runtime.writeDocx({ blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'Ciao' }] }] });
 assert.equal(runtime.detectFormat(docx), 'docx');
 assert.equal(runtime.readDocumentTree(docx).blocks[0].content[0].text, 'Ciao');
+assert.match(readFileSync(join(packagePath, 'dist', 'fonts.css'), 'utf8'), /Carlito-Regular\.ttf/);
+assert.ok(readFileSync(join(packagePath, 'dist', 'fonts', 'OFL-Carlito.txt')).length > 0);
+const library = await import(pathToFileURL(join(packagePath, 'dist', 'document', 'fonts.js')).href);
+assert.equal(library.fontStack('Cambria'), "'Cambria', 'Caladea', serif");
 
 const sheet = await runtime.createSheet({ locale: 'it' });
 sheet.setInputs(0, [[0, 0, '2'], [0, 1, '=A1*21']]);

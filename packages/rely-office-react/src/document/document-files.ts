@@ -4,11 +4,20 @@
 //
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
-import type { DocumentBytes, Limits, TreeOptions } from '../model.js';
+import type { DocumentBytes, DocumentTree, DocxInput, Limits, TreeOptions } from '../model.js';
 import { readDocumentTree, writeDocx, writeHtml, writeMarkdown, writeOdt } from '../runtime/documents.js';
 import type { EditorDocument, EditorMappingReport, TreeToEditorOptions } from './editor-document.js';
 import { editorToDocumentTree } from './editor-to-tree.js';
 import { documentTreeToEditor } from './tree-to-editor.js';
+
+/** The fonts of a tree as a writer takes them: families, embedded files and body font. */
+function fontInput(tree: DocumentTree): Pick<DocxInput, 'fonts' | 'fontFiles' | 'defaultFont'> {
+  return {
+    ...(tree.fonts === undefined ? {} : { fonts: tree.fonts }),
+    ...(tree.fontFiles === undefined ? {} : { fontFiles: tree.fontFiles }),
+    ...(tree.defaultFont === undefined ? {} : { defaultFont: tree.defaultFont }),
+  };
+}
 
 /** How a file is opened for the editor. */
 export interface OpenDocumentOptions extends TreeToEditorOptions {
@@ -51,6 +60,7 @@ export function saveDocument(document: EditorDocument): Uint8Array {
     ...(tree.sections === undefined ? {} : { sections: tree.sections }),
     ...(tree.comments === undefined ? {} : { comments: tree.comments }),
     ...(tree.objects === undefined ? {} : { objects: tree.objects }),
+    ...fontInput(tree),
   });
 }
 
@@ -74,6 +84,7 @@ export function saveDocumentAs(
     headersFooters: tree.headersFooters,
     ...(tree.sections === undefined ? {} : { sections: tree.sections }),
     ...(tree.comments === undefined ? {} : { comments: tree.comments }),
+    ...fontInput(tree),
   };
   if (format === 'odt') return writeOdt(input);
   const text = format === 'markdown' ? writeMarkdown(input) : writeHtml(input, title);

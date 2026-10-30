@@ -175,6 +175,7 @@ fn draws_a_frame_for_an_image_typst_cannot_decode() {
                 source: "#set page(width: 20pt, height: 10pt)".to_owned(),
                 files: Vec::new(),
                 truncated: false,
+                fonts: Vec::new(),
             },
             &RenderRequest {
                 pdf: false,
@@ -345,6 +346,7 @@ fn reports_a_source_typst_refuses() {
                 source: "#undefined-function()".to_owned(),
                 files: Vec::new(),
                 truncated: false,
+                fonts: Vec::new(),
             },
             &RenderRequest::default(),
         )
@@ -675,4 +677,76 @@ fn typesets_a_paragraph_between_two_pictures_with_tabs() {
         .render(&bytes, Some("figure.docx"), &thumbnail_request(200))
         .unwrap();
     assert_eq!(rendered.page_count, 1);
+}
+
+#[test]
+fn sets_text_with_the_faces_a_document_embeds() {
+    let carlito = std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fonts/Carlito-Regular.ttf"),
+    )
+    .unwrap();
+    let tree = |embedded: bool| rely_office_core::DocumentTree {
+        blocks: vec![rely_office_core::Block::Paragraph {
+            content: vec![rely_office_core::Inline::Text {
+                text: "Embedded".to_owned(),
+                marks: Vec::new(),
+                look: rely_office_core::RunLook::default(),
+            }],
+            align: None,
+            look: rely_office_core::ParagraphLook::default(),
+        }],
+        layout: rely_office_core::PageLayout {
+            font_family: Some("Carlito".to_owned()),
+            ..rely_office_core::PageLayout::default()
+        },
+        fonts: rely_office_core::DocumentFonts {
+            families: vec![rely_office_core::DocumentFont {
+                name: "Carlito".to_owned(),
+                faces: if embedded {
+                    vec![rely_office_core::FontFace {
+                        style: rely_office_core::FaceStyle::Regular,
+                        file: 0,
+                    }]
+                } else {
+                    Vec::new()
+                },
+                ..rely_office_core::DocumentFont::default()
+            }],
+            files: if embedded {
+                vec![carlito.clone()]
+            } else {
+                Vec::new()
+            },
+        },
+        ..rely_office_core::DocumentTree::default()
+    };
+    let bare = Renderer::new(Vec::new());
+    let request = RenderRequest {
+        pdf: true,
+        ..RenderRequest::default()
+    };
+    let with = bare
+        .render(
+            &rely_office_core::write_docx(&tree(true)).unwrap(),
+            None,
+            &request,
+        )
+        .unwrap();
+    let pdf = with.pdf.unwrap();
+    assert!(pdf.windows(7).any(|window| window == b"Carlito"));
+    let without = bare
+        .render(
+            &rely_office_core::write_docx(&tree(false)).unwrap(),
+            None,
+            &request,
+        )
+        .unwrap();
+    assert!(
+        !without
+            .pdf
+            .unwrap()
+            .windows(7)
+            .any(|window| window == b"Carlito")
+    );
+    assert_eq!(bare.font_count(), 0);
 }

@@ -101,6 +101,9 @@ function readDocumentTree(bytes, limits, options, fileName) {
         bytes: handle.takeObjectBytes(item.index) ?? new Uint8Array(0),
       }));
     }
+    if (tree.fontFiles !== undefined) {
+      tree.fontFiles = tree.fontFiles.map((item) => handle.takeFontFileBytes(item.index) ?? new Uint8Array(0));
+    }
     return tree;
   } finally {
     handle.free();
@@ -202,38 +205,65 @@ function render(bytes, fileName, options) {
 }
 
 function writeDocx(tree) {
-  const { blocks, page, media, notes, headersFooters, sections, comments, objects } = tree ?? {};
+  return withTreeWriter(tree, (writer, json) => writer.write(json), true);
+}
+
+/**
+ * The fonts of a tree with their files added to a writer: a face whose file the writer refuses
+ * (not a font, or past the limits) is dropped, and the others name the files as the writer
+ * numbered them.
+ */
+function addFonts(writer, fonts, fontFiles) {
+  const indexes = (fontFiles ?? []).map((bytes) => writer.addFontFile(toBytes(bytes)));
+  return (fonts ?? []).map((font) => ({
+    ...font,
+    faces: (font.faces ?? [])
+      .filter((face) => indexes[face.file] !== undefined && indexes[face.file] !== null)
+      .map((face) => ({ ...face, file: indexes[face.file] })),
+  }));
+}
+
+/** The tree in a writer with its images and fonts added, for `write` to turn into a file. */
+function withTreeWriter(tree, write, withObjects = false) {
+  const { blocks, page, media, notes, headersFooters, sections, comments, objects, fonts, fontFiles, defaultFont } =
+    tree ?? {};
   const writer = new wasm.DocxWriter();
   try {
     for (const bytes of media ?? []) {
       writer.addMedia(toBytes(bytes));
     }
-    for (const object of objects ?? []) {
-      writer.addObject(object.media, toBytes(object.bytes), object.name ?? 'oleObject.bin', object.program);
+    if (withObjects) {
+      for (const object of objects ?? []) {
+        writer.addObject(object.media, toBytes(object.bytes), object.name ?? 'oleObject.bin', object.program);
+      }
     }
-    return call(() =>
-      writer.write(
-        JSON.stringify({ blocks: blocks ?? [], page, notes, headersFooters, sections, comments }),
-      ),
-    );
+    const json = JSON.stringify({
+      blocks: blocks ?? [],
+      page,
+      notes,
+      headersFooters,
+      sections,
+      comments,
+      fonts: addFonts(writer, fonts, fontFiles),
+      defaultFont,
+    });
+    return call(() => write(writer, json));
   } finally {
     writer.free();
   }
 }
 
-/** The tree in a writer with its images added, for `write` to turn into a file. */
-function withTreeWriter(tree, write) {
-  const { blocks, page, media, notes, headersFooters, sections, comments } = tree ?? {};
-  const writer = new wasm.DocxWriter();
-  try {
-    for (const bytes of media ?? []) {
-      writer.addMedia(toBytes(bytes));
-    }
-    const json = JSON.stringify({ blocks: blocks ?? [], page, notes, headersFooters, sections, comments });
-    return call(() => write(writer, json));
-  } finally {
-    writer.free();
-  }
+/**
+ * A CSS font stack for a family: the family, the bundled family of the same metrics (Carlito for
+ * Calibri, Liberation Sans for Arial), then the generic family.
+ */
+function fontStack(family, generic) {
+  return wasm.fontStack(String(family ?? ''), generic === undefined ? undefined : String(generic));
+}
+
+/** The bundled family that sets a family where it is not installed. */
+function fontSubstitute(family, generic) {
+  return wasm.fontSubstitute(String(family ?? ''), generic === undefined ? undefined : String(generic));
 }
 
 function writeOdt(tree) {
@@ -571,6 +601,8 @@ module.exports = {
   readDocumentTree,
   render,
   writeDocx,
+  fontStack,
+  fontSubstitute,
   writeMarkdown,
   writeHtml,
   writeOdt,

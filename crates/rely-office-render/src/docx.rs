@@ -108,6 +108,7 @@ pub(crate) fn document_source(
     } else {
         &tree.sections
     };
+    let _families = crate::fonts::FamiliesScope::enter(&tree.fonts);
     let layout = &tree.layout;
     let body_size = layout
         .font_size_half_points

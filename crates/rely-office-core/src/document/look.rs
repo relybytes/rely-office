@@ -126,14 +126,44 @@ impl RunLook {
     }
 }
 
-/// The font a theme reference names in the default Office theme, which almost every document
-/// keeps: the theme part itself is not read.
-fn theme_font(reference: &str) -> String {
-    if reference.starts_with("major") {
-        "Cambria".to_owned()
-    } else {
-        "Calibri".to_owned()
+thread_local! {
+    /// The major and minor fonts of the theme of the document being read.
+    static THEME_FONTS: std::cell::RefCell<Option<(String, String)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The theme fonts of the document being read, for the theme references of its runs; they
+/// apply until the scope is dropped.
+pub(crate) struct ThemeFontsScope;
+
+impl ThemeFontsScope {
+    pub(crate) fn enter(major: String, minor: String) -> Self {
+        THEME_FONTS.with(|fonts| *fonts.borrow_mut() = Some((major, minor)));
+        Self
     }
+}
+
+impl Drop for ThemeFontsScope {
+    fn drop(&mut self) {
+        THEME_FONTS.with(|fonts| *fonts.borrow_mut() = None);
+    }
+}
+
+/// The font a theme reference names: the document's theme while it is read, else Word 2007's
+/// default theme, which a document without a theme part keeps.
+fn theme_font(reference: &str) -> String {
+    let major = reference.starts_with("major");
+    THEME_FONTS.with(|fonts| match &*fonts.borrow() {
+        Some((major_font, minor_font)) => {
+            if major {
+                major_font.clone()
+            } else {
+                minor_font.clone()
+            }
+        }
+        None if major => "Cambria".to_owned(),
+        None => "Calibri".to_owned(),
+    })
 }
 
 /// The spacing and indents of a paragraph, and the font its runs inherit.

@@ -176,16 +176,22 @@ pub(crate) fn read_odt_tree(
     }
 
     let comments = converter.threaded_comments();
+    let mut report = converter.report;
+    let roots: Vec<&Element> = std::iter::once(&content)
+        .chain(styles_root.as_ref())
+        .collect();
+    let fonts = crate::document::read_odf_fonts(converter.package, &roots, limits, &mut report);
     Ok(DocumentTree {
         comments,
         blocks,
         media: converter.media,
-        report: converter.report,
+        report,
         layout: last.layout,
         notes: converter.notes,
         headers_footers: last.headers_footers,
         sections,
         objects: converter.objects,
+        fonts,
     })
 }
 

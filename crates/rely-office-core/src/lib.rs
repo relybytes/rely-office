@@ -57,13 +57,16 @@ pub use chart_spec::{
 };
 pub use document::{
     Alignment, Anchor, AnchorAlign, AnchorBase, AnchorPosition, Block, Border, BorderStyle,
-    Borders, CellLook, Comment, DocumentTree, EmbeddedObject, HeadersFooters, ImportReport, Inline,
-    LabelSuffix, LineSpacing, LineSpacingFormat, ListLabel, Mark, Media, NamedStyle, Note,
-    NoteKind, OUTLINE_BANDS, PageField, PageLayout, ParagraphFormat, ParagraphLook, RunLook,
-    Section, TabKind, TabLeader, TabStop, TableCell, TableLook, TableRow, TextFrame,
-    TrackedChanges, TreeOptions, VerticalAlignment, Wrap, WrapOutline, read_document_tree,
-    read_document_tree_named, read_document_tree_with, read_html_tree, read_markdown_tree,
-    sniff_image_type, write_docx, write_html, write_markdown,
+    Borders, CellLook, Comment, DocumentFont, DocumentFonts, DocumentTree, EmbeddedObject,
+    FaceStyle, FontFace, FontGeneric, FontPitch, HeadersFooters, ImportReport, Inline, LabelSuffix,
+    LineSpacing, LineSpacingFormat, ListLabel, MAX_FONT_FILE_BYTES, MAX_FONT_FILES, MAX_FONTS,
+    MAX_TOTAL_FONT_BYTES, Mark, Media, NamedStyle, Note, NoteKind, OUTLINE_BANDS, PageField,
+    PageLayout, ParagraphFormat, ParagraphLook, RunLook, SUBSTITUTES, Section, TabKind, TabLeader,
+    TabStop, TableCell, TableLook, TableRow, TextFrame, TrackedChanges, TreeOptions,
+    VerticalAlignment, Wrap, WrapOutline, css_font_stack, face_style_of, font_generic,
+    font_substitute, is_font_file, known_font, read_document_tree, read_document_tree_named,
+    read_document_tree_with, read_html_tree, read_markdown_tree, sniff_image_type, used_families,
+    write_docx, write_html, write_markdown,
 };
 pub use error::OfficeError;
 pub use format::{DocumentFormat, detect_format};

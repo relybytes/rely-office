@@ -174,6 +174,24 @@ are custom properties set on the component's root class, so a host restyles them
 The words of every toolbar come in English and Italian (`ENGLISH_*_LABELS`, `ITALIAN_*_LABELS`);
 pass any of them to translate the rest.
 
+## Fonts
+
+A document opens in its own body font and size (`defaultFont` of the tree), and every family the
+editor writes is a stack ending with the bundled family of the same metrics and the generic
+family: `fontStack('Calibri')` is `'Calibri', 'Carlito', sans-serif`, so a machine without
+Calibri lays the text out with Calibri's widths. The font picker lists the document's families
+first (those its file lists and those its text uses), and says which bundled face a family the
+browser lacks is shown with. The faces a document embeds are loaded with the FontFace API while
+it is open (`loadDocumentFonts`) and written back on save.
+
+The bundled families are opt-in, with their SIL Open Font License texts in `dist/fonts/`:
+
+```ts
+import '@relybytes/rely-office-react/fonts.css'; // Carlito, Caladea, Liberation Sans, Serif, Mono
+```
+
+Without it a substitute is used only where the machine has it.
+
 ## The runtime alone
 
 `@relybytes/rely-office-react/runtime` exports the WebAssembly calls without the components, for

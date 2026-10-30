@@ -7,6 +7,11 @@
 //! Which font sets a document's text: its own typeface when the renderer holds it, otherwise a
 //! metric-compatible substitute, so lines break where the office suite breaks them.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use rely_office_core::{DocumentFonts, FontGeneric, font_substitute};
+
 pub(crate) const SANS: &str = "Carlito";
 pub(crate) const SERIF: &str = "Caladea";
 pub(crate) const ARIAL: &str = "Liberation Sans";
@@ -21,29 +26,67 @@ pub fn bundled_font_families() -> &'static [&'static str] {
     &[SANS, SERIF, ARIAL, TIMES, MONO]
 }
 
-/// The substitute with the same metrics as `family`, or the nearest in kind.
-fn substitute(family: &str) -> &'static str {
-    let family = family.trim().to_ascii_lowercase();
-    match family.as_str() {
-        "calibri" | "calibri light" | "aptos" | "aptos display" | "candara" | "corbel" => SANS,
-        "cambria" | "cambria math" | "constantia" => SERIF,
-        "arial" | "helvetica" | "arial narrow" | "verdana" | "tahoma" | "segoe ui"
-        | "trebuchet ms" | "liberation sans" | "arimo" | "dejavu sans" => ARIAL,
-        "times new roman" | "times" | "georgia" | "garamond" | "book antiqua" | "palatino"
-        | "palatino linotype" | "liberation serif" | "tinos" | "dejavu serif" => TIMES,
-        "courier new" | "courier" | "consolas" | "lucida console" | "liberation mono"
-        | "cousine" | "dejavu sans mono" => MONO,
-        family if family.contains("mono") || family.contains("code") => MONO,
-        family if family.contains("serif") && !family.contains("sans") => TIMES,
-        _ => SANS,
+thread_local! {
+    /// What the font table of the document being set says of its families: kind and other name.
+    static FAMILIES: RefCell<HashMap<String, (FontGeneric, Option<String>)>> =
+        RefCell::new(HashMap::new());
+}
+
+/// The font table of the document being set, for the families its text names; it applies until
+/// the scope is dropped.
+pub(crate) struct FamiliesScope;
+
+impl FamiliesScope {
+    pub(crate) fn enter(fonts: &DocumentFonts) -> Self {
+        FAMILIES.with(|families| {
+            *families.borrow_mut() = fonts
+                .families
+                .iter()
+                .map(|font| {
+                    (
+                        font.name.trim().to_ascii_lowercase(),
+                        (font.generic, font.alt_name.clone()),
+                    )
+                })
+                .collect();
+        });
+        Self
     }
 }
 
-/// The font list of body text: the document's family, its substitute, then the defaults.
+impl Drop for FamiliesScope {
+    fn drop(&mut self) {
+        FAMILIES.with(|families| families.borrow_mut().clear());
+    }
+}
+
+/// The substitute with the same metrics as `family`, or the nearest of the kind its document
+/// says it is.
+fn substitute(family: &str) -> &'static str {
+    let generic = FAMILIES.with(|families| {
+        families
+            .borrow()
+            .get(&family.trim().to_ascii_lowercase())
+            .map_or(FontGeneric::Auto, |(generic, _)| *generic)
+    });
+    font_substitute(family, generic)
+}
+
+/// The font list of body text: the document's family, the other name its document gives it,
+/// its substitute, then the defaults.
 pub(crate) fn body_fonts(family: Option<&str>) -> Vec<String> {
     let mut fonts = Vec::new();
     if let Some(family) = family.map(str::trim).filter(|family| !family.is_empty()) {
         fonts.push(family.to_owned());
+        let alt = FAMILIES.with(|families| {
+            families
+                .borrow()
+                .get(&family.to_ascii_lowercase())
+                .and_then(|(_, alt)| alt.clone())
+        });
+        if let Some(alt) = alt.filter(|alt| !alt.trim().is_empty()) {
+            fonts.push(alt.trim().to_owned());
+        }
         fonts.push(substitute(family).to_owned());
     }
     for fallback in [SANS, ARIAL] {
@@ -82,5 +125,30 @@ mod tests {
             vec!["Times New Roman", TIMES, SANS, ARIAL]
         );
         assert_eq!(body_fonts(Some("Carlito")), vec![SANS, ARIAL]);
+    }
+
+    #[test]
+    fn follows_the_font_table_of_the_document_being_set() {
+        let fonts = DocumentFonts {
+            families: vec![rely_office_core::DocumentFont {
+                name: "Mystery Book".to_owned(),
+                alt_name: Some("Mystery".to_owned()),
+                generic: FontGeneric::Roman,
+                ..rely_office_core::DocumentFont::default()
+            }],
+            files: Vec::new(),
+        };
+        {
+            let _scope = FamiliesScope::enter(&fonts);
+            assert_eq!(
+                body_fonts(Some("Mystery Book")),
+                vec!["Mystery Book", "Mystery", TIMES, SANS, ARIAL]
+            );
+            assert_eq!(substitute("Aptos"), SANS);
+        }
+        assert_eq!(
+            body_fonts(Some("Mystery Book")),
+            vec!["Mystery Book", SANS, ARIAL]
+        );
     }
 }

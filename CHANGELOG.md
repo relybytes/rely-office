@@ -3,6 +3,25 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## Unreleased
+
+### Added
+
+- The fonts of a document: `fonts`, `fontFiles` and `defaultFont` on the document tree, read
+  from a docx font table with its embedded faces de-obfuscated, from the font face declarations
+  of an odt with the files under `Fonts/`, and from the font names of a doc; theme fonts
+  (`minorHAnsi`, `majorHAnsi`) resolved against the document's own theme. `fontsLeftOut` in the
+  report counts the faces left out.
+- The writers list the families a tree uses: a docx font table with every face embedded again
+  and the body font in the document defaults, odt font face declarations with the faces under
+  `Fonts/`, and HTML font stacks with small embedded faces inline.
+- The renderer sets text with the faces a document embeds, substitutes more Office families
+  (Aptos, Segoe UI, Georgia, Book Antiqua, Consolas...) and falls back by a family's kind.
+- `fontStack`, `fontSubstitute` and `fontGeneric` in both packages; in the editor, the document's
+  fonts at the head of the font picker with the bundled face a family is shown with, the
+  document's body font as the editor's, embedded faces loaded with the FontFace API, and the
+  bundled OFL fonts with their licences in `@relybytes/rely-office-react/fonts.css`, opt-in.
+
 ## 0.8.0
 
 ### Added
