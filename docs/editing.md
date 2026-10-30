@@ -253,7 +253,7 @@ does not rename (`XOR`, `INT`) keeps its name.
   `Riepilogo!A1` and `'Vendite 2026'!B2:C9`, sheet names case-insensitive.
 - **Operators** with Excel's precedence: comparison `= <> < <= > >=`, `&`, `+ -`, `* /`, `^` (left
   to right, so `2^3^2` is 64), unary signs (tighter than `^`, so `-2^2` is 4), postfix `%`.
-- **Functions** (489, listed by `FUNCTION_NAMES` and, in the locale's names, by `function_names`
+- **Functions** (502, listed by `FUNCTION_NAMES` and, in the locale's names, by `function_names`
   for an editor's suggestions), in families: mathematics (`SUM`, `SUMPRODUCT`, `ROUND`, `MROUND`, `TRUNC`,
   `FLOOR`, `GCD`, `LOG`, the trigonometric functions, ...), statistics (`AVERAGE`, `MEDIAN`,
   `MODE.SNGL`, `STDEV.S`, `VAR.P`, `LARGE`, `SMALL`, `RANK.EQ`, `MAXIFS`, `MINIFS`, ...), logic (`IF`,
@@ -295,12 +295,23 @@ does not rename (`XOR`, `INT`) keeps its name.
   its format code in Italian notation too. The `_xlfn.` prefix files store before the newer
   functions is read and written back, and `_xlfn._xlws.` before `FILTER` and `SORT`.
 
-  Left out on purpose, and `#NAME?` like any unknown name: what calls outside the workbook
-  (`CALL`, `REGISTER.ID`, `RTD`, `WEBSERVICE`, `STOCKHISTORY`, `IMAGE`, `TRANSLATE`, `FILTERXML`,
-  `INFO`), what a pivot table answers (`GETPIVOTDATA`, `GROUPBY`, `PIVOTBY`), the Japanese and Thai
-  text functions (`PHONETIC`, `BAHTTEXT`), `EUROCONVERT`, the exponential smoothing of
-  `FORECAST.ETS` and its three companions, and the odd-period bond functions (`ODDFPRICE`,
-  `ODDFYIELD`, `ODDLPRICE`, `ODDLYIELD`).
+  Also: the exponential smoothing of `FORECAST.ETS`, `FORECAST.ETS.CONFINT`,
+  `FORECAST.ETS.SEASONALITY` and `FORECAST.ETS.STAT` (additive trend and season, the season found
+  from the autocorrelation once the trend is removed, the constants fitted to the history, so a
+  noisy series forecasts close to Excel without matching it to the digit); the odd-period bonds
+  `ODDFPRICE`, `ODDFYIELD`, `ODDLPRICE` and `ODDLYIELD` on Excel's quasi-coupon periods (on basis
+  1 LibreOffice reads a year fraction instead and differs); `EUROCONVERT` at the fixed rates of the
+  twenty currencies the euro replaced, with triangulation; `BAHTTEXT`, where 101 reads "et" as
+  Thai does and LibreOffice does not; `PHONETIC`, which gives the text itself since no reading
+  guide is kept; `INFO` for `numfile`, `recalc`, `release`, `system` and `osversion`, `#N/A` for
+  the keys that would name the host's folders or memory; and `FILTERXML` over the abbreviated
+  XPath (paths, `//`, `*`, `@name`, `text()`, `node()`, `.`, `..`, `[n]`, `[last()]`), on XML with
+  no document type and no entity but the predefined ones.
+
+  Never called: what reaches outside the workbook (`CALL`, `REGISTER.ID`, `RTD`, `WEBSERVICE`,
+  `STOCKHISTORY`, `IMAGE`, `TRANSLATE`). A file's formula holding one keeps the value the file
+  stored and is written back as it was, through edits that move its cell; typed anew it is
+  `#VALUE!`. What a pivot table answers (`GETPIVOTDATA`, `GROUPBY`, `PIVOTBY`) is not computed.
 - **Arrays**: a formula whose result is an array spills it into the cells below and to the right
   of its own (`=FILTER(A2:C9;B2:B9="Nord")`). `FILTER`, `SORT`, `SORTBY`, `UNIQUE`, `SEQUENCE`,
   `TRANSPOSE`, `TAKE`, `DROP`, `CHOOSEROWS`, `CHOOSECOLS`, `VSTACK`, `HSTACK`, `TOCOL`, `TOROW`,

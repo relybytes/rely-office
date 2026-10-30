@@ -253,9 +253,12 @@ SOFFICE=soffice node scripts/corpus.mjs                 # the corpus comparison
 - EMF+ drawings are drawn from the plain EMF records beside them, so what only EMF+ holds
   (antialiased gradients, GDI+ text effects) is lost.
 - A ppt's or a doc's shape takes the adjust values it sets for about sixty shape types, each
-  mapping checked against the preset's defaults; the bent, curved, circular and U-turn arrows,
+  mapping checked against the preset's defaults. The bent, curved, circular and U-turn arrows,
   the left-up and left-right-up arrows, the quad arrow callout, the elliptical ribbons and the
-  action buttons are drawn with the preset's defaults. LibreOffice writes the shapes it
+  action buttons have no preset that draws them the same, so they are drawn from their own
+  geometry, taken from LibreOffice's tables (`office_art/legacy_shapes.rs`), with the adjust
+  values they set: arcs, elliptical quadrants, the shaded faces of the buttons and their picture
+  kept square in a frame that is not, checked against LibreOffice. LibreOffice writes the shapes it
   exports to ppt from `DrawingML` as free forms with guide constants cut to sixteen bits, so those
   outlines come out wrong; LibreOffice cannot draw them back either.
 - A preview draws the slides, not their speaker notes, transitions or animations, which the slide

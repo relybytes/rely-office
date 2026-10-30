@@ -135,8 +135,6 @@ autosave, and where an inserted image goes, all through the components' props.
 
 ## Next
 
-- The adjust values of the bent, curved, circular and U-turn arrows, the quad arrow callout, the
-  elliptical ribbons and the action buttons of ppt and doc.
 - A real Word 6 or 95 sample in the tests, beside the synthetic ones.
 - A larger corpus with documents made by Word and pptx and odp pages, and the corpus figure as a
   CI gate once it is stable.

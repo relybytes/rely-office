@@ -6,7 +6,18 @@
 
 use super::*;
 use crate::geometry::{PathCommand, PathPoint};
-use crate::ppt::test_ppt::array;
+
+/// An `IMsoArray` of elements of `size` bytes.
+fn array(size: u16, elements: &[Vec<u8>]) -> Vec<u8> {
+    let count = u16::try_from(elements.len()).unwrap();
+    let mut bytes = count.to_le_bytes().to_vec();
+    bytes.extend_from_slice(&count.to_le_bytes());
+    bytes.extend_from_slice(&size.to_le_bytes());
+    for element in elements {
+        bytes.extend_from_slice(element);
+    }
+    bytes
+}
 
 fn short_points(points: &[(i16, i16)]) -> Vec<u8> {
     let elements: Vec<Vec<u8>> = points
@@ -83,8 +94,8 @@ fn joins_vertices_with_lines_when_there_are_no_segments() {
 
 #[test]
 fn evaluates_the_guides_a_vertex_names() {
-    let mut adjust = [0; 10];
-    adjust[0] = 300;
+    let mut adjust = [0.0; 10];
+    adjust[0] = 300.0;
     let mut freeform = Freeform {
         bounds: [0, 0, 1_000, 500],
         adjust,
@@ -124,7 +135,7 @@ fn evaluates_the_guides_a_vertex_names() {
         guide(1, 1, 1, 0),
     ];
     freeform.read_guides(&array(8, &guides));
-    let values = freeform.guide_values();
+    let values = freeform.guide_values((1.0, 1.0));
     assert_eq!(values[0], 1_300.0);
     assert!((values[1] - 1.3).abs() < 1e-9);
     assert_eq!(values[2], 300.0);
@@ -184,7 +195,7 @@ fn reads_only_the_arrays_it_understands() {
     freeform.read_vertices(&array(3, &[vec![1, 2, 3]]));
     assert_eq!(freeform.vertices, Vec::new());
     freeform.read_guides(&array(4, &[vec![1, 2, 3, 4]]));
-    assert_eq!(freeform.guides, Vec::<[u16; 4]>::new());
+    assert_eq!(freeform.guides, Vec::<Guide>::new());
     assert_eq!(coordinate(-5, false), Coordinate::Number(-5));
     assert_eq!(coordinate(-32_765, false), Coordinate::Number(-32_765));
     assert_eq!(
@@ -192,4 +203,123 @@ fn reads_only_the_arrays_it_understands() {
         Coordinate::Number(-5),
         "a negative number is no guide"
     );
+}
+
+fn table_freeform(vertices: &[(i64, i64)], segments: &[u16]) -> Freeform {
+    Freeform {
+        vertices: vertices
+            .iter()
+            .map(|(x, y)| (Coordinate::Number(*x), Coordinate::Number(*y)))
+            .collect(),
+        segments: segments.to_vec(),
+        ..Freeform::default()
+    }
+}
+
+fn last(paths: &[ShapePath]) -> (i64, i64) {
+    *ends(paths).last().unwrap()
+}
+
+#[test]
+fn draws_arcs_quadrants_and_quadratic_curves() {
+    // A counter-clockwise arc over the top half of a circle, from its right to its left.
+    let arc = table_freeform(
+        &[(0, 0), (21_600, 21_600), (21_600, 10_800), (0, 10_800)],
+        &[0xA404, 0x8000],
+    );
+    let paths = arc.paths(216, 216).unwrap();
+    assert_eq!(ends(&paths)[0], (216, 108));
+    assert_eq!(last(&paths), (0, 108));
+    let top = ends(&paths).iter().map(|(_, y)| *y).min().unwrap();
+    assert!(top <= 1, "{top}");
+    // Clockwise the same ends go under.
+    let below = table_freeform(
+        &[(0, 0), (21_600, 21_600), (21_600, 10_800), (0, 10_800)],
+        &[0xA604, 0x8000],
+    );
+    let lowest = ends(&below.paths(216, 216).unwrap())
+        .iter()
+        .map(|(_, y)| *y)
+        .max()
+        .unwrap();
+    assert!(lowest >= 215, "{lowest}");
+    // A rectangle written from its far corner on one axis turns it round.
+    let turned = table_freeform(
+        &[(21_600, 0), (0, 21_600), (21_600, 10_800), (0, 10_800)],
+        &[0xA404, 0x8000],
+    );
+    let turned = turned.paths(216, 216).unwrap();
+    assert_eq!(ends(&turned)[0], (0, 108));
+    // Quadrants alternate across and down: a rounded corner and its way back.
+    let quadrant = table_freeform(
+        &[(0, 21_600), (21_600, 0), (0, 21_600)],
+        &[0x4000, 0xA702, 0x8000],
+    );
+    let paths = quadrant.paths(100, 100).unwrap();
+    assert_eq!(last(&paths), (0, 100));
+    assert!(matches!(paths[0].commands[1], PathCommand::CubicTo(..)));
+    let curve = table_freeform(
+        &[(0, 0), (10_800, 21_600), (21_600, 0)],
+        &[0x4000, 0xA902, 0x8000],
+    );
+    assert_eq!(last(&curve.paths(100, 100).unwrap()), (100, 0));
+}
+
+#[test]
+fn draws_an_angle_ellipse_and_leaves_unfilled_and_unlined_paths() {
+    let mut ellipse = table_freeform(
+        &[(10_800, 10_800), (10_800, 10_800), (0, 90 * 65_536)],
+        &[0xA203, 0xAA00, 0x8000, 0x4000, 0x0001, 0xAB00, 0x8000],
+    );
+    ellipse.vertices.extend([
+        (Coordinate::Number(0), Coordinate::Number(0)),
+        (Coordinate::Number(21_600), Coordinate::Number(0)),
+    ]);
+    let paths = ellipse.paths(216, 216).unwrap();
+    assert_eq!(paths.len(), 2);
+    // From the right a quarter turn counter-clockwise reaches the top.
+    assert_eq!(ends(&paths)[0], (216, 108));
+    assert_eq!(last(&paths[..1]), (108, 0));
+    assert!(!paths[0].filled && paths[0].stroked);
+    assert!(paths[1].filled && !paths[1].stroked);
+}
+
+#[test]
+fn reads_libreoffice_angles_in_degrees_and_guides_written_later() {
+    let freeform = Freeform {
+        degrees: true,
+        guides: vec![
+            Guide {
+                operation: 0x6000,
+                parameters: [0x0401, 0x0147, 0],
+            },
+            Guide {
+                operation: 0x4009,
+                parameters: [100, 0x0148, 0],
+            },
+            Guide {
+                operation: 0x000E,
+                parameters: [10, 30, 5],
+            },
+            Guide {
+                operation: 0x2000,
+                parameters: [0x0402, 0, 0],
+            },
+        ],
+        adjust: [1.0, 90.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        ..Freeform::default()
+    };
+    let values = freeform.guide_values((1.0, 1.0));
+    assert!((values[0] - 101.0).abs() < 1e-9, "{values:?}");
+    assert!((values[1] - 100.0).abs() < 1e-9);
+    assert!((values[2] - 35.0).abs() < 1e-9);
+    assert!((values[3] - 35.0).abs() < 1e-9);
+    let looping = Freeform {
+        guides: vec![Guide {
+            operation: 0x2000,
+            parameters: [0x0400, 0, 0],
+        }],
+        ..Freeform::default()
+    };
+    assert_eq!(looping.guide_values((1.0, 1.0)), vec![0.0]);
 }

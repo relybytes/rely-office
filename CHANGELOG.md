@@ -3,6 +3,22 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## Unreleased
+
+### Added
+
+- `FORECAST.ETS`, `FORECAST.ETS.CONFINT`, `FORECAST.ETS.SEASONALITY` and `FORECAST.ETS.STAT`,
+  `ODDFPRICE`, `ODDFYIELD`, `ODDLPRICE`, `ODDLYIELD`, `EUROCONVERT`, `BAHTTEXT`, `PHONETIC`, `INFO`
+  (its safe keys) and `FILTERXML`, with their Italian names: 502 functions.
+- A formula that calls outside the workbook (`WEBSERVICE`, `STOCKHISTORY`, `IMAGE`, `TRANSLATE`,
+  `RTD`, `CALL`, `REGISTER.ID`) keeps the value its file stored instead of `#NAME?`, and is
+  written back with its `_xlfn.` prefix; it is never called.
+- The bent, curved, circular and U-turn arrows, the left-up and left-right-up arrows, the quad
+  arrow callout, the elliptical ribbons and the action buttons of a ppt or a doc are drawn from
+  their own geometry with the adjust values they set, as PowerPoint and LibreOffice draw them.
+- A free-form shape of a ppt draws its arcs, elliptical quadrants, angle ellipses and quadratic
+  curves, and leaves unfilled or unlined the paths its file says.
+
 ## 0.8.0
 
 ### Added

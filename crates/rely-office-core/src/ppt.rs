@@ -7,7 +7,6 @@
 //! The text of a `PowerPoint` 97-2003 presentation ([MS-PPT]): the `TextCharsAtom` and
 //! `TextBytesAtom` records of the `PowerPoint Document` stream, in stream order.
 
-mod freeform;
 mod persist;
 mod slides;
 #[cfg(test)]
