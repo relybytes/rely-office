@@ -484,6 +484,23 @@ columns (`Total Sum of Importo` for each of several values) end the columns, eac
 `row_grand_totals` and `column_grand_totals`. Labels are ordered numbers first, then text ignoring
 case, logical values, errors and blanks, and the captions are English or Italian (`locale`).
 
+Several values lay along the columns, a column per value under each column label, or along the
+rows (`values_axis`, `PivotValuesAxis`), Excel's `Σ Values` placed among the row fields at
+`values_position` (0 for the outermost, after the last when `None`). Along the rows each group of
+the fields above `Σ Values` gets a row per value, `Sum of Importo`, `Count of Importo`, and one
+column of numbers under each column label; in the outline and tabular forms `Σ Values` takes a
+column of its own headed `Values`. A group over a field below `Σ Values` totals each value on a
+row of its own below the group, `Nord Sum of Importo` (where else its total would be its own row,
+which cannot hold several values), and the grand total is a row per value, `Total Sum of Importo`.
+A group with nothing but the values below it has no total: its value rows are its totals. With one
+value the axis makes no difference. On the columns the values are always the innermost level;
+`values_position` is kept there for the file, not drawn.
+
+A cell shows a value's function over the records that fall in it, and stays **empty** when none
+does, or when every value those records hold for the field is blank, whatever the function, as
+Excel draws it: a group whose amounts are all blank shows an empty cell, not 0. `GETPIVOTDATA`
+gives the same empty value for it.
+
 `add_pivot_table`, `set_pivot_table` and `remove_pivot_table` make, change and remove a table,
 its cells written and cleared with it; `refresh_pivot_table` and `refresh_pivot_tables` compute
 again from the source, as a refresh in Excel does: the cells keep what the last refresh wrote,
@@ -497,14 +514,18 @@ An xlsx writes a table as a pivot cache definition, its source and the items of 
 field, without records and marked to refresh on load, and a pivot table definition, its location,
 fields, hidden items, page fields and data fields, and its form: `compact`, `outline` and
 `compactData` on the definition, `compact`, `outline`, `subtotalTop` and `defaultSubtotal` on each
-placed field, and `fillDownLabels` in the field's `x14` extension for repeated labels. Excel
+placed field, `fillDownLabels` in the field's `x14` extension for repeated labels, and the values'
+axis: the field `-2` among `rowFields` (or last among `colFields`), `dataOnRows` and
+`dataPosition`. Excel
 rebuilds the cache when it opens the file and LibreOffice reads the table as it is. Reading an xlsx
 takes each pivot table whose source is a range of the workbook into the model, its form from the
 first row field (else the first column field), and carries any other (a source that is a named
 table or another workbook) unchanged, as before. An ods writes and reads the tables as
 `table:data-pilot-tables`, each field named by its header, with `table:data-pilot-layout-info`
 (`tabular-layout`, `outline-subtotals-top`, `outline-subtotals-bottom`), automatic
-`table:data-pilot-subtotals` and `calcext:repeat-item-labels`. An ods has no compact form: a
+`table:data-pilot-subtotals`, `calcext:repeat-item-labels`, and the data layout field
+(`table:is-data-layout-field`) among the row fields, where it sits, or last among the column
+fields. An ods has no compact form: a
 compact table is written, and read back, in outline form, and a tabular table reads back with its
 subtotals at the top, where it draws them below all the same.
 

@@ -244,7 +244,19 @@ sheet.addPivotTable(0, {
   subtotals: 'bottom', // or 'top', the default, or 'none'
   repeatLabels: true,
 });
+
+sheet.addPivotTable(0, {
+  sourceSheet: 0,
+  source: { top: 0, left: 0, bottom: 120, right: 3 },
+  anchor: { row: 0, column: 12 },
+  rows: [{ field: 0 }],
+  values: [{ field: 3, function: 'sum' }, { field: 3, function: 'count' }],
+  valuesAxis: 'rows', // Excel's Σ Values among the row fields; 'columns' is the default
+  valuesPosition: 0, // the outermost; after the last row field when left out
+});
 ```
+
+A cell whose records hold only blanks for its field stays empty, as in Excel.
 
 `save()` writes an xlsx, `saveOds()` an ods, its pivot tables as data pilot tables, and
 `saveCsv(sheet, separator?)` one sheet as csv, by default with the separator of the csv it was

@@ -422,6 +422,41 @@ describe('SheetGrid', () => {
     expect(cell('B1').className).not.toContain('rely-sheet-commented');
   });
 
+  test('the pivot panel lays several values along the rows', () => {
+    sheet.setInputs(0, [
+      [0, 0, 'Regione'],
+      [0, 1, 'Importo'],
+      [0, 2, 'Costo'],
+      [1, 0, 'Nord'],
+      [1, 1, '10'],
+      [1, 2, '1'],
+      [2, 0, 'Sud'],
+      [2, 1, '5'],
+      [2, 2, '2'],
+      [3, 0, 'Nord'],
+      [3, 1, '2'],
+      [3, 2, '3'],
+    ]);
+    const { cell } = mount();
+    fireEvent.mouseDown(cell('A1'));
+    fireEvent.mouseDown(cell('C4'), { shiftKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Pivot tables' }));
+    const panel = screen.getByRole('complementary', { name: 'Pivot tables' });
+    fireEvent.change(within(panel).getByRole('combobox', { name: 'Place Regione' }), { target: { value: 'rows' } });
+    fireEvent.change(within(panel).getByRole('combobox', { name: 'Place Importo' }), { target: { value: 'values' } });
+    expect(within(panel).queryByRole('combobox', { name: 'Values' })).toBeNull();
+    fireEvent.change(within(panel).getByRole('combobox', { name: 'Place Costo' }), { target: { value: 'values' } });
+    fireEvent.change(within(panel).getByRole('combobox', { name: 'Values' }), { target: { value: 'rows' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Create pivot table' }));
+
+    expect(sheet.pivotTables(0)[0]).toMatchObject({ valuesAxis: 'rows', valuesPosition: null });
+    expect(cell('E2').textContent).toBe('Nord');
+    expect(cell('F3').textContent).toBe('12');
+    expect(cell('F4').textContent).toBe('4');
+    expect(cell('F8').textContent).toBe('17');
+    expect(cell('F9').textContent).toBe('6');
+  });
+
   test('the pivot panel makes a table of the selection, refreshes it and removes it', () => {
     sheet.setInputs(0, [
       [0, 0, 'Regione'],

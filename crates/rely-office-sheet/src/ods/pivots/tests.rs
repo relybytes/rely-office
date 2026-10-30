@@ -9,7 +9,7 @@ use rely_office_core::Limits;
 use super::*;
 use crate::ods::write_ods;
 use crate::pivots::tests::{by_region, sales};
-use crate::pivots::{PivotLayout, PivotSubtotals, PivotValue};
+use crate::pivots::{PivotLayout, PivotSubtotals, PivotValue, PivotValuesAxis};
 use crate::xlsx::read_spreadsheet;
 
 #[test]
@@ -105,6 +105,7 @@ fn a_table_whose_fields_are_missing_is_left_out() {
             orientation: "row".to_owned(),
             ..PendingField::default()
         }],
+        data_layout: None,
     };
     place_data_pilots(&mut workbook, vec![pending], Locale::English);
     assert_eq!(workbook.sheets()[0].pivot_tables().len(), 0);
@@ -121,6 +122,7 @@ fn a_table_whose_fields_are_missing_is_left_out() {
             selected_page: Some("Nord".to_owned()),
             ..PendingField::default()
         }],
+        data_layout: None,
     };
     place_data_pilots(&mut workbook, vec![selected], Locale::English);
     let table = &workbook.sheets()[0].pivot_tables()[0];
@@ -187,4 +189,52 @@ fn the_form_and_the_subtotals_survive_an_ods() {
             "{layout:?} {subtotals:?}"
         );
     }
+}
+
+#[test]
+fn the_values_along_the_rows_survive_an_ods() {
+    for position in [None, Some(0), Some(1)] {
+        let mut workbook = sales();
+        let mut table = by_region("F1");
+        table.layout = PivotLayout::Outline;
+        table.rows.push(PivotField {
+            field: 1,
+            hidden: Vec::new(),
+        });
+        table.values.push(PivotValue {
+            field: 3,
+            function: PivotFunction::Count,
+            name: None,
+        });
+        table.values_axis = PivotValuesAxis::Rows;
+        table.values_position = position;
+        workbook.add_pivot_table(0, table).unwrap();
+        let written = workbook.sheets()[0].pivot_tables()[0].clone();
+        let bytes = write_ods(&workbook).unwrap();
+        let read =
+            read_spreadsheet(&bytes, Some("a.ods"), &Limits::default(), Locale::English).unwrap();
+        let table = &read.sheets()[0].pivot_tables()[0];
+        assert_eq!(table.values_axis, PivotValuesAxis::Rows, "{position:?}");
+        assert_eq!(table.values_position, position);
+        assert_eq!(table.rows, written.rows);
+        assert_eq!(table.area(), written.area());
+    }
+}
+
+#[test]
+fn several_values_across_stay_across_in_an_ods() {
+    let mut workbook = sales();
+    let mut table = by_region("F1");
+    table.values.push(PivotValue {
+        field: 3,
+        function: PivotFunction::Count,
+        name: None,
+    });
+    workbook.add_pivot_table(0, table).unwrap();
+    let bytes = write_ods(&workbook).unwrap();
+    let read =
+        read_spreadsheet(&bytes, Some("a.ods"), &Limits::default(), Locale::English).unwrap();
+    let table = &read.sheets()[0].pivot_tables()[0];
+    assert_eq!(table.values_axis, PivotValuesAxis::Columns);
+    assert_eq!(table.values_position, None);
 }

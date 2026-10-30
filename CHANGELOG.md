@@ -5,6 +5,21 @@ below 1.0, a minor version may change the API.
 
 ## Unreleased
 
+### Added
+
+- Several values of a pivot table along the rows, Excel's `Σ Values` among the row fields:
+  `values_axis` (`PivotValuesAxis`) and `values_position` on a `PivotTable`, `valuesAxis` and
+  `valuesPosition` from JavaScript and in collaboration, and a "Values" control in the grid's pivot
+  panel. Each group gets a row per value, a group over a field below the values a total row per
+  value, and the grand total a row per value. They are written to and read from xlsx (the field
+  `-2` among `rowFields`, `dataOnRows`, `dataPosition`) and ods (the data layout field among the
+  row fields).
+
+### Changed
+
+- A cell of a pivot table whose records hold only blanks for its field is empty, as in Excel,
+  rather than 0 or a count of 0; `GETPIVOTDATA` gives the same empty value.
+
 ### Fixed
 
 - Editing a spreadsheet together, undoing a deletion of rows or columns puts back what it broke
@@ -22,8 +37,7 @@ below 1.0, a minor version may change the API.
   its size has its top-left corner follow its cell, one placed on the sheet stays; one whose cells
   are all deleted moves to the edge of the deletion with its size.
 - Editing a spreadsheet together, a chart added or moved while another client inserted or deleted
-  rows or columns lands where the workbook moves a chart it holds, and the ranges it plots move,
-  rename and break the way the workbook's own chart formulas do.
+  rows or columns lands where the workbook moves a chart it holds.
 
 ## 0.10.0
 

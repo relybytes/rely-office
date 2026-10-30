@@ -118,7 +118,7 @@ impl Evaluator<'_> {
         if matching.is_empty() {
             return Err(ErrorKind::Ref);
         }
-        Ok(value.function.summarise(&matching))
+        Ok(value.function.summarise_cell(&matching))
     }
 
     /// The functions a `GROUPBY` or `PIVOTBY` summarises with: one, or a row or column of them

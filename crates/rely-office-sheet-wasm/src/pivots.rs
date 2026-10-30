@@ -9,7 +9,7 @@
 
 use rely_office_sheet::{
     CellRange, CellRef, EditError, PivotField, PivotFunction, PivotLayout, PivotSubtotals,
-    PivotTable, PivotValue, Value, item_label,
+    PivotTable, PivotValue, PivotValuesAxis, Value, item_label,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -106,6 +106,12 @@ struct PivotInput {
     subtotals: Option<String>,
     #[serde(default)]
     repeat_labels: bool,
+    /// `columns` or `rows`, the axis several values lay along; columns when left out.
+    #[serde(default)]
+    values_axis: Option<String>,
+    /// Where `Σ Values` sits among the fields of its axis; after the last when left out.
+    #[serde(default)]
+    values_position: Option<usize>,
 }
 
 fn shown() -> bool {
@@ -133,6 +139,8 @@ struct PivotSummary {
     layout: &'static str,
     subtotals: &'static str,
     repeat_labels: bool,
+    values_axis: &'static str,
+    values_position: Option<usize>,
     fields: Vec<String>,
 }
 
@@ -223,6 +231,8 @@ impl SheetDocument {
                     layout: table.layout.name(),
                     subtotals: table.subtotals.name(),
                     repeat_labels: table.repeat_labels,
+                    values_axis: table.values_axis.name(),
+                    values_position: table.values_position,
                     fields,
                 }
             })
@@ -341,6 +351,12 @@ impl SheetDocument {
             })?;
         }
         table.repeat_labels = input.repeat_labels;
+        if let Some(axis) = input.values_axis {
+            table.values_axis = PivotValuesAxis::parse(&axis).ok_or_else(|| {
+                Failure::new("INVALID_INPUT", format!("unknown pivot values axis {axis}"))
+            })?;
+        }
+        table.values_position = input.values_position;
         Ok(table)
     }
 }

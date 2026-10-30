@@ -142,6 +142,9 @@ export interface SheetGridLabels {
   pivotSubtotalsBottom: string;
   pivotSubtotalsNone: string;
   pivotRepeatLabels: string;
+  pivotValuesAxis: string;
+  pivotValuesInColumns: string;
+  pivotValuesInRows: string;
   pivotRefresh: string;
   pivotRefreshAll: string;
   pivotNew: string;
@@ -342,6 +345,9 @@ export const ENGLISH_SHEET_GRID_LABELS: SheetGridLabels = {
   pivotSubtotalsBottom: 'At the bottom of each group',
   pivotSubtotalsNone: 'None',
   pivotRepeatLabels: 'Repeat item labels',
+  pivotValuesAxis: 'Values',
+  pivotValuesInColumns: 'In columns',
+  pivotValuesInRows: 'In rows',
   pivotRefresh: 'Refresh',
   pivotRefreshAll: 'Refresh all',
   pivotNew: 'New from the selection',
@@ -542,6 +548,9 @@ export const ITALIAN_SHEET_GRID_LABELS: SheetGridLabels = {
   pivotSubtotalsBottom: 'In fondo a ogni gruppo',
   pivotSubtotalsNone: 'Nessuno',
   pivotRepeatLabels: 'Ripeti le etichette',
+  pivotValuesAxis: 'Valori',
+  pivotValuesInColumns: 'In colonna',
+  pivotValuesInRows: 'In riga',
   pivotRefresh: 'Aggiorna',
   pivotRefreshAll: 'Aggiorna tutte',
   pivotNew: 'Nuova dalla selezione',

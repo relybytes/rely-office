@@ -19,7 +19,8 @@ use super::{escape, quoted_sheet};
 use crate::address::{CellRef, column_index, column_name};
 use crate::model::Workbook;
 use crate::pivots::{
-    PivotField, PivotFunction, PivotLayout, PivotSubtotals, PivotTable, PivotValue, item_label,
+    PivotField, PivotFunction, PivotLayout, PivotSubtotals, PivotTable, PivotValue,
+    PivotValuesAxis, item_label,
 };
 use crate::value::Locale;
 
@@ -60,12 +61,21 @@ pub(super) fn data_pilot_tables_xml(workbook: &Workbook) -> String {
                     .map(item_label)
                     .unwrap_or_default()
             };
+            let on_rows = table.values.len() > 1 && table.values_axis == PivotValuesAxis::Rows;
+            let data_row = on_rows.then(|| {
+                table
+                    .values_position
+                    .map_or(table.rows.len(), |position| position.min(table.rows.len()))
+            });
             for (fields, orientation) in [
                 (&table.rows, "row"),
                 (&table.columns, "column"),
                 (&table.filters, "page"),
             ] {
-                for field in fields {
+                for (place, field) in fields.iter().enumerate() {
+                    if orientation == "row" && data_row == Some(place) {
+                        xml.push_str(DATA_LAYOUT_ROW);
+                    }
                     let mut attributes = String::new();
                     if orientation == "page" {
                         let shown: Vec<String> = records
@@ -126,6 +136,9 @@ pub(super) fn data_pilot_tables_xml(workbook: &Workbook) -> String {
                     }
                     xml.push_str("</table:data-pilot-level></table:data-pilot-field>");
                 }
+                if orientation == "row" && data_row == Some(fields.len()) {
+                    xml.push_str(DATA_LAYOUT_ROW);
+                }
             }
             for value in &table.values {
                 let _ = write!(
@@ -135,7 +148,7 @@ pub(super) fn data_pilot_tables_xml(workbook: &Workbook) -> String {
                     value.function.odf()
                 );
             }
-            if table.values.len() > 1 {
+            if table.values.len() > 1 && !on_rows {
                 xml.push_str(r#"<table:data-pilot-field table:source-field-name="" table:is-data-layout-field="true" table:orientation="column"/>"#);
             }
             xml.push_str("</table:data-pilot-table>");
@@ -147,6 +160,9 @@ pub(super) fn data_pilot_tables_xml(workbook: &Workbook) -> String {
         format!("<table:data-pilot-tables>{xml}</table:data-pilot-tables>")
     }
 }
+
+/// `Σ Values` as a row field of a data pilot table.
+const DATA_LAYOUT_ROW: &str = r#"<table:data-pilot-field table:source-field-name="" table:is-data-layout-field="true" table:orientation="row"/>"#;
 
 /// A range as `OpenDocument` writes it: `'Vendite'.A1:'Vendite'.C10`.
 fn range_address(sheet: &str, range: CellRange) -> String {
@@ -222,6 +238,8 @@ pub(crate) struct PendingPivot {
     source: CellRange,
     grand_total: String,
     fields: Vec<PendingField>,
+    /// The orientation of `Σ Values` and how many fields of that orientation come before it.
+    data_layout: Option<(String, usize)>,
 }
 
 fn attribute(element: &BytesStart<'_>, name: &str) -> Option<String> {
@@ -309,6 +327,13 @@ pub(crate) fn read_data_pilots(bytes: &[u8], limits: &Limits) -> Vec<PendingPivo
                         attribute(element, "is-data-layout-field").as_deref(),
                         Some("true")
                     ) {
+                        let orientation = attribute(element, "orientation").unwrap_or_default();
+                        let before = pivot
+                            .fields
+                            .iter()
+                            .filter(|field| field.orientation == orientation)
+                            .count();
+                        pivot.data_layout = Some((orientation, before));
                         continue;
                     }
                     pivot.fields.push(PendingField {
@@ -461,6 +486,16 @@ pub(crate) fn place_data_pilots(
         }
         if !complete {
             continue;
+        }
+        match pivot.data_layout {
+            Some((orientation, before)) if orientation == "row" => {
+                table.values_axis = PivotValuesAxis::Rows;
+                table.values_position = (before < table.rows.len()).then_some(before);
+            }
+            Some((orientation, before)) if orientation == "column" => {
+                table.values_position = (before < table.columns.len()).then_some(before);
+            }
+            _ => {}
         }
         table.area = Some(pivot.target);
         table.snapshot = source;

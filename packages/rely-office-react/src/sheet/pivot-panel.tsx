@@ -11,6 +11,7 @@ import type {
   PivotLayout,
   PivotSourceField,
   PivotSubtotals,
+  PivotValuesAxis,
   PivotTableDefinition,
   SheetPivotTable,
 } from '../model.js';
@@ -54,6 +55,11 @@ export const PIVOT_SUBTOTALS: [PivotSubtotals, keyof SheetGridLabels][] = [
   ['none', 'pivotSubtotalsNone'],
 ];
 
+export const PIVOT_VALUES_AXES: [PivotValuesAxis, keyof SheetGridLabels][] = [
+  ['columns', 'pivotValuesInColumns'],
+  ['rows', 'pivotValuesInRows'],
+];
+
 /** What the panel's form holds: the role and function of each source field, and the form. */
 export interface PivotDraft {
   roles: PivotRole[];
@@ -63,6 +69,8 @@ export interface PivotDraft {
   layout: PivotLayout;
   subtotals: PivotSubtotals;
   repeatLabels: boolean;
+  /** The axis several values lay along. */
+  valuesAxis: PivotValuesAxis;
   anchor: string;
 }
 
@@ -87,6 +95,7 @@ export function pivotDraft(fields: number, table?: SheetPivotTable, anchor = '')
     layout: table?.layout ?? 'compact',
     subtotals: table?.subtotals ?? 'top',
     repeatLabels: table?.repeatLabels ?? false,
+    valuesAxis: table?.valuesAxis ?? 'columns',
     anchor: table ? cellName(table.anchor) : anchor,
   };
 }
@@ -131,6 +140,9 @@ export function pivotDefinition(
     layout: draft.layout,
     subtotals: draft.subtotals,
     repeatLabels: draft.repeatLabels,
+    valuesAxis: draft.valuesAxis,
+    // A table keeps where its values sit while they stay on the same axis.
+    valuesPosition: table && table.valuesAxis === draft.valuesAxis ? table.valuesPosition : null,
   };
 }
 
@@ -320,6 +332,21 @@ export function PivotPanel({
               ))}
             </select>
           </label>
+          {draft.roles.filter((role) => role === 'values').length > 1 ? (
+            <label>
+              <span>{words.pivotValuesAxis}</span>
+              <select
+                value={draft.valuesAxis}
+                onChange={(event) => setDraft({ ...draft, valuesAxis: event.target.value as PivotValuesAxis })}
+              >
+                {PIVOT_VALUES_AXES.map(([axis, label]) => (
+                  <option key={axis} value={axis}>
+                    {words[label] as string}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {draft.layout === 'compact' ? null : (
             <label className="rely-sheet-panel-check">
               <input
