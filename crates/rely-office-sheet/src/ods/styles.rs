@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use rely_office_core::{
-    Border, BorderStyle, CellStyle, DifferentialLook, HorizontalAlignment, VerticalAlignment,
+    Border, BorderStyle, CellStyle, DifferentialLook, HorizontalAlignment, INDENT_POINTS,
+    VerticalAlignment,
 };
 
 use super::escape;
@@ -129,10 +130,11 @@ fn cell_style_xml(
     if !cell.is_empty() {
         let _ = write!(xml, "<style:table-cell-properties{cell}/>");
     }
+    let mut paragraph = String::new();
     if let Some(horizontal) = style.horizontal {
         let _ = write!(
-            xml,
-            r#"<style:paragraph-properties fo:text-align="{}"/>"#,
+            paragraph,
+            r#" fo:text-align="{}""#,
             match horizontal {
                 HorizontalAlignment::Left => "start",
                 HorizontalAlignment::Center => "center",
@@ -140,6 +142,16 @@ fn cell_style_xml(
                 HorizontalAlignment::Justify => "justify",
             }
         );
+    }
+    if style.indent > 0 {
+        let _ = write!(
+            paragraph,
+            r#" fo:margin-left="{}pt""#,
+            f64::from(style.indent) * INDENT_POINTS
+        );
+    }
+    if !paragraph.is_empty() {
+        let _ = write!(xml, "<style:paragraph-properties{paragraph}/>");
     }
     let font = &style.font;
     let mut text = String::new();

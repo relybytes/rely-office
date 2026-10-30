@@ -8,7 +8,9 @@ import { useState, type ReactElement } from 'react';
 import type {
   CellWindow,
   PivotFunction,
+  PivotLayout,
   PivotSourceField,
+  PivotSubtotals,
   PivotTableDefinition,
   SheetPivotTable,
 } from '../model.js';
@@ -40,12 +42,27 @@ export const PIVOT_FUNCTIONS: [PivotFunction, keyof SheetGridLabels][] = [
   ['varP', 'pivotVarP'],
 ];
 
-/** What the panel's form holds: the role and function of each source field. */
+export const PIVOT_LAYOUTS: [PivotLayout, keyof SheetGridLabels][] = [
+  ['compact', 'pivotLayoutCompact'],
+  ['outline', 'pivotLayoutOutline'],
+  ['tabular', 'pivotLayoutTabular'],
+];
+
+export const PIVOT_SUBTOTALS: [PivotSubtotals, keyof SheetGridLabels][] = [
+  ['top', 'pivotSubtotalsTop'],
+  ['bottom', 'pivotSubtotalsBottom'],
+  ['none', 'pivotSubtotalsNone'],
+];
+
+/** What the panel's form holds: the role and function of each source field, and the form. */
 export interface PivotDraft {
   roles: PivotRole[];
   functions: PivotFunction[];
   rowGrandTotals: boolean;
   columnGrandTotals: boolean;
+  layout: PivotLayout;
+  subtotals: PivotSubtotals;
+  repeatLabels: boolean;
   anchor: string;
 }
 
@@ -67,6 +84,9 @@ export function pivotDraft(fields: number, table?: SheetPivotTable, anchor = '')
     functions,
     rowGrandTotals: table?.rowGrandTotals ?? true,
     columnGrandTotals: table?.columnGrandTotals ?? true,
+    layout: table?.layout ?? 'compact',
+    subtotals: table?.subtotals ?? 'top',
+    repeatLabels: table?.repeatLabels ?? false,
     anchor: table ? cellName(table.anchor) : anchor,
   };
 }
@@ -108,6 +128,9 @@ export function pivotDefinition(
     values: draft.roles.flatMap((role, field) => (role === 'values' ? [{ field, function: draft.functions[field] }] : [])),
     rowGrandTotals: draft.rowGrandTotals,
     columnGrandTotals: draft.columnGrandTotals,
+    layout: draft.layout,
+    subtotals: draft.subtotals,
+    repeatLabels: draft.repeatLabels,
   };
 }
 
@@ -274,6 +297,39 @@ export function PivotPanel({
               ) : null}
             </div>
           ))}
+          <label>
+            <span>{words.pivotLayout}</span>
+            <select value={draft.layout} onChange={(event) => setDraft({ ...draft, layout: event.target.value as PivotLayout })}>
+              {PIVOT_LAYOUTS.map(([layout, label]) => (
+                <option key={layout} value={layout}>
+                  {words[label] as string}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>{words.pivotSubtotals}</span>
+            <select
+              value={draft.subtotals}
+              onChange={(event) => setDraft({ ...draft, subtotals: event.target.value as PivotSubtotals })}
+            >
+              {PIVOT_SUBTOTALS.map(([subtotals, label]) => (
+                <option key={subtotals} value={subtotals}>
+                  {words[label] as string}
+                </option>
+              ))}
+            </select>
+          </label>
+          {draft.layout === 'compact' ? null : (
+            <label className="rely-sheet-panel-check">
+              <input
+                type="checkbox"
+                checked={draft.repeatLabels}
+                onChange={(event) => setDraft({ ...draft, repeatLabels: event.target.checked })}
+              />
+              <span>{words.pivotRepeatLabels}</span>
+            </label>
+          )}
           <label className="rely-sheet-panel-check">
             <input
               type="checkbox"

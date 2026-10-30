@@ -692,6 +692,13 @@ fn cell_markup(
         }
         _ => content,
     };
+    let content = match style.map_or(0, |style| style.indent) {
+        0 => content,
+        indent => format!(
+            "pad(left: {}, {content})",
+            points(f64::from(indent) * rely_office_core::INDENT_POINTS)
+        ),
+    };
     let content = match marker {
         Some(marker) => format!("[#{marker}#{{{content}}}]"),
         None => content,
@@ -1185,6 +1192,7 @@ mod tests {
                 horizontal: Some(HorizontalAlignment::Center),
                 vertical: Some(VerticalAlignment::Center),
                 wrap: true,
+                indent: 0,
                 number_format: None,
             },
             CellStyle {

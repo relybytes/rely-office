@@ -184,6 +184,7 @@ fn reads_the_layout_of_each_sheet() {
             horizontal: Some(HorizontalAlignment::Center),
             vertical: Some(VerticalAlignment::Center),
             wrap: true,
+            indent: 0,
             number_format: Some("#,##0.00 \"€\"".to_owned()),
         }
     );

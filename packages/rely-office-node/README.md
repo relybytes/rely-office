@@ -240,6 +240,9 @@ sheet.addPivotTable(0, {
   rows: [{ field: 0 }],
   columns: [{ field: 2 }],
   values: [{ field: 3, function: 'sum' }],
+  layout: 'tabular', // or 'compact', the default, or 'outline'
+  subtotals: 'bottom', // or 'top', the default, or 'none'
+  repeatLabels: true,
 });
 ```
 

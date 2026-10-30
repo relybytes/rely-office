@@ -198,6 +198,7 @@ function cellCss(cell: SheetCell | undefined, style: CellStyle | undefined, look
     css.borderBottom = borderCss(style.borders.bottom);
     css.borderLeft = borderCss(style.borders.left);
     if (style.wrap) css.whiteSpace = 'normal';
+    if (style.indent) css.paddingLeft = `calc(${style.indent * 10}pt + 4px)`;
     if (style.vertical) css.alignItems = style.vertical === 'top' ? 'flex-start' : style.vertical === 'center' ? 'center' : 'flex-end';
   }
   const horizontal =

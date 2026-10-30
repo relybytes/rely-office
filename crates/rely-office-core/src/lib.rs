@@ -98,7 +98,9 @@ pub use sheet_rules::{
     DifferentialLook, ErrorStyle, ScalePoint, ScaleValue, TextOperator, ValidationKind,
     parse_ranges, range_reference,
 };
-pub use sheet_styles::{CellBorders, CellFont, CellStyle, HorizontalAlignment};
+pub use sheet_styles::{
+    CellBorders, CellFont, CellStyle, HorizontalAlignment, INDENT_POINTS, MAX_INDENT,
+};
 pub use slides::{
     Animation, AnimationClass, AnimationTrigger, Bullet, Frame, Gradient, GradientKind,
     GradientStop, Paint, Presentation, ShapeContent, ShapeGeometry, ShapeLine, Slide,

@@ -637,7 +637,24 @@ impl LayoutReader<'_, '_, '_> {
                 .filter(Border::is_visible)
         };
         let (font, flags) = self.styles.text_look(Scope::Body, "table-cell", Some(name));
-        let horizontal = properties("paragraph-properties")
+        let paragraph = properties("paragraph-properties");
+        let indent = paragraph
+            .iter()
+            .find_map(|properties| properties.attribute(FO, "margin-left"))
+            .and_then(points)
+            .map_or(0, |points| {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "clamped to the indent's range first"
+                )]
+                let steps = (points / crate::sheet_styles::INDENT_POINTS)
+                    .round()
+                    .clamp(0.0, f64::from(crate::sheet_styles::MAX_INDENT))
+                    as u8;
+                steps
+            });
+        let horizontal = paragraph
             .into_iter()
             .find_map(|properties| properties.attribute(FO, "text-align"))
             .and_then(|align| match align {
@@ -674,6 +691,7 @@ impl LayoutReader<'_, '_, '_> {
             horizontal,
             vertical: cell_attribute(STYLE, "vertical-align").and_then(vertical_alignment),
             wrap: cell_attribute(FO, "wrap-option") == Some("wrap"),
+            indent,
             number_format,
         };
         (style != CellStyle::default()).then_some(style)

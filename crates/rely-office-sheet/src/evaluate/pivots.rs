@@ -7,7 +7,8 @@
 //! The functions that summarise like a pivot table: `GETPIVOTDATA` reads a value of a pivot
 //! table of the workbook, `GROUPBY` and `PIVOTBY` summarise arrays by their rows and columns.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use super::lambda::Closure;
@@ -17,12 +18,6 @@ use crate::pivots::{Key, item_label};
 use crate::value::{ErrorKind, Value};
 
 type Grid = Vec<Vec<Value>>;
-
-/// What summarises a group: a function of the grid by its name, `SUM`, or a `LAMBDA`.
-enum Summary {
-    Named(String),
-    Lambda(Rc<Closure>),
-}
 
 /// The caption of the rows that total the groups.
 const TOTAL: &str = "Total";
@@ -126,45 +121,89 @@ impl Evaluator<'_> {
         Ok(value.function.summarise(&matching))
     }
 
-    /// The function a `GROUPBY` or `PIVOTBY` summarises with.
-    fn summary(&self, sheet: usize, argument: Option<&Expr>) -> Result<Summary, ErrorKind> {
+    /// The functions a `GROUPBY` or `PIVOTBY` summarises with: one, or a row or column of them
+    /// stacked with `HSTACK` or `VSTACK` or written as an array.
+    fn summaries(&self, sheet: usize, argument: Option<&Expr>) -> Result<Vec<Summary>, ErrorKind> {
         let argument = argument.ok_or(ErrorKind::Value)?;
+        let parts: Vec<&Expr> = match argument {
+            Expr::Call(name, parts)
+                if matches!(canonical_function_name(name).as_str(), "HSTACK" | "VSTACK") =>
+            {
+                parts.iter().collect()
+            }
+            Expr::Array(rows) => rows.iter().flatten().collect(),
+            single => vec![single],
+        };
+        if parts.is_empty() || parts.len() > MAX_SUMMARIES {
+            return Err(ErrorKind::Value);
+        }
+        parts
+            .into_iter()
+            .map(|part| self.summary(sheet, part))
+            .collect()
+    }
+
+    /// One function: a function of the grid by its name, `SUM`, or a `LAMBDA`.
+    fn summary(&self, sheet: usize, argument: &Expr) -> Result<Summary, ErrorKind> {
         if let Expr::Name(name) = argument {
             let english = canonical_function_name(name);
             if FUNCTION_NAMES.binary_search(&english.as_str()).is_ok() {
-                return Ok(Summary::Named(english));
+                let pair = english == "PERCENTOF";
+                return Ok(Summary {
+                    caption: english.clone(),
+                    kind: SummaryKind::Named(english),
+                    pair,
+                });
             }
         }
         match self.evaluate(sheet, argument) {
-            Operand::Lambda(closure) => Ok(Summary::Lambda(closure)),
+            Operand::Lambda(closure) => Ok(Summary {
+                caption: "LAMBDA".to_owned(),
+                pair: closure.arity() >= 2,
+                kind: SummaryKind::Lambda(closure),
+            }),
             Operand::Value(Value::Error(kind)) => Err(kind),
             _ => Err(ErrorKind::Value),
         }
     }
 
-    /// A group's values summarised into one value.
-    fn summarise(&self, sheet: usize, summary: &Summary, values: &[Value]) -> Value {
-        let operand = match summary {
-            Summary::Named(name) => {
-                let mut column: Vec<Vec<Expr>> = values
-                    .iter()
-                    .filter_map(|value| match value {
-                        Value::Number(number) => Some(Expr::Number(*number)),
-                        Value::Text(text) => Some(Expr::Text(text.clone())),
-                        Value::Bool(flag) => Some(Expr::Bool(*flag)),
-                        Value::Error(kind) => Some(Expr::Error(*kind)),
-                        Value::Empty => None,
-                    })
-                    .map(|cell| vec![cell])
-                    .collect();
-                if column.is_empty() {
-                    column.push(vec![Expr::Text(String::new())]);
-                }
-                self.evaluate(sheet, &Expr::Call(name.clone(), vec![Expr::Array(column)]))
+    /// A group's values summarised into one value; a function of two arguments, `PERCENTOF`,
+    /// also gets the values the group is measured against.
+    fn summarise(&self, sheet: usize, summary: &Summary, values: &[Value], all: &[Value]) -> Value {
+        let column = |values: &[Value]| -> Vec<Vec<Expr>> {
+            let mut column: Vec<Vec<Expr>> = values
+                .iter()
+                .filter_map(|value| match value {
+                    Value::Number(number) => Some(Expr::Number(*number)),
+                    Value::Text(text) => Some(Expr::Text(text.clone())),
+                    Value::Bool(flag) => Some(Expr::Bool(*flag)),
+                    Value::Error(kind) => Some(Expr::Error(*kind)),
+                    Value::Empty => None,
+                })
+                .map(|cell| vec![cell])
+                .collect();
+            if column.is_empty() {
+                column.push(vec![Expr::Text(String::new())]);
             }
-            Summary::Lambda(closure) => {
-                let column: Grid = values.iter().map(|value| vec![value.clone()]).collect();
-                self.invoke(sheet, closure, vec![Some(Operand::Array(column))])
+            column
+        };
+        let operand = match &summary.kind {
+            SummaryKind::Named(name) => {
+                let mut arguments = vec![Expr::Array(column(values))];
+                if summary.pair {
+                    arguments.push(Expr::Array(column(all)));
+                }
+                self.evaluate(sheet, &Expr::Call(name.clone(), arguments))
+            }
+            SummaryKind::Lambda(closure) => {
+                let grid = |values: &[Value]| -> Grid {
+                    values.iter().map(|value| vec![value.clone()]).collect()
+                };
+                let mut arguments = vec![Some(Operand::Array(grid(values)))];
+                if summary.pair {
+                    arguments.push(Some(Operand::Array(grid(all))));
+                }
+                self.invoke(sheet, closure, arguments)
             }
         };
         match operand {
@@ -176,27 +215,40 @@ impl Evaluator<'_> {
 
     /// An optional whole number argument, `default` when left out or empty.
     fn whole(&self, sheet: usize, argument: Option<&Expr>, default: i64) -> Result<i64, ErrorKind> {
-        match argument {
-            None => Ok(default),
-            Some(Expr::Text(text)) if text.is_empty() => Ok(default),
-            Some(argument) => {
-                let value = match self.evaluate(sheet, argument) {
-                    Operand::Array(grid) => {
-                        grid.into_iter().flatten().next().unwrap_or(Value::Empty)
-                    }
-                    _ => self.scalar(sheet, argument),
-                };
+        Ok(self
+            .wholes(sheet, argument)?
+            .first()
+            .copied()
+            .unwrap_or(default))
+    }
+
+    /// An optional argument of whole numbers, one or an array of them; none when left out.
+    fn wholes(&self, sheet: usize, argument: Option<&Expr>) -> Result<Vec<i64>, ErrorKind> {
+        let Some(argument) = argument else {
+            return Ok(Vec::new());
+        };
+        if matches!(argument, Expr::Text(text) if text.is_empty()) {
+            return Ok(Vec::new());
+        }
+        let values: Vec<Value> = match self.evaluate(sheet, argument) {
+            Operand::Array(grid) => grid.into_iter().flatten().collect(),
+            _ => vec![self.scalar(sheet, argument)],
+        };
+        values
+            .into_iter()
+            .filter(|value| !matches!(value, Value::Empty))
+            .map(|value| {
                 let number = value.as_number()?;
-                if !number.is_finite() {
+                if !number.is_finite() || number.abs() > 1e9 {
                     return Err(ErrorKind::Value);
                 }
                 #[expect(
                     clippy::cast_possible_truncation,
-                    reason = "the number is checked finite"
+                    reason = "the number is checked finite and small"
                 )]
                 Ok(number.trunc() as i64)
-            }
-        }
+            })
+            .collect()
     }
 
     /// The rows a filter argument keeps; all when it is left out.
@@ -226,8 +278,42 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The summaries of a set of records, one per function and value column, function by
+    /// function, each measured against `all`.
+    fn summarised(
+        &self,
+        sheet: usize,
+        data: &Data<'_>,
+        records: &[usize],
+        all: &[usize],
+    ) -> Vec<Value> {
+        let cells = |rows: &[usize], column: usize| -> Vec<Value> {
+            rows.iter()
+                .map(|row| {
+                    data.values[*row]
+                        .get(column)
+                        .cloned()
+                        .unwrap_or(Value::Empty)
+                })
+                .collect()
+        };
+        let mut line = Vec::with_capacity(data.summaries.len() * data.width);
+        for summary in data.summaries {
+            for column in 0..data.width {
+                let all = if summary.pair {
+                    cells(all, column)
+                } else {
+                    Vec::new()
+                };
+                line.push(self.summarise(sheet, summary, &cells(records, column), &all));
+            }
+        }
+        line
+    }
+
     /// `GROUPBY(row_fields, values, function, [field_headers], [total_depth], [sort_order],
-    /// [filter_array])`: a row per distinct key of the row fields, each value column summarised.
+    /// [filter_array], [field_relationship])`: a row per distinct key of the row fields, each
+    /// value column summarised, with totals and subtotals above or below.
     fn group_by(&self, sheet: usize, arguments: &[Expr]) -> Result<Grid, ErrorKind> {
         if !(3..=8).contains(&arguments.len()) {
             return Err(ErrorKind::Value);
@@ -237,101 +323,59 @@ impl Evaluator<'_> {
         if keys.len() != values.len() || keys.is_empty() {
             return Err(ErrorKind::Value);
         }
-        let summary = self.summary(sheet, arguments.get(2))?;
+        let summaries = self.summaries(sheet, arguments.get(2))?;
         let headers = self.whole(sheet, arguments.get(3), -1)?;
         let depth = self.whole(sheet, arguments.get(4), 1)?;
-        let sort = self.whole(sheet, arguments.get(5), 1)?;
+        let sort = self.wholes(sheet, arguments.get(5))?;
         let kept = self.kept_rows(sheet, arguments.get(6), keys.len())?;
-        let (has_header, show_header) = header_mode(headers, &values)?;
-        let start = usize::from(has_header);
-        let key_width = keys[0].len();
-        let value_width = values[0].len();
-        let mut groups: BTreeMap<Vec<Key>, Vec<usize>> = BTreeMap::new();
-        for row in start..keys.len() {
-            if kept[row] {
-                groups
-                    .entry(keys[row].iter().cloned().map(Key).collect())
-                    .or_default()
-                    .push(row);
-            }
-        }
-        let summarise_rows = |rows: &[usize]| -> Vec<Value> {
-            (0..value_width)
-                .map(|column| {
-                    let cells: Vec<Value> = rows
-                        .iter()
-                        .map(|row| values[*row].get(column).cloned().unwrap_or(Value::Empty))
-                        .collect();
-                    self.summarise(sheet, &summary, &cells)
-                })
-                .collect()
+        let table = match self.whole(sheet, arguments.get(7), 0)? {
+            0 => false,
+            1 => true,
+            _ => return Err(ErrorKind::Value),
         };
-        let mut lines: Vec<(Vec<Key>, Vec<Value>, Vec<usize>)> = groups
-            .into_iter()
-            .map(|(key, rows)| {
-                let summarised = summarise_rows(&rows);
-                (key, summarised, rows)
-            })
+        let (has_header, show_header) = header_mode(headers, &values)?;
+        let key_width = keys[0].len();
+        let data = Data {
+            values: &values,
+            width: values[0].len(),
+            summaries: &summaries,
+        };
+        let outputs = data.width * summaries.len();
+        check_depth(depth, key_width, table)?;
+        check_sort(&sort, key_width + outputs)?;
+        let records: Vec<usize> = (usize::from(has_header)..keys.len())
+            .filter(|row| kept[*row])
             .collect();
-        sort_lines(&mut lines, sort, key_width)?;
+        let mut tree = Node::build(&keys, &records);
+        tree.measure(&|node| self.summarised(sheet, &data, &node.records, &records));
+        let mut leaf_of = vec![0; keys.len()];
+        tree.prepare(table, &sort, key_width, &mut leaf_of);
         let mut grid: Grid = Vec::new();
         if show_header {
-            let mut header: Vec<Value> = if has_header {
+            let mut line: Vec<Value> = if has_header {
                 keys[0].clone()
             } else {
                 (1..=key_width)
                     .map(|index| Value::Text(format!("Row Field {index}")))
                     .collect()
             };
-            if has_header {
-                header.extend(values[0].iter().cloned());
-            } else {
-                header.extend((1..=value_width).map(|index| Value::Text(format!("Value {index}"))));
-            }
-            grid.push(header);
+            line.extend(captions(&values, has_header, &summaries));
+            grid.push(line);
         }
-        let all: Vec<usize> = lines
-            .iter()
-            .flat_map(|(_, _, rows)| rows.iter().copied())
-            .collect();
-        let total = |label: &str, rows: &[usize], prefix: Vec<Value>| {
-            let mut line = prefix;
-            if line.is_empty() {
-                line.push(Value::Text(label.to_owned()));
-            }
+        let mut rows = Vec::new();
+        tree.lines(depth, &mut rows);
+        for (label, node) in rows {
+            let mut line = label;
             line.resize(key_width, Value::Empty);
-            line.extend(summarise_rows(rows));
-            line
-        };
-        if depth < 0 {
-            grid.push(total(TOTAL, &all, Vec::new()));
-        }
-        let subtotals = depth.abs() >= 2 && key_width >= 2 && sort.unsigned_abs() == 1;
-        let mut index = 0;
-        while index < lines.len() {
-            let first = lines[index].0[0].clone();
-            let mut block = Vec::new();
-            while index < lines.len() && (!subtotals || lines[index].0[0] == first) {
-                let (key, summarised, rows) = &lines[index];
-                let mut line: Vec<Value> = key.iter().map(|key| key.0.clone()).collect();
-                line.extend(summarised.iter().cloned());
-                grid.push(line);
-                block.extend(rows.iter().copied());
-                index += 1;
-            }
-            if subtotals {
-                grid.push(total(TOTAL, &block, vec![first.0.clone()]));
-            }
-        }
-        if depth > 0 {
-            grid.push(total(TOTAL, &all, Vec::new()));
+            line.extend(node.measures.iter().cloned());
+            grid.push(line);
         }
         checked(grid)
     }
 
     /// `PIVOTBY(row_fields, col_fields, values, function, [field_headers], [row_total_depth],
-    /// [row_sort_order], [col_total_depth], [col_sort_order], [filter_array])`: the values
-    /// summarised by the keys of the row fields down and of the column fields across.
+    /// [row_sort_order], [col_total_depth], [col_sort_order], [filter_array], [relative_to])`:
+    /// the values summarised by the keys of the row fields down and of the column fields across.
     #[expect(
         clippy::too_many_lines,
         reason = "the header rows, the rows and the totals are laid out in one pass"
@@ -347,128 +391,385 @@ impl Evaluator<'_> {
         if row_keys.len() != rows || column_keys.len() != rows || rows == 0 {
             return Err(ErrorKind::Value);
         }
-        let summary = self.summary(sheet, arguments.get(3))?;
+        let summaries = self.summaries(sheet, arguments.get(3))?;
         let headers = self.whole(sheet, arguments.get(4), -1)?;
         let row_depth = self.whole(sheet, arguments.get(5), 1)?;
-        let row_sort = self.whole(sheet, arguments.get(6), 1)?;
+        let row_sort = self.wholes(sheet, arguments.get(6))?;
         let column_depth = self.whole(sheet, arguments.get(7), 1)?;
-        let column_sort = self.whole(sheet, arguments.get(8), 1)?;
+        let column_sort = self.wholes(sheet, arguments.get(8))?;
         let kept = self.kept_rows(sheet, arguments.get(9), rows)?;
+        let relative = self.whole(sheet, arguments.get(10), 0)?;
+        if !(0..=4).contains(&relative) {
+            return Err(ErrorKind::Value);
+        }
         let (has_header, show_header) = header_mode(headers, &values)?;
-        let start = usize::from(has_header);
         let row_width = row_keys[0].len();
-        let value_width = values[0].len();
-        let records: Vec<usize> = (start..rows).filter(|row| kept[*row]).collect();
-        let key =
-            |grid: &Grid, row: usize| -> Vec<Key> { grid[row].iter().cloned().map(Key).collect() };
-        let mut row_groups: Vec<Vec<Key>> = records
-            .iter()
-            .map(|row| key(&row_keys, *row))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
+        let column_width = column_keys[0].len();
+        let data = Data {
+            values: &values,
+            width: values[0].len(),
+            summaries: &summaries,
+        };
+        let outputs = data.width * summaries.len();
+        check_depth(row_depth, row_width, false)?;
+        check_depth(column_depth, column_width, false)?;
+        check_sort(&row_sort, row_width + outputs)?;
+        check_sort(&column_sort, column_width + outputs)?;
+        let records: Vec<usize> = (usize::from(has_header)..rows)
+            .filter(|row| kept[*row])
             .collect();
-        let mut column_groups: Vec<Vec<Key>> = records
-            .iter()
-            .map(|row| key(&column_keys, *row))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        if row_sort < 0 {
-            row_groups.reverse();
-        }
-        if column_sort < 0 {
-            column_groups.reverse();
-        }
-        if row_groups.len() * (column_groups.len() + 1) * value_width > MAX_SPILL_CELLS {
+        let measure = |node: &Node| self.summarised(sheet, &data, &node.records, &records);
+        let mut row_tree = Node::build(&row_keys, &records);
+        row_tree.measure(&measure);
+        let mut column_tree = Node::build(&column_keys, &records);
+        column_tree.measure(&measure);
+        let mut scratch = vec![0; rows];
+        row_tree.prepare(false, &row_sort, row_width, &mut scratch);
+        // Each record's column leaf, and each column line as a run of leaves.
+        let mut leaf_of = vec![usize::MAX; rows];
+        column_tree.prepare(false, &column_sort, column_width, &mut leaf_of);
+        let leaves = column_tree.leaves.end.max(1);
+        let mut row_lines = Vec::new();
+        row_tree.lines(row_depth, &mut row_lines);
+        let mut column_lines = Vec::new();
+        column_tree.lines(column_depth, &mut column_lines);
+        if row_lines.len() * (column_lines.len() * outputs + row_width) > MAX_SPILL_CELLS {
             return Err(ErrorKind::Num);
         }
-        let cell = |rows: &[usize], column: usize| -> Value {
-            let cells: Vec<Value> = rows
-                .iter()
-                .map(|row| values[*row].get(column).cloned().unwrap_or(Value::Empty))
-                .collect();
-            self.summarise(sheet, &summary, &cells)
-        };
-        let column_width = column_keys[0].len();
         let mut grid: Grid = Vec::new();
         for level in 0..column_width {
             let mut line = vec![Value::Empty; row_width];
-            for group in &column_groups {
-                line.extend(std::iter::repeat_n(group[level].0.clone(), value_width));
-            }
-            if column_depth != 0 {
-                line.extend(std::iter::repeat_n(
-                    if level == 0 {
-                        Value::Text(TOTAL.to_owned())
-                    } else {
-                        Value::Empty
-                    },
-                    value_width,
-                ));
+            for (label, _) in &column_lines {
+                let shown = label.get(level).cloned().unwrap_or(Value::Empty);
+                line.extend(std::iter::repeat_n(shown, outputs));
             }
             grid.push(line);
         }
-        if show_header || value_width > 1 {
+        if show_header || outputs > 1 {
             let mut line: Vec<Value> = if has_header {
                 row_keys[0].clone()
             } else {
                 vec![Value::Empty; row_width]
             };
-            let captions: Vec<Value> = if has_header {
-                values[0].clone()
-            } else {
-                (1..=value_width)
-                    .map(|index| Value::Text(format!("Value {index}")))
-                    .collect()
-            };
-            for _ in 0..column_groups.len() + usize::from(column_depth != 0) {
+            let captions = captions(&values, has_header, &summaries);
+            for _ in &column_lines {
                 line.extend(captions.iter().cloned());
             }
             grid.push(line);
         }
-        let line_of = |label: Vec<Value>, rows: &[usize]| -> Vec<Value> {
-            let mut line = label;
-            for group in &column_groups {
-                let inside: Vec<usize> = rows
-                    .iter()
-                    .copied()
-                    .filter(|row| key(&column_keys, *row) == *group)
-                    .collect();
-                for column in 0..value_width {
-                    line.push(if inside.is_empty() {
-                        Value::Empty
-                    } else {
-                        cell(&inside, column)
-                    });
+        let buckets_of = |records: &[usize]| -> Vec<Vec<usize>> {
+            let mut buckets = vec![Vec::new(); leaves];
+            for row in records {
+                if let Some(bucket) = buckets.get_mut(leaf_of[*row]) {
+                    bucket.push(*row);
                 }
             }
-            if column_depth != 0 {
-                for column in 0..value_width {
-                    line.push(cell(rows, column));
-                }
-            }
-            line
+            buckets
         };
-        let mut total_label = vec![Value::Text(TOTAL.to_owned())];
-        total_label.resize(row_width, Value::Empty);
-        if row_depth < 0 {
-            grid.push(line_of(total_label.clone(), &records));
-        }
-        for group in &row_groups {
-            let inside: Vec<usize> = records
-                .iter()
-                .copied()
-                .filter(|row| key(&row_keys, *row) == *group)
-                .collect();
-            grid.push(line_of(
-                group.iter().map(|key| key.0.clone()).collect(),
-                &inside,
-            ));
-        }
-        if row_depth > 0 {
-            grid.push(line_of(total_label, &records));
+        let gather = |buckets: &[Vec<usize>], range: std::ops::Range<usize>| -> Vec<usize> {
+            let mut rows: Vec<usize> = buckets[range].iter().flatten().copied().collect();
+            rows.sort_unstable();
+            rows
+        };
+        let all_buckets = buckets_of(&records);
+        let parent_rows = relative == 4 && summaries.iter().any(|summary| summary.pair);
+        let mut parent_cache: Option<(Vec<Key>, Vec<Vec<usize>>)> = None;
+        for (label, row) in &row_lines {
+            let mut line = label.clone();
+            line.resize(row_width, Value::Empty);
+            let buckets = buckets_of(&row.records);
+            if parent_rows {
+                let parent = row_tree.parent_of(row).unwrap_or(&row_tree);
+                if parent_cache
+                    .as_ref()
+                    .is_none_or(|(cached, _)| *cached != parent.key)
+                {
+                    parent_cache = Some((parent.key.clone(), buckets_of(&parent.records)));
+                }
+            }
+            for (_, column) in &column_lines {
+                let range = column.leaves.clone();
+                let inside = gather(&buckets, range.clone());
+                if inside.is_empty() {
+                    line.extend(std::iter::repeat_n(Value::Empty, outputs));
+                    continue;
+                }
+                let against = match relative {
+                    1 => row.records.clone(),
+                    2 => records.clone(),
+                    3 => {
+                        let parent = column_tree.parent_of(column).unwrap_or(&column_tree);
+                        gather(&buckets, parent.leaves.clone())
+                    }
+                    4 => parent_cache
+                        .as_ref()
+                        .map(|(_, buckets)| gather(buckets, range))
+                        .unwrap_or_default(),
+                    _ => gather(&all_buckets, range),
+                };
+                line.extend(self.summarised(sheet, &data, &inside, &against));
+            }
+            grid.push(line);
         }
         checked(grid)
+    }
+}
+
+/// The most functions one `GROUPBY` or `PIVOTBY` applies.
+const MAX_SUMMARIES: usize = 64;
+
+/// What summarises a group, the caption its columns take when there are several, and whether it
+/// also takes the values the group is measured against.
+struct Summary {
+    kind: SummaryKind,
+    caption: String,
+    pair: bool,
+}
+
+enum SummaryKind {
+    Named(String),
+    Lambda(Rc<Closure>),
+}
+
+/// The values a `GROUPBY` or `PIVOTBY` summarises, their width and its functions.
+struct Data<'a> {
+    values: &'a Grid,
+    width: usize,
+    summaries: &'a [Summary],
+}
+
+/// The captions over the summarised columns: the header of each value column, or `Value 1`, and
+/// with several functions each function's name too.
+fn captions(values: &Grid, has_header: bool, summaries: &[Summary]) -> Vec<Value> {
+    let width = values[0].len();
+    let bases: Vec<String> = (0..width)
+        .map(|column| {
+            if has_header {
+                item_label(&values[0][column])
+            } else {
+                format!("Value {}", column + 1)
+            }
+        })
+        .collect();
+    let mut captions = Vec::new();
+    for summary in summaries {
+        for base in &bases {
+            captions.push(Value::Text(if summaries.len() == 1 {
+                base.clone()
+            } else if width == 1 && !has_header {
+                summary.caption.clone()
+            } else {
+                format!("{base} {}", summary.caption)
+            }));
+        }
+    }
+    captions
+}
+
+/// A total depth a `GROUPBY` or `PIVOTBY` takes: 0 none, 1 the grand total, 2 and deeper a
+/// subtotal per level too, negative at the top; subtotals need the hierarchy.
+fn check_depth(depth: i64, width: usize, table: bool) -> Result<(), ErrorKind> {
+    let deepest = i64::try_from(width.max(2)).map_err(|_| ErrorKind::Value)?;
+    if depth.abs() > deepest || (table && depth.abs() >= 2) {
+        return Err(ErrorKind::Value);
+    }
+    Ok(())
+}
+
+/// A sort order names columns from 1, negative for descending.
+fn check_sort(sort: &[i64], width: usize) -> Result<(), ErrorKind> {
+    let width = i64::try_from(width).map_err(|_| ErrorKind::Value)?;
+    if sort
+        .iter()
+        .any(|column| *column == 0 || column.abs() > width)
+    {
+        return Err(ErrorKind::Value);
+    }
+    Ok(())
+}
+
+/// The records grouped by the keys of the fields, a level per field, each group with its
+/// summaries over every function and value column.
+struct Node {
+    key: Vec<Key>,
+    records: Vec<usize>,
+    children: Vec<Node>,
+    measures: Vec<Value>,
+    /// The leaves of the tree this group covers, once numbered.
+    leaves: std::ops::Range<usize>,
+}
+
+impl Node {
+    fn build(keys: &Grid, records: &[usize]) -> Self {
+        let width = keys.first().map_or(0, Vec::len);
+        Self::grouped(keys, width, records.to_vec(), Vec::new())
+    }
+
+    fn grouped(keys: &Grid, width: usize, records: Vec<usize>, key: Vec<Key>) -> Self {
+        let mut children = Vec::new();
+        if key.len() < width {
+            let mut items: BTreeMap<Key, Vec<usize>> = BTreeMap::new();
+            for row in &records {
+                let item = keys[*row].get(key.len()).cloned().unwrap_or(Value::Empty);
+                items.entry(Key(item)).or_default().push(*row);
+            }
+            children = items
+                .into_iter()
+                .map(|(item, rows)| {
+                    let mut child = key.clone();
+                    child.push(item);
+                    Self::grouped(keys, width, rows, child)
+                })
+                .collect();
+        }
+        Self {
+            key,
+            records,
+            children,
+            measures: Vec::new(),
+            leaves: 0..0,
+        }
+    }
+
+    fn measure(&mut self, summarise: &dyn Fn(&Self) -> Vec<Value>) {
+        self.measures = summarise(self);
+        for child in &mut self.children {
+            child.measure(summarise);
+        }
+    }
+
+    /// Number the leaves as the lines will show them, giving each record its leaf's number.
+    fn number_leaves(&mut self, next: &mut usize, leaf_of: &mut [usize]) {
+        let first = *next;
+        if self.children.is_empty() {
+            for row in &self.records {
+                leaf_of[*row] = *next;
+            }
+            *next += 1;
+        } else {
+            for child in &mut self.children {
+                child.number_leaves(next, leaf_of);
+            }
+        }
+        self.leaves = first..*next;
+    }
+
+    /// The group one level up from a group of this tree.
+    fn parent_of(&self, node: &Self) -> Option<&Self> {
+        if node.key.is_empty() {
+            return None;
+        }
+        let mut parent = self;
+        for depth in 0..node.key.len() - 1 {
+            parent = parent
+                .children
+                .iter()
+                .find(|child| child.key[depth] == node.key[depth])?;
+        }
+        Some(parent)
+    }
+
+    /// Order the groups by the sort order: each level by its own key column or by a summary,
+    /// down for a negative column, ascending by key otherwise; with `table` the items as one
+    /// list, each field sorted on its own.
+    fn sort(&mut self, sort: &[i64], width: usize, table: bool) {
+        let level = self.key.len();
+        let order = |left: &Self, right: &Self| -> Ordering {
+            for column in sort {
+                let index = usize::try_from(column.unsigned_abs()).unwrap_or(usize::MAX) - 1;
+                let order = if index < width {
+                    if table || index == level {
+                        left.key.get(index).cmp(&right.key.get(index))
+                    } else {
+                        Ordering::Equal
+                    }
+                } else {
+                    let pick = |node: &Self| {
+                        Key(node
+                            .measures
+                            .get(index - width)
+                            .cloned()
+                            .unwrap_or(Value::Empty))
+                    };
+                    pick(left).cmp(&pick(right))
+                };
+                let order = if *column < 0 { order.reverse() } else { order };
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+            left.key.cmp(&right.key)
+        };
+        self.children.sort_by(|left, right| order(left, right));
+        if !table {
+            for child in &mut self.children {
+                child.sort(sort, width, table);
+            }
+        }
+    }
+
+    /// Sort the groups, as one list of items with `table`, and number the leaves in order.
+    fn prepare(&mut self, table: bool, sort: &[i64], width: usize, leaf_of: &mut [usize]) {
+        if table {
+            let mut leaves = Vec::new();
+            self.take_leaves(&mut leaves);
+            self.children = leaves;
+        }
+        self.sort(sort, width, table);
+        let mut next = 0;
+        self.number_leaves(&mut next, leaf_of);
+    }
+
+    /// The lines a total depth shows, each its labels and its group, in order.
+    fn lines<'n>(&'n self, depth: i64, lines: &mut Vec<(Vec<Value>, &'n Self)>) {
+        let subtotals = usize::try_from(depth.unsigned_abs())
+            .unwrap_or(0)
+            .saturating_sub(1);
+        self.walk(depth, subtotals, lines);
+    }
+
+    fn take_leaves(&mut self, leaves: &mut Vec<Self>) {
+        if self.children.is_empty() {
+            if !self.key.is_empty() {
+                leaves.push(Self {
+                    key: std::mem::take(&mut self.key),
+                    records: std::mem::take(&mut self.records),
+                    children: Vec::new(),
+                    measures: std::mem::take(&mut self.measures),
+                    leaves: 0..0,
+                });
+            }
+        } else {
+            for child in &mut self.children {
+                child.take_leaves(leaves);
+            }
+        }
+    }
+
+    fn walk<'n>(&'n self, depth: i64, subtotals: usize, lines: &mut Vec<(Vec<Value>, &'n Self)>) {
+        let level = self.key.len();
+        if level > 0 && self.children.is_empty() {
+            lines.push((self.key.iter().map(|key| key.0.clone()).collect(), self));
+            return;
+        }
+        let total = if level == 0 {
+            (depth != 0).then(|| vec![Value::Text(TOTAL.to_owned())])
+        } else {
+            (level <= subtotals).then(|| self.key.iter().map(|key| key.0.clone()).collect())
+        };
+        if depth < 0
+            && let Some(label) = &total
+        {
+            lines.push((label.clone(), self));
+        }
+        for child in &self.children {
+            child.walk(depth, subtotals, lines);
+        }
+        if depth > 0
+            && let Some(label) = total
+        {
+            lines.push((label, self));
+        }
     }
 }
 
@@ -493,35 +794,6 @@ fn header_mode(headers: i64, values: &Grid) -> Result<(bool, bool), ErrorKind> {
         3 => (true, true),
         _ => return Err(ErrorKind::Value),
     })
-}
-
-/// Order the groups by a key column (1 to the number of keys) or a value column after them,
-/// down for a negative number.
-fn sort_lines(
-    lines: &mut [(Vec<Key>, Vec<Value>, Vec<usize>)],
-    sort: i64,
-    key_width: usize,
-) -> Result<(), ErrorKind> {
-    let column = usize::try_from(sort.unsigned_abs()).map_err(|_| ErrorKind::Value)?;
-    if column == 0 {
-        return Err(ErrorKind::Value);
-    }
-    lines.sort_by(|left, right| {
-        let pick = |line: &(Vec<Key>, Vec<Value>, Vec<usize>)| {
-            if column <= key_width {
-                line.0[column - 1].clone()
-            } else {
-                Key(line
-                    .1
-                    .get(column - key_width - 1)
-                    .cloned()
-                    .unwrap_or(Value::Empty))
-            }
-        };
-        let order = pick(left).cmp(&pick(right));
-        if sort < 0 { order.reverse() } else { order }
-    });
-    Ok(())
 }
 
 /// A grid made rectangular, or `#NUM!` past the spill limit.

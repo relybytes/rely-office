@@ -18,10 +18,16 @@ use rely_office_core::{CellRange, Limits};
 use super::{escape, quoted_sheet};
 use crate::address::{CellRef, column_index, column_name};
 use crate::model::Workbook;
-use crate::pivots::{PivotField, PivotFunction, PivotTable, PivotValue, item_label};
+use crate::pivots::{
+    PivotField, PivotFunction, PivotLayout, PivotSubtotals, PivotTable, PivotValue, item_label,
+};
 use crate::value::Locale;
 
 /// The data pilot tables of a workbook; empty when it has no pivot table.
+#[expect(
+    clippy::too_many_lines,
+    reason = "every part of a data pilot table is written in the order the schema sets"
+)]
 pub(super) fn data_pilot_tables_xml(workbook: &Workbook) -> String {
     let mut xml = String::new();
     for sheet in &workbook.sheets {
@@ -81,11 +87,20 @@ pub(super) fn data_pilot_tables_xml(workbook: &Workbook) -> String {
                                 write!(attributes, r#" table:selected-page="{}""#, escape(only));
                         }
                     }
+                    let axis = orientation != "page";
+                    let repeat = if table.repeat_labels && orientation == "row" {
+                        r#" calcext:repeat-item-labels="true""#
+                    } else {
+                        ""
+                    };
                     let _ = write!(
                         xml,
-                        r#"<table:data-pilot-field table:source-field-name="{}" table:orientation="{orientation}"{attributes}><table:data-pilot-level table:show-empty="false">"#,
+                        r#"<table:data-pilot-field table:source-field-name="{}" table:orientation="{orientation}"{attributes}><table:data-pilot-level table:show-empty="false"{repeat}>"#,
                         escape(&name_of(field.field))
                     );
+                    if axis && table.subtotals != PivotSubtotals::Off {
+                        xml.push_str(r#"<table:data-pilot-subtotals><table:data-pilot-subtotal table:function="auto"/></table:data-pilot-subtotals>"#);
+                    }
                     if !field.hidden.is_empty() {
                         xml.push_str("<table:data-pilot-members>");
                         for hidden in &field.hidden {
@@ -96,6 +111,18 @@ pub(super) fn data_pilot_tables_xml(workbook: &Workbook) -> String {
                             );
                         }
                         xml.push_str("</table:data-pilot-members>");
+                    }
+                    if orientation == "row" {
+                        // An ods has no compact form: a compact table is kept in outline form.
+                        let mode = match (table.layout, table.subtotals) {
+                            (PivotLayout::Tabular, _) => "tabular-layout",
+                            (_, PivotSubtotals::Bottom) => "outline-subtotals-bottom",
+                            _ => "outline-subtotals-top",
+                        };
+                        let _ = write!(
+                            xml,
+                            r#"<table:data-pilot-layout-info table:layout-mode="{mode}" table:add-empty-lines="false"/>"#
+                        );
                     }
                     xml.push_str("</table:data-pilot-level></table:data-pilot-field>");
                 }
@@ -178,6 +205,11 @@ pub(crate) struct PendingField {
     function: Option<PivotFunction>,
     selected_page: Option<String>,
     hidden: Vec<String>,
+    /// The `table:layout-mode` of a row field.
+    layout_mode: Option<String>,
+    /// Whether the field shows subtotals.
+    subtotals: bool,
+    repeat: bool,
 }
 
 /// A data pilot table read, its fields still by name.
@@ -206,6 +238,10 @@ fn attribute(element: &BytesStart<'_>, name: &str) -> Option<String> {
 }
 
 /// The data pilot tables of an ods, read from its content; none from a file it cannot read.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the content reads every part of a data pilot table"
+)]
 pub(crate) fn read_data_pilots(bytes: &[u8], limits: &Limits) -> Vec<PendingPivot> {
     let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(bytes)) else {
         return Vec::new();
@@ -281,8 +317,24 @@ pub(crate) fn read_data_pilots(bytes: &[u8], limits: &Limits) -> Vec<PendingPivo
                         function: attribute(element, "function")
                             .and_then(|function| PivotFunction::from_odf(&function)),
                         selected_page: attribute(element, "selected-page"),
-                        hidden: Vec::new(),
+                        ..PendingField::default()
                     });
+                }
+            }
+            "data-pilot-level" => {
+                if let Some(field) = current.as_mut().and_then(|pivot| pivot.fields.last_mut()) {
+                    field.repeat =
+                        attribute(element, "repeat-item-labels").as_deref() == Some("true");
+                }
+            }
+            "data-pilot-subtotal" => {
+                if let Some(field) = current.as_mut().and_then(|pivot| pivot.fields.last_mut()) {
+                    field.subtotals |= attribute(element, "function").as_deref() != Some("none");
+                }
+            }
+            "data-pilot-layout-info" => {
+                if let Some(field) = current.as_mut().and_then(|pivot| pivot.fields.last_mut()) {
+                    field.layout_mode = attribute(element, "layout-mode");
                 }
             }
             "data-pilot-member" => {
@@ -300,6 +352,10 @@ pub(crate) fn read_data_pilots(bytes: &[u8], limits: &Limits) -> Vec<PendingPivo
 
 /// Give the workbook the data pilot tables read, each field placed by the position of its name
 /// in the source's header; a table whose source or fields cannot be found is left out.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the form, the fields and the cells of a table are placed in one pass"
+)]
 pub(crate) fn place_data_pilots(
     workbook: &mut Workbook,
     pending: Vec<PendingPivot>,
@@ -335,6 +391,37 @@ pub(crate) fn place_data_pilots(
                 })
                 .and_then(|index| u32::try_from(index).ok())
         };
+        // The first row field sets the form, else the first column field; a file that says
+        // nothing is in LibreOffice's tabular form.
+        if let Some(first) = pivot
+            .fields
+            .iter()
+            .find(|field| field.orientation == "row")
+            .or_else(|| {
+                pivot
+                    .fields
+                    .iter()
+                    .find(|field| field.orientation == "column")
+            })
+        {
+            let mode = first.layout_mode.as_deref().unwrap_or("tabular-layout");
+            table.layout = if mode == "tabular-layout" {
+                PivotLayout::Tabular
+            } else {
+                PivotLayout::Outline
+            };
+            table.subtotals = if !first.subtotals {
+                PivotSubtotals::Off
+            } else if mode == "outline-subtotals-bottom" {
+                PivotSubtotals::Bottom
+            } else {
+                PivotSubtotals::Top
+            };
+        }
+        table.repeat_labels = pivot
+            .fields
+            .iter()
+            .any(|field| field.orientation == "row" && field.repeat);
         let mut complete = true;
         for field in pivot.fields {
             let Some(index) = position(&field.name) else {

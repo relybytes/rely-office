@@ -8,8 +8,8 @@ use rely_office_core::Limits;
 
 use super::*;
 use crate::ods::write_ods;
-use crate::pivots::PivotValue;
 use crate::pivots::tests::{by_region, sales};
+use crate::pivots::{PivotLayout, PivotSubtotals, PivotValue};
 use crate::xlsx::read_spreadsheet;
 
 #[test]
@@ -129,4 +129,62 @@ fn a_table_whose_fields_are_missing_is_left_out() {
         vec!["Centro".to_owned(), "Sud".to_owned()]
     );
     assert!(!table.row_grand_totals && table.column_grand_totals);
+}
+
+#[test]
+fn the_form_and_the_subtotals_survive_an_ods() {
+    let cases = [
+        (
+            PivotLayout::Tabular,
+            PivotSubtotals::Top,
+            false,
+            PivotLayout::Tabular,
+        ),
+        (
+            PivotLayout::Tabular,
+            PivotSubtotals::Off,
+            true,
+            PivotLayout::Tabular,
+        ),
+        (
+            PivotLayout::Outline,
+            PivotSubtotals::Bottom,
+            true,
+            PivotLayout::Outline,
+        ),
+        (
+            PivotLayout::Outline,
+            PivotSubtotals::Off,
+            false,
+            PivotLayout::Outline,
+        ),
+        // An ods has no compact form: the table comes back in outline form.
+        (
+            PivotLayout::Compact,
+            PivotSubtotals::Top,
+            false,
+            PivotLayout::Outline,
+        ),
+    ];
+    for (layout, subtotals, repeat_labels, read_as) in cases {
+        let mut workbook = sales();
+        let mut table = by_region("F1");
+        table.rows.push(PivotField {
+            field: 1,
+            hidden: Vec::new(),
+        });
+        table.layout = layout;
+        table.subtotals = subtotals;
+        table.repeat_labels = repeat_labels;
+        workbook.add_pivot_table(0, table).unwrap();
+        let bytes = write_ods(&workbook).unwrap();
+        let read =
+            read_spreadsheet(&bytes, Some("a.ods"), &Limits::default(), Locale::English).unwrap();
+        let table = &read.sheets()[0].pivot_tables()[0];
+        assert_eq!(
+            (table.layout, table.subtotals, table.repeat_labels),
+            (read_as, subtotals, repeat_labels),
+            "{layout:?} {subtotals:?}"
+        );
+    }
 }
