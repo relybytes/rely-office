@@ -257,6 +257,12 @@ npm run demo        # the three editors on a local page
 
 The `.wasm` modules come from `node scripts/build-npm.mjs` at the root of the repository.
 
+## Free to use
+
+Use it in any project, open source or commercial, free or paid, at no cost. All we ask is a
+mention: "Office files powered by [rely-office](https://github.com/relybytes/rely-office), by
+[RelyBytes S.r.l.](https://relybytes.com)".
+
 ## Licence
 
 Mozilla Public License 2.0, as rely-office. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

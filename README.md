@@ -252,6 +252,14 @@ The design is in [docs/](docs/README.md): [architecture](docs/architecture.md),
 [collaboration](docs/collaboration.md), [the document tree](docs/document-tree.md) and the
 [roadmap](docs/roadmap.md).
 
+## Free to use
+
+Use rely-office in any project, open source or commercial, free or paid, at no cost. All we ask
+is a mention, for example in your README, your credits or your about page:
+
+> Office files powered by [rely-office](https://github.com/relybytes/rely-office), by
+> [RelyBytes S.r.l.](https://relybytes.com)
+
 ## Licence
 
 Mozilla Public License 2.0, see [LICENSE](LICENSE). In short: you may use rely-office in any
