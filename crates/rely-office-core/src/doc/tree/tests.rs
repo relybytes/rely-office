@@ -7,8 +7,8 @@
 use super::*;
 use crate::doc::fib::pair;
 use crate::doc::test_doc::{
-    DELAY_OFFSET, DocBuilder, LevelSpec, definition, lists, overrides, plex as plex_of, png_blip,
-    record, sheet, store_entry,
+    DELAY_OFFSET, DocBuilder, LevelSpec, definition, embedded_font_table, eot, lists, overrides,
+    plex as plex_of, png_blip, record, sheet, store_entry,
 };
 use crate::document::{BorderStyle, plain_text};
 use crate::read_document_tree;
@@ -1230,4 +1230,44 @@ fn an_embedding_field_without_its_storage_keeps_only_the_picture() {
     let tree = read(&builder);
     assert_eq!(tree.media.len(), 1);
     assert_eq!(tree.objects, Vec::new());
+}
+
+#[test]
+fn carries_the_faces_word_embedded_through_a_docx() {
+    const REGULAR: &[u8] = include_bytes!("../../../../../fonts/Carlito-Regular.ttf");
+    const BOLD: &[u8] = include_bytes!("../../../../../fonts/Carlito-Bold.ttf");
+    let mut builder = DocBuilder::new("Testo incorporato\r");
+    builder.fonts = vec!["Times New Roman", "", "Carlito"];
+    let mut faces = Vec::new();
+    for (bytes, bold, flags) in [
+        (REGULAR, false, 0),
+        (BOLD, true, 0x1000_0000),
+        (REGULAR, false, 4),
+    ] {
+        faces.push((DELAY_OFFSET + builder.delay.len(), 2, bold, false));
+        builder.delay.extend(eot(bytes, "Carlito", flags));
+    }
+    faces.push((DELAY_OFFSET, 1, false, true));
+    let builder = builder
+        .character(0..5, &[0x4F, 0x4A, 0x02, 0x00])
+        .structure(pair::EMBEDDED_FONTS, embedded_font_table(&faces));
+    let tree = read(&builder);
+
+    let carlito = tree.fonts.family("Carlito").expect("the family is listed");
+    assert_eq!(carlito.faces.len(), 2);
+    assert_eq!(carlito.faces[0].style, crate::FaceStyle::Regular);
+    assert_eq!(carlito.faces[1].style, crate::FaceStyle::Bold);
+    assert_eq!(tree.fonts.files[carlito.faces[0].file], REGULAR);
+    assert_eq!(tree.fonts.files[carlito.faces[1].file], BOLD);
+    assert_eq!(
+        tree.report.fonts_left_out, 2,
+        "the compressed face and the nameless font"
+    );
+
+    let docx = crate::write_docx(&tree).unwrap();
+    let back = read_document_tree(&docx, &Limits::default()).unwrap();
+    let carlito = back.fonts.family("Carlito").expect("the family is written");
+    assert_eq!(carlito.faces.len(), 2);
+    assert_eq!(back.fonts.files[carlito.faces[0].file], REGULAR);
+    assert_eq!(back.fonts.files[carlito.faces[1].file], BOLD);
 }

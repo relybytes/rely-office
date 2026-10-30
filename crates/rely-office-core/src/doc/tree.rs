@@ -18,7 +18,7 @@ use super::fib::{Fib, Stories, pair};
 use super::fkp::{
     CharacterRun, ParagraphRun, character_runs, paragraph_runs, plex, positions, run_at,
 };
-use super::fonts::font_names;
+use super::fonts::{EmbeddedFace, embedded_faces, font_names};
 use super::lists::Lists;
 use super::pictures::{
     Drawings, InlinePicture, ShapeAnchor, ShapeContent, inline_picture, shape_anchors,
@@ -144,6 +144,7 @@ pub(crate) fn read_doc_tree(
         paragraphs: paragraph_runs(&word_document, structure(pair::PARAGRAPH_PAGES), &data),
         styles,
         fonts,
+        embedded_fonts: embedded_faces(structure(pair::EMBEDDED_FONTS), &word_document),
         lists,
         data: &data,
         word_document: &word_document,
@@ -229,6 +230,7 @@ fn read_word6_tree(
         paragraphs: word6::paragraph_runs(word_document, &fib),
         styles: StyleSheet::read(&word6::style_sheet(structure(pair::STYLES))),
         fonts: word6::font_names(structure(pair::FONTS)),
+        embedded_fonts: Vec::new(),
         lists: Lists::read(&[], None, None),
         data: &[],
         word_document,
@@ -378,6 +380,8 @@ struct Converter<'a> {
     paragraphs: Vec<ParagraphRun>,
     styles: StyleSheet,
     fonts: Vec<String>,
+    /// The faces Word embedded, by the index of their family in `fonts`.
+    embedded_fonts: Vec<EmbeddedFace>,
     lists: Lists,
     data: &'a [u8],
     word_document: &'a [u8],
@@ -575,6 +579,7 @@ impl Converter<'_> {
             tree_sections.push(last.clone());
         }
         self.report.headers_and_footers = inherited.iter().filter(|part| !part.is_empty()).count();
+        let fonts = self.document_fonts();
         DocumentTree {
             comments: std::mem::take(&mut self.comments),
             objects: std::mem::take(&mut self.objects),
@@ -586,17 +591,33 @@ impl Converter<'_> {
             headers_footers: last.headers_footers,
             sections: tree_sections,
             macro_project: None,
-            fonts: crate::DocumentFonts {
-                families: self
-                    .fonts
-                    .iter()
-                    .filter(|name| !name.trim().is_empty())
-                    .take(crate::MAX_FONTS)
-                    .map(|name| crate::known_font(name.trim()))
-                    .collect(),
-                files: Vec::new(),
-            },
+            fonts,
         }
+    }
+
+    /// The families of the font table, with the faces Word embedded for them.
+    fn document_fonts(&mut self) -> crate::DocumentFonts {
+        let mut fonts = crate::DocumentFonts::default();
+        let mut families = HashMap::new();
+        for (index, name) in self.fonts.iter().enumerate() {
+            if !name.trim().is_empty() && fonts.families.len() < crate::MAX_FONTS {
+                families.insert(index, fonts.families.len());
+                fonts.families.push(crate::known_font(name.trim()));
+            }
+        }
+        for face in std::mem::take(&mut self.embedded_fonts) {
+            let (Some(family), Some(bytes)) = (families.get(&face.font), face.bytes) else {
+                self.report.fonts_left_out += 1;
+                continue;
+            };
+            if let Some(file) = fonts.keep_file(bytes, &mut self.report) {
+                fonts.families[*family].faces.push(crate::FontFace {
+                    style: face.style,
+                    file,
+                });
+            }
+        }
+        fonts
     }
 
     /// The six header and footer parts of a section, each inherited from the section before

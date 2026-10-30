@@ -52,7 +52,11 @@ structures.
   (`w:embedRegular` and its kin with a `w:fontKey`): the first 32 bytes are combined by exclusive
   or with the key's GUID read from its last pair of digits to its first, as ECMA-376 Part 2
   says, and the tree holds them already de-obfuscated. An odt names them under `Fonts/` from
-  `svg:font-face-uri`; their face is read from the `macStyle` of their `head` table. At most 32
+  `svg:font-face-uri`; their face is read from the `macStyle` of their `head` table. A doc lists
+  them in `SttbTtmbd`, each an Embedded OpenType structure in the `WordDocument` stream with its
+  family's index in the font table and whether it is bold or italic: the font data is its last
+  member, taken back from the exclusive or with 0x50 that may hide it; one compressed with
+  MicroType Express is not read and is counted in `fontsLeftOut`. At most 32
   files, 16 MB each and 48 MB together (`MAX_FONT_FILES`, `MAX_FONT_FILE_BYTES`,
   `MAX_TOTAL_FONT_BYTES`); a face past them, unreadable or not a font is counted in
   `fontsLeftOut` and its family kept without it.

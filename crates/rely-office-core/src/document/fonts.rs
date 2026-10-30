@@ -225,7 +225,7 @@ impl DocumentFonts {
     }
 
     /// Keep a font file if it fits the limits; its index, or `None` with the report told.
-    fn keep_file(&mut self, bytes: Vec<u8>, report: &mut ImportReport) -> Option<usize> {
+    pub(crate) fn keep_file(&mut self, bytes: Vec<u8>, report: &mut ImportReport) -> Option<usize> {
         let total: u64 = self.files.iter().map(|file| file.len() as u64).sum();
         if !is_font_file(&bytes)
             || self.files.len() >= MAX_FONT_FILES

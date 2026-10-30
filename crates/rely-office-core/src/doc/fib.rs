@@ -44,6 +44,7 @@ pub(super) mod pair {
     pub(in super::super) const ENDNOTE_TEXTS: usize = 47;
     pub(in super::super) const DRAWINGS: usize = 50;
     pub(in super::super) const TEXT_BOXES: usize = 56;
+    pub(in super::super) const EMBEDDED_FONTS: usize = 61;
     pub(in super::super) const LISTS: usize = 73;
     pub(in super::super) const LIST_OVERRIDES: usize = 74;
 }

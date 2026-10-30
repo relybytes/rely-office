@@ -83,6 +83,55 @@ pub(super) fn font(name: &str) -> Vec<u8> {
 }
 
 /// A plex of positions and elements.
+/// An Embedded `OpenType` structure of version 2.1 around a font file, its names in UTF-16 and
+/// the data hidden as `flags` say.
+pub(super) fn eot(font: &[u8], family: &str, flags: u32) -> Vec<u8> {
+    let mut data = font.to_vec();
+    if flags & 0x1000_0000 != 0 {
+        for byte in &mut data {
+            *byte ^= 0x50;
+        }
+    }
+    let mut header = vec![0_u8; 80];
+    header[8..12].copy_from_slice(&0x0002_0001_u32.to_le_bytes());
+    header[12..16].copy_from_slice(&flags.to_le_bytes());
+    header[34..36].copy_from_slice(&0x504C_u16.to_le_bytes());
+    let utf16 =
+        |text: &str| -> Vec<u8> { text.encode_utf16().flat_map(u16::to_le_bytes).collect() };
+    for name in [
+        utf16(family),
+        utf16("Regular"),
+        utf16("Version 1.0"),
+        utf16(family),
+        Vec::new(),
+    ] {
+        header.extend_from_slice(&[0, 0]);
+        header.extend_from_slice(&u16::try_from(name.len()).unwrap().to_le_bytes());
+        header.extend_from_slice(&name);
+    }
+    let size = header.len() + data.len();
+    header[0..4].copy_from_slice(&u32::try_from(size).unwrap().to_le_bytes());
+    header[4..8].copy_from_slice(&u32::try_from(data.len()).unwrap().to_le_bytes());
+    header.extend_from_slice(&data);
+    header
+}
+
+/// `SttbTtmbd`: each face's offset in the `WordDocument` stream, its font's index and whether it
+/// is bold and italic.
+pub(super) fn embedded_font_table(faces: &[(usize, u16, bool, bool)]) -> Vec<u8> {
+    let mut table = vec![0_u8; 10];
+    table[2..4].copy_from_slice(&u16::try_from(faces.len()).unwrap().to_le_bytes());
+    table[4..6].copy_from_slice(&64_u16.to_le_bytes());
+    table[8..10].copy_from_slice(&10_u16.to_le_bytes());
+    for (offset, font, bold, italic) in faces {
+        table.extend_from_slice(&u32::try_from(*offset).unwrap().to_le_bytes());
+        table.extend_from_slice(&font.to_le_bytes());
+        table.extend_from_slice(&(u16::from(*bold) | u16::from(*italic) << 1).to_le_bytes());
+        table.extend_from_slice(&u32::MAX.to_le_bytes());
+    }
+    table
+}
+
 pub(super) fn plex(positions: &[u32], elements: &[&[u8]]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for position in positions {
