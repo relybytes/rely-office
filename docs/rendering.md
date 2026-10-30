@@ -46,7 +46,7 @@ The rules follow Word, the program most docx files come from, rather than Typst'
   roman to Liberation Serif, swiss to Liberation Sans, modern to Liberation Mono. The document's
   own family is listed first, then its alternative name, so a renderer given the real font uses
   it.
-- **Embedded faces are used**: the faces a docx or odt carries (de-obfuscated, see
+- **Embedded faces are used**: the faces a docx, odt or doc carries (de-obfuscated, see
   [document-tree.md](document-tree.md)) join the renderer's fonts for that render only, so a
   document set in a font the server lacks is drawn in it.
 - **Headings** keep their PDF bookmarks but draw only their style's look; a heading whose style

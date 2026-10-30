@@ -5,7 +5,7 @@
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
 use super::*;
-use crate::doc::test_doc::font;
+use crate::doc::test_doc::{embedded_font_table, eot, font};
 
 #[test]
 fn reads_each_font_name_in_order() {
@@ -30,4 +30,56 @@ fn stops_at_a_font_cut_short() {
         "the second font is missing"
     );
     assert_eq!(font_names(&[1]), Vec::<String>::new());
+}
+
+const REGULAR: &[u8] = include_bytes!("../../../../../fonts/Carlito-Regular.ttf");
+
+#[test]
+fn reads_embedded_faces_plain_and_hidden_by_xor() {
+    let plain = eot(REGULAR, "Carlito", 0);
+    let mut stream = vec![0_u8; 16];
+    stream.extend_from_slice(&plain);
+    let hidden_at = stream.len();
+    stream.extend_from_slice(&eot(REGULAR, "Carlito", 0x1000_0000));
+    let table = embedded_font_table(&[(16, 1, false, false), (hidden_at, 1, true, true)]);
+    let faces = embedded_faces(&table, &stream);
+    assert_eq!(faces.len(), 2);
+    assert_eq!(faces[0].font, 1);
+    assert_eq!(faces[0].style, FaceStyle::Regular);
+    assert_eq!(faces[0].bytes.as_deref(), Some(REGULAR));
+    assert_eq!(faces[1].style, FaceStyle::BoldItalic);
+    assert_eq!(faces[1].bytes.as_deref(), Some(REGULAR));
+}
+
+#[test]
+fn leaves_out_a_compressed_or_broken_face() {
+    let mut stream = vec![0_u8; 4];
+    stream.extend_from_slice(&eot(REGULAR, "Carlito", 0x0000_0004));
+    let broken_at = stream.len();
+    let mut broken = eot(REGULAR, "Carlito", 0);
+    broken[34] = 0;
+    stream.extend_from_slice(&broken);
+    let short_at = stream.len();
+    stream.extend_from_slice(&eot(REGULAR, "Carlito", 0)[..200]);
+    let table = embedded_font_table(&[
+        (4, 0, false, false),
+        (broken_at, 0, false, false),
+        (short_at, 0, false, false),
+        (0, 0, false, false),
+    ]);
+    let faces = embedded_faces(&table, &stream);
+    assert_eq!(faces.len(), 4);
+    assert!(faces.iter().all(|face| face.bytes.is_none()));
+}
+
+#[test]
+fn reads_no_more_faces_than_the_table_has() {
+    let mut table = embedded_font_table(&[(4, 0, false, false)]);
+    table[2] = 9;
+    assert_eq!(embedded_faces(&table, &[]).len(), 1);
+    assert_eq!(embedded_faces(&[], &[]), Vec::new());
+    assert_eq!(
+        embedded_faces(&[0, 0, 0xFF, 0xFF, 64, 0, 0, 0, 10, 0], &[]),
+        Vec::new()
+    );
 }
