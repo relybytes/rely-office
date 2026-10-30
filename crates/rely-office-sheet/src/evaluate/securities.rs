@@ -5,8 +5,8 @@
 // Copyright (c) 2026 RelyBytes Consulting <https://relybytes.com>
 
 //! Securities: the coupon dates of a bond and their day counts, its price, yield and duration,
-//! accrued interest, discounted securities and Treasury bills, and the French and variable
-//! depreciations. Days are counted on the five bases Excel names: 0 US 30/360, 1 actual/actual,
+//! accrued interest, the bonds whose first or last period is odd, discounted securities and
+//! Treasury bills, and the French and variable depreciations. Days are counted on the five bases Excel names: 0 US 30/360, 1 actual/actual,
 //! 2 actual/360, 3 actual/365, 4 European 30/360.
 
 #![allow(
@@ -315,6 +315,137 @@ fn variable_declining(
     total
 }
 
+/// The quasi-coupon periods an odd period spans, each as the part of it the odd period covers:
+/// the days it counts, the days of it accrued at settlement, the days of it left after
+/// settlement, and its normal length.
+struct QuasiPeriod {
+    counted: f64,
+    accrued: f64,
+    remaining: f64,
+    length: f64,
+}
+
+/// The quasi-coupon periods from `start` to `end` stepped by `months`: backwards from `end`
+/// for an odd first period, forwards from `start` for an odd last one.
+fn quasi_periods(
+    start: f64,
+    end: f64,
+    settlement: f64,
+    months: i64,
+    backwards: bool,
+    basis: i64,
+    frequency: f64,
+) -> Result<Vec<QuasiPeriod>, ErrorKind> {
+    let anchor = if backwards { end } else { start };
+    let (year, month, day) = parts(anchor)?;
+    let end_of_month = day == days_in_month(year, month);
+    let mut bounds = vec![anchor];
+    loop {
+        let step = i64::try_from(bounds.len()).map_err(|_| ErrorKind::Num)?;
+        let next = add_months(
+            anchor,
+            if backwards { -step } else { step } * months,
+            end_of_month,
+        )?;
+        bounds.push(next);
+        if (backwards && next <= start) || (!backwards && next >= end) {
+            break;
+        }
+        if bounds.len() > 4_000 {
+            return Err(ErrorKind::Num);
+        }
+    }
+    if backwards {
+        bounds.reverse();
+    }
+    bounds
+        .windows(2)
+        .map(|window| {
+            let (from, to) = (window[0], window[1]);
+            let (inside_from, inside_to) = (from.max(start), to.min(end));
+            let counted = day_count(inside_from, inside_to, basis)?;
+            let accrued = if settlement > inside_from {
+                day_count(inside_from, settlement.min(inside_to), basis)?
+            } else {
+                0.0
+            };
+            let remaining = if settlement < inside_to {
+                day_count(settlement.max(inside_from), inside_to, basis)?
+            } else {
+                0.0
+            };
+            Ok(QuasiPeriod {
+                counted,
+                accrued,
+                remaining,
+                length: period_days(from, to, basis, frequency),
+            })
+        })
+        .collect()
+}
+
+/// A bond whose first period is odd, short or long: what `ODDFPRICE` prices.
+struct OddFirst {
+    rate: f64,
+    redemption: f64,
+    frequency: f64,
+    /// The odd period's quasi-coupon periods, oldest first.
+    periods: Vec<QuasiPeriod>,
+    /// The regular coupons after the first one, up to maturity.
+    regular: f64,
+    /// The whole quasi-coupon periods between settlement and the first coupon.
+    whole: f64,
+    /// The part of its quasi-coupon period left after settlement.
+    fraction: f64,
+}
+
+impl OddFirst {
+    fn price(&self, yield_rate: f64) -> f64 {
+        let coupon = 100.0 * self.rate / self.frequency;
+        let base = 1.0 + yield_rate / self.frequency;
+        let lead = self.whole + self.fraction;
+        let odd: f64 = self
+            .periods
+            .iter()
+            .map(|period| period.counted / period.length)
+            .sum();
+        let accrued: f64 = self
+            .periods
+            .iter()
+            .map(|period| period.accrued / period.length)
+            .sum();
+        let mut price =
+            self.redemption / base.powf(self.regular + lead) + coupon * odd / base.powf(lead);
+        let mut k = 1.0;
+        while k <= self.regular {
+            price += coupon / base.powf(k + lead);
+            k += 1.0;
+        }
+        price - coupon * accrued
+    }
+}
+
+/// A bond whose last period is odd: the sums `ODDLPRICE` and `ODDLYIELD` read.
+struct OddLast {
+    counted: f64,
+    accrued: f64,
+    remaining: f64,
+}
+
+fn odd_last(periods: &[QuasiPeriod]) -> OddLast {
+    let sum = |part: fn(&QuasiPeriod) -> f64| -> f64 {
+        periods
+            .iter()
+            .map(|period| part(period) / period.length)
+            .sum()
+    };
+    OddLast {
+        counted: sum(|period| period.counted),
+        accrued: sum(|period| period.accrued),
+        remaining: sum(|period| period.remaining),
+    }
+}
+
 /// A value rounded half away from zero, as the French depreciations round each period.
 fn round(value: f64) -> f64 {
     value.round()
@@ -571,6 +702,104 @@ impl Evaluator<'_> {
                     }
                     _ => (100.0 - value) / value * 360.0 / days,
                 })
+            })(),
+            "ODDFPRICE" | "ODDFYIELD" => (|| {
+                let (settlement, maturity) = bond()?;
+                let (issue, first_coupon) = (date(2)?, date(3)?);
+                let (rate, given, redemption) = (number(4)?, number(5)?, number(6)?);
+                let frequency = frequency_at(7)?;
+                let basis = basis_at(8)?;
+                if !(issue < settlement && settlement < first_coupon && first_coupon <= maturity)
+                    || rate < 0.0
+                    || given < 0.0
+                    || redemption <= 0.0
+                    || (name == "ODDFYIELD" && given == 0.0)
+                {
+                    return Err(ErrorKind::Num);
+                }
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "a frequency divides twelve"
+                )]
+                let months = 12 / frequency as i64;
+                let periods = quasi_periods(
+                    issue,
+                    first_coupon,
+                    settlement,
+                    months,
+                    true,
+                    basis,
+                    frequency,
+                )?;
+                let regular = if first_coupon < maturity {
+                    coupons(first_coupon, maturity, frequency)?.count
+                } else {
+                    0.0
+                };
+                let holding = periods
+                    .iter()
+                    .position(|period| period.remaining > 0.0)
+                    .ok_or(ErrorKind::Num)?;
+                let current = &periods[holding];
+                #[expect(clippy::cast_precision_loss, reason = "a handful of periods")]
+                let whole = (periods.len() - holding - 1) as f64;
+                let odd = OddFirst {
+                    rate,
+                    redemption,
+                    frequency,
+                    whole,
+                    fraction: current.remaining / current.length,
+                    regular,
+                    periods,
+                };
+                if name == "ODDFPRICE" {
+                    return finite(odd.price(given));
+                }
+                finite(solve_decreasing(
+                    given,
+                    -frequency + 1e-6,
+                    1.0,
+                    |yield_rate| odd.price(yield_rate),
+                )?)
+            })(),
+            "ODDLPRICE" | "ODDLYIELD" => (|| {
+                let (settlement, maturity) = bond()?;
+                let last_interest = date(2)?;
+                let (rate, given, redemption) = (number(3)?, number(4)?, number(5)?);
+                let frequency = frequency_at(6)?;
+                let basis = basis_at(7)?;
+                if last_interest >= settlement
+                    || rate < 0.0
+                    || given < 0.0
+                    || redemption <= 0.0
+                    || (name == "ODDLYIELD" && given == 0.0)
+                {
+                    return Err(ErrorKind::Num);
+                }
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "a frequency divides twelve"
+                )]
+                let months = 12 / frequency as i64;
+                let periods = quasi_periods(
+                    last_interest,
+                    maturity,
+                    settlement,
+                    months,
+                    false,
+                    basis,
+                    frequency,
+                )?;
+                let sums = odd_last(&periods);
+                let coupon = 100.0 * rate / frequency;
+                let paid = redemption + sums.counted * coupon;
+                if name == "ODDLPRICE" {
+                    return finite(
+                        paid / (1.0 + sums.remaining * given / frequency) - sums.accrued * coupon,
+                    );
+                }
+                let invested = given + sums.accrued * coupon;
+                finite((paid - invested) / invested * frequency / sums.remaining)
             })(),
             "AMORLINC" | "AMORDEGRC" => (|| {
                 let cost = number(0)?;

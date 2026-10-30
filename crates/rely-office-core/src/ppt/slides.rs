@@ -10,7 +10,6 @@
 
 use std::collections::HashMap;
 
-use super::freeform::Freeform;
 use super::persist::{Persist, read_persist};
 use super::text_style::{
     CharacterStyle, Colour, ParagraphStyle, character_exception, master_levels, style_runs,
@@ -18,11 +17,13 @@ use super::text_style::{
 use crate::compound::{open_compound_file, read_stream, u16_at, u32_at};
 use crate::document::{Alignment, Media, bullet_character, image_pixel_size, sniff_image_type};
 use crate::geometry::{flip_paths, preset_geometry, preset_geometry_with_values};
+use crate::office_art::freeform::Freeform;
 use crate::office_art::{
     CHILD_ANCHOR, CLIENT_ANCHOR, CLIENT_DATA, CLIENT_TEXTBOX, DRAWING_CONTAINER, GROUP_CONTAINER,
     GROUP_SHAPE, PROPERTIES, Record, SHAPE, SHAPE_CONTAINER, SHAPE_GROUP_CONTAINER,
     STORE_CONTAINER, TERTIARY_PROPERTIES, child, complex_properties, drawingml_adjustments, flag,
-    preset_of_shape_type, properties, records, store_images, upside_down_from_preset,
+    legacy_shape_paths, preset_of_shape_type, properties, records, store_images,
+    upside_down_from_preset,
 };
 use crate::slides::{
     Animation, AnimationClass, AnimationTrigger, Bullet, Frame, Gradient, GradientKind,
@@ -1337,6 +1338,16 @@ fn geometry(
     flip_horizontal: bool,
     flip_vertical: bool,
 ) -> ShapeGeometry {
+    if let Some(mut paths) = legacy_shape_paths(kind, adjustments, frame.width, frame.height) {
+        flip_paths(
+            &mut paths,
+            frame.width,
+            frame.height,
+            flip_horizontal,
+            flip_vertical,
+        );
+        return ShapeGeometry::Path(paths);
+    }
     let preset = match kind {
         3 | 120 => return ShapeGeometry::Ellipse,
         20 | 32 => {
@@ -1532,7 +1543,9 @@ impl Options {
                 0x0140..=0x0143 => self.freeform.bounds[usize::from(identifier - 0x0140)] = length,
                 0x0147..=0x0150 => {
                     let index = usize::from(identifier - 0x0147);
-                    self.freeform.adjust[index] = length;
+                    #[expect(clippy::cast_precision_loss, reason = "adjust values are small")]
+                    let adjust = length as f64;
+                    self.freeform.adjust[index] = adjust;
                     self.adjustments[index] = Some(length);
                 }
                 0x0180 => self.fill_type = value,

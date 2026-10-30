@@ -28,8 +28,8 @@ use crate::arrange::AutoFilter;
 use crate::charts::drawing_of_pictures;
 use crate::dates::serial_from_date;
 use crate::formula::{
-    Expr, PREFIXED_FUNCTIONS, WORKSHEET_PREFIXED_FUNCTIONS, number_text, parse_formula,
-    print_formula,
+    Expr, PREFIXED_FUNCTIONS, WORKSHEET_PREFIXED_FUNCTIONS, calls_external, number_text,
+    parse_formula, print_formula,
 };
 use crate::model::{
     Cell, Comment, DefinedName, MAX_CELLS, MAX_SHEETS, NumberFormat, Sheet, Workbook, is_valid_name,
@@ -315,6 +315,7 @@ fn read_binary(bytes: &[u8], odf_formulas: bool) -> Result<Vec<Sheet>, OfficeErr
         let values = workbook.worksheet_range(&name).map_err(unreadable)?;
         let formulas = workbook.worksheet_formula(&name).ok();
         let mut cells: BTreeMap<CellRef, Cell> = BTreeMap::new();
+        let mut stored: BTreeMap<CellRef, (Expr, Value)> = BTreeMap::new();
         let (row_offset, column_offset) = values.start().unwrap_or((0, 0));
         for (row, column, data) in values.used_cells() {
             let position = position(row_offset, column_offset, row, column)?;
@@ -341,6 +342,12 @@ fn read_binary(bytes: &[u8], odf_formulas: bool) -> Result<Vec<Sheet>, OfficeErr
                     |_| Input::Text(format!("={formula}")),
                     |expression| Input::Formula(Box::new(expression)),
                 );
+                if let Input::Formula(expression) = &input
+                    && calls_external(expression)
+                {
+                    let value = cells.get(&position).map_or(Value::Empty, stored_cell_value);
+                    stored.insert(position, ((**expression).clone(), value));
+                }
                 cells.insert(position, Cell { input, format });
             }
         }
@@ -351,10 +358,24 @@ fn read_binary(bytes: &[u8], odf_formulas: bool) -> Result<Vec<Sheet>, OfficeErr
         sheets.push(Sheet {
             name,
             cells,
+            stored,
             ..Sheet::default()
         });
     }
     Ok(sheets)
+}
+
+/// The value a file stored in a cell, as it was read before its formula replaced it.
+fn stored_cell_value(cell: &Cell) -> Value {
+    match &cell.input {
+        Input::Number(number) => Value::Number(*number),
+        Input::Text(text) => Value::Text(text.clone()),
+        Input::Bool(value) => Value::Bool(*value),
+        Input::Formula(expression) => match **expression {
+            Expr::Error(kind) => Value::Error(kind),
+            _ => Value::Empty,
+        },
+    }
 }
 
 fn position(

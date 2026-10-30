@@ -77,9 +77,20 @@ pub struct Sheet {
     /// The pictures and charts of the file, drawn as it was opened, for an editor to show.
     pub(crate) pictures: Vec<SheetDrawing>,
     pub(crate) comments: BTreeMap<CellRef, Comment>,
+    /// The values a file stored for the formulas that call outside the workbook, with the
+    /// formula each was stored for: such a formula is never computed and shows what it showed.
+    pub(crate) stored: BTreeMap<CellRef, (Expr, Value)>,
 }
 
 impl Sheet {
+    /// The value a file stored for a cell's formula, while the cell still holds that formula.
+    pub(crate) fn stored_value(&self, cell: CellRef, expression: &Expr) -> Option<&Value> {
+        self.stored
+            .get(&cell)
+            .filter(|(stored, _)| stored == expression)
+            .map(|(_, value)| value)
+    }
+
     /// The comments of the sheet's cells, by cell.
     #[must_use]
     pub fn comments(&self) -> &BTreeMap<CellRef, Comment> {

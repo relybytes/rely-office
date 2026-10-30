@@ -479,3 +479,60 @@ fn a_name_the_model_cannot_keep_is_left_out() {
     assert_eq!(kept[0].name, "Good");
     assert!(kept[0].hidden);
 }
+
+#[test]
+fn keeps_the_values_a_file_stored_for_functions_that_reach_outside() {
+    let mut writer = rust_xlsxwriter::Workbook::new();
+    let sheet = writer.add_worksheet();
+    sheet
+        .write_formula(
+            0,
+            0,
+            rust_xlsxwriter::Formula::new("=_xlfn.WEBSERVICE(\"https://example.com/city\")")
+                .set_result("Roma"),
+        )
+        .unwrap();
+    sheet
+        .write_formula(
+            1,
+            0,
+            rust_xlsxwriter::Formula::new(
+                "=_xlfn.FILTERXML(_xlfn.WEBSERVICE(\"https://example.com/feed\"),\"//n\")",
+            )
+            .set_result("7"),
+        )
+        .unwrap();
+    sheet.write_formula(2, 0, "=A1&\"!\"").unwrap();
+    let bytes = writer.save_to_buffer().unwrap();
+
+    let mut read = read_spreadsheet(&bytes, None, &Limits::default(), Locale::English).unwrap();
+    assert_eq!(read.value(0, cell("A1")), Value::Text("Roma".to_owned()));
+    assert_eq!(read.value(0, cell("A2")), Value::Number(7.0));
+    assert_eq!(read.value(0, cell("A3")), Value::Text("Roma!".to_owned()));
+    read.set_input(0, cell("B1"), "1", Locale::English).unwrap();
+    assert_eq!(read.value(0, cell("A1")), Value::Text("Roma".to_owned()));
+
+    let written = member(&write_xlsx(&read).unwrap(), "xl/worksheets/sheet1.xml");
+    assert!(
+        written.contains("_xlfn.WEBSERVICE(&quot;https://example.com/city&quot;)"),
+        "{written}"
+    );
+    assert!(written.contains("Roma"));
+
+    read.insert_rows(0, 0, 2).unwrap();
+    assert_eq!(read.value(0, cell("A3")), Value::Text("Roma".to_owned()));
+    assert_eq!(read.value(0, cell("A5")), Value::Text("Roma!".to_owned()));
+
+    read.set_input(
+        0,
+        cell("A3"),
+        "=WEBSERVICE(\"https://example.com/other\")",
+        Locale::English,
+    )
+    .unwrap();
+    assert_eq!(read.value(0, cell("A3")), Value::Error(ErrorKind::Value));
+    assert_eq!(
+        read.sheets()[0].cell(cell("A3")).unwrap().input.text(),
+        "=WEBSERVICE(\"https://example.com/other\")"
+    );
+}

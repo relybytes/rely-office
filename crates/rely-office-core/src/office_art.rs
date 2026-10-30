@@ -514,5 +514,10 @@ pub(crate) fn preset_of_shape_type(kind: u16) -> Option<&'static str> {
     })
 }
 
+pub(crate) mod freeform;
+mod legacy_shapes;
+
+pub(crate) use legacy_shapes::legacy_shape_paths;
+
 #[cfg(test)]
 mod tests;

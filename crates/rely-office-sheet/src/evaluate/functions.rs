@@ -49,6 +49,14 @@ fn integer(number: f64) -> Result<i64, ErrorKind> {
     Ok(number.trunc() as i64)
 }
 
+/// A function that reaches outside the workbook, which is never called: a formula holding one
+/// shows the value its file stored, and without one `#VALUE!`.
+fn external(name: &str) -> Answer {
+    crate::formula::EXTERNAL_FUNCTIONS
+        .contains(&name)
+        .then_some(Err(ErrorKind::Value))
+}
+
 fn count_value(count: usize) -> Value {
     #[expect(clippy::cast_precision_loss, reason = "counts stay far below 2^52")]
     Value::Number(count as f64)
@@ -69,8 +77,11 @@ impl Evaluator<'_> {
             .or_else(|| self.complex(sheet, name, arguments))
             .or_else(|| self.database(sheet, name, arguments))
             .or_else(|| self.securities(sheet, name, arguments))
+            .or_else(|| self.smoothing(sheet, name, arguments))
+            .or_else(|| self.currency(sheet, name, arguments))
             .or_else(|| self.reference_value(sheet, name, arguments))
             .or_else(|| self.strings(sheet, name, arguments))
+            .or_else(|| external(name))
     }
 
     fn optional_number(

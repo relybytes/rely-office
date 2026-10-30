@@ -254,3 +254,122 @@ fn depreciates_the_french_way_and_by_variable_balance() {
         ErrorKind::Num
     );
 }
+
+#[test]
+fn prices_and_yields_a_bond_with_an_odd_last_period() {
+    // Excel's documented examples, which LibreOffice gives too.
+    close(
+        "=ODDLPRICE(DATE(2008,2,7),DATE(2008,6,15),DATE(2007,10,15),0.0375,0.0405,100,2,0)",
+        99.878_286_014_721_3,
+        1e-9,
+    );
+    close(
+        "=ODDLYIELD(DATE(2008,4,20),DATE(2008,6,15),DATE(2007,12,24),0.0375,99.875,100,2,0)",
+        0.045_192_235_629_169,
+        1e-12,
+    );
+    // On basis 1 each quasi-coupon period is as long as it is, as Excel defines it; LibreOffice
+    // reads a year fraction instead and gives 99.8759.
+    close(
+        "=ODDLPRICE(DATE(2008,2,7),DATE(2008,6,15),DATE(2007,10,15),0.0375,0.0405,100,2,1)",
+        (100.0 + (1.0 + 61.0 / 183.0) * 1.875) / (1.0 + 129.0 / 183.0 * 0.02025)
+            - 115.0 / 183.0 * 1.875,
+        1e-9,
+    );
+    // The other bases, a quarterly bond and a long last period, against LibreOffice.
+    close(
+        "=ODDLPRICE(DATE(2008,2,7),DATE(2008,6,15),DATE(2007,10,15),0.0375,0.0405,100,4,3)",
+        99.878_795_750_864,
+        1e-9,
+    );
+    close(
+        "=ODDLPRICE(DATE(2008,2,7),DATE(2009,6,15),DATE(2007,10,15),0.0375,0.0405,100,1,0)",
+        99.553_780_769_109_2,
+        1e-9,
+    );
+    close(
+        "=ODDLPRICE(DATE(2008,2,7),DATE(2008,6,15),DATE(2007,10,15),0.0375,0.0405,100,2,4)",
+        99.878_286_014_721_3,
+        1e-9,
+    );
+    close(
+        "=ODDLYIELD(DATE(2008,2,7),DATE(2008,6,15),DATE(2007,10,15),0.0375,99,100,2,2)",
+        0.065_277_781_135_688_1,
+        1e-12,
+    );
+    close(
+        "=ODDLYIELD(DATE(2008,2,7),DATE(2008,6,15),DATE(2007,10,15),0.0375,99,100,2,4)",
+        0.065_515_806_988_352_7,
+        1e-12,
+    );
+    assert_eq!(
+        error("=ODDLPRICE(DATE(2008,2,7),DATE(2008,6,15),DATE(2008,3,1),0.0375,0.0405,100,2,0)"),
+        ErrorKind::Num
+    );
+    assert_eq!(
+        error("=ODDLYIELD(DATE(2008,2,7),DATE(2008,6,15),DATE(2007,10,15),0.0375,0,100,2,0)"),
+        ErrorKind::Num
+    );
+    assert_eq!(
+        error("=ODDLPRICE(DATE(2008,2,7),DATE(2008,6,15),DATE(2007,10,15),0.0375,0.04,100,3,0)"),
+        ErrorKind::Num
+    );
+}
+
+#[test]
+fn prices_and_yields_a_bond_with_an_odd_first_period() {
+    // Excel's documented examples; LibreOffice computes neither.
+    close(
+        "=ODDFPRICE(DATE(2008,11,11),DATE(2021,3,1),DATE(2008,10,15),DATE(2009,3,1),0.0785,0.0625,100,2,1)",
+        113.597_717_474_079,
+        1e-9,
+    );
+    close(
+        "=ODDFYIELD(DATE(2008,11,11),DATE(2021,3,1),DATE(2008,10,15),DATE(2009,3,1),0.0575,84.5,100,2,0)",
+        0.077_245_541_597_298_9,
+        1e-10,
+    );
+    // A yield found from a price gives that price back, also with a long first period.
+    let price = number(
+        "=ODDFPRICE(DATE(2008,11,11),DATE(2021,3,1),DATE(2007,10,15),DATE(2009,3,1),0.0785,0.0625,100,2,0)",
+    );
+    close(
+        &format!(
+            "=ODDFYIELD(DATE(2008,11,11),DATE(2021,3,1),DATE(2007,10,15),DATE(2009,3,1),0.0785,{price},100,2,0)"
+        ),
+        0.0625,
+        1e-10,
+    );
+    // A first period of exactly one coupon prices as a regular bond does.
+    let regular = number("=PRICE(DATE(2008,11,11),DATE(2021,3,1),0.0785,0.0625,100,2,0)");
+    close(
+        "=ODDFPRICE(DATE(2008,11,11),DATE(2021,3,1),DATE(2008,9,1),DATE(2009,3,1),0.0785,0.0625,100,2,0)",
+        regular,
+        1e-9,
+    );
+    assert_eq!(
+        error(
+            "=ODDFPRICE(DATE(2008,11,11),DATE(2021,3,1),DATE(2008,12,15),DATE(2009,3,1),0.0785,0.0625,100,2,1)"
+        ),
+        ErrorKind::Num
+    );
+    assert_eq!(
+        error(
+            "=ODDFPRICE(DATE(2008,11,11),DATE(2021,3,1),DATE(2008,10,15),DATE(2009,3,1),-0.01,0.0625,100,2,1)"
+        ),
+        ErrorKind::Num
+    );
+    assert_eq!(
+        error(
+            "=ODDFYIELD(DATE(2008,11,11),DATE(2021,3,1),DATE(2008,10,15),DATE(2009,3,1),0.0785,0,100,2,1)"
+        ),
+        ErrorKind::Num
+    );
+}
+
+fn number(formula: &str) -> f64 {
+    match value(formula) {
+        Value::Number(number) => number,
+        other => panic!("{formula} gave {other:?}"),
+    }
+}

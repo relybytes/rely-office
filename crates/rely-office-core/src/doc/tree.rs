@@ -40,7 +40,9 @@ use crate::geometry::{
     DrawnShape, flip_paths, preset_geometry, preset_geometry_with_values, rectangle_paths,
     shapes_svg,
 };
-use crate::office_art::{drawingml_adjustments, preset_of_shape_type, upside_down_from_preset};
+use crate::office_art::{
+    drawingml_adjustments, legacy_shape_paths, preset_of_shape_type, upside_down_from_preset,
+};
 use crate::{Limits, OfficeError};
 use table::TableBuilder;
 
@@ -1358,10 +1360,16 @@ impl Converter<'_> {
             3 => preset_geometry("ellipse", None, width, height)?,
             20 | 32 => preset_geometry("line", None, width, height)?,
             kind => {
-                let preset = preset_of_shape_type(kind)?;
-                match drawingml_adjustments(kind, &shape.adjust, width, height) {
-                    Some(values) => preset_geometry_with_values(preset, &values, width, height)?,
-                    None => preset_geometry(preset, None, width, height)?,
+                if let Some(paths) = legacy_shape_paths(kind, &shape.adjust, width, height) {
+                    paths
+                } else {
+                    let preset = preset_of_shape_type(kind)?;
+                    match drawingml_adjustments(kind, &shape.adjust, width, height) {
+                        Some(values) => {
+                            preset_geometry_with_values(preset, &values, width, height)?
+                        }
+                        None => preset_geometry(preset, None, width, height)?,
+                    }
                 }
             }
         };

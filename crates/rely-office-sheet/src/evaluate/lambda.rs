@@ -13,7 +13,7 @@
 use std::rc::Rc;
 
 use super::{Evaluator, MAX_SPILL_CELLS, Operand};
-use crate::formula::{Expr, FUNCTION_NAMES};
+use crate::formula::{EXTERNAL_FUNCTIONS, Expr, FUNCTION_NAMES};
 use crate::value::{ErrorKind, Value};
 
 /// How deep functions may call functions, a recursive name included, before `#NUM!`.
@@ -58,7 +58,9 @@ impl Evaluator<'_> {
             "BYROW" => self.by_line(sheet, arguments, true),
             "BYCOL" => self.by_line(sheet, arguments, false),
             "MAKEARRAY" => self.make_array(sheet, arguments),
-            _ if FUNCTION_NAMES.binary_search(&name).is_err() => {
+            _ if FUNCTION_NAMES.binary_search(&name).is_err()
+                && !EXTERNAL_FUNCTIONS.contains(&name) =>
+            {
                 // A name the grid does not define as a function: a function bound to the name.
                 match self.name_operand(sheet, name) {
                     Some(Operand::Lambda(closure)) => {
