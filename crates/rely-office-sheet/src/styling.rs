@@ -7,7 +7,9 @@
 //! How cells look and which cells are merged: the styles of a workbook, kept once each and
 //! shared by the cells that use them, and the edits that change them.
 
-use rely_office_core::{Border, CellRange, CellStyle, HorizontalAlignment, VerticalAlignment};
+use rely_office_core::{
+    Border, CellRange, CellStyle, HorizontalAlignment, MAX_INDENT, VerticalAlignment,
+};
 
 use crate::address::{CellRef, MAX_COLUMNS, MAX_ROWS};
 use crate::model::{EditError, NumberFormat, Workbook};
@@ -45,6 +47,8 @@ pub struct StylePatch {
     /// `bottom`, `center` or `top`.
     pub vertical: Option<String>,
     pub wrap: Option<bool>,
+    /// Steps of indent, 0 to [`MAX_INDENT`]; 0 removes it.
+    pub indent: Option<u8>,
     /// An Excel number format code, `#,##0.00 "€"`; an empty one is General.
     pub number_format: Option<String>,
 }
@@ -136,6 +140,12 @@ impl StylePatch {
         }
         if let Some(wrap) = self.wrap {
             changed.wrap = wrap;
+        }
+        if let Some(indent) = self.indent {
+            if indent > MAX_INDENT {
+                return Err(invalid());
+            }
+            changed.indent = indent;
         }
         if let Some(code) = &self.number_format {
             if code.chars().count() > 255 {

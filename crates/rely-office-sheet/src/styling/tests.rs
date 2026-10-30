@@ -38,6 +38,7 @@ fn patches_the_look_of_a_rectangle_and_shares_its_styles() {
         horizontal: Some("center".to_owned()),
         vertical: Some("top".to_owned()),
         wrap: Some(true),
+        indent: Some(2),
         number_format: Some("#,##0.00 \"€\"".to_owned()),
     };
     workbook.set_style(0, (at(1, 1), at(0, 0)), &patch).unwrap();
@@ -50,6 +51,7 @@ fn patches_the_look_of_a_rectangle_and_shares_its_styles() {
     assert_eq!(style.horizontal, Some(HorizontalAlignment::Center));
     assert_eq!(style.vertical, Some(VerticalAlignment::Top));
     assert!(style.wrap);
+    assert_eq!(style.indent, 2);
     assert_eq!(workbook.styles().len(), 2, "four cells share one style");
     assert_eq!(workbook.style_id(0, at(0, 0)), 1);
     assert_eq!(workbook.style_id(0, at(2, 2)), 0);
@@ -75,6 +77,7 @@ fn patches_the_look_of_a_rectangle_and_shares_its_styles() {
         horizontal: Some("general".to_owned()),
         vertical: Some("bottom".to_owned()),
         wrap: Some(false),
+        indent: Some(0),
         number_format: Some("General".to_owned()),
     };
     workbook.set_style(0, (at(0, 0), at(1, 1)), &back).unwrap();
@@ -98,6 +101,10 @@ fn refuses_style_values_no_cell_can_show() {
         },
         StylePatch {
             font_size: Some(f64::NAN),
+            ..StylePatch::default()
+        },
+        StylePatch {
+            indent: Some(251),
             ..StylePatch::default()
         },
         StylePatch {
@@ -344,4 +351,28 @@ fn shows_the_format_set_on_a_cell_over_the_style_code() {
     assert_eq!(workbook.display(0, at(0, 0), IT), "0,13");
     assert_eq!(workbook.style(0, at(0, 0)).number_format, None);
     assert_eq!(workbook.style(0, at(0, 0)).fill.as_deref(), Some("FF0000"));
+}
+
+#[test]
+fn an_indent_survives_an_xlsx_and_an_ods() {
+    let mut workbook = Workbook::new();
+    workbook.set_input(0, at(0, 0), "rientro", IT).unwrap();
+    let patch = StylePatch {
+        indent: Some(3),
+        ..StylePatch::default()
+    };
+    workbook.set_style(0, (at(0, 0), at(0, 0)), &patch).unwrap();
+    for (bytes, name) in [
+        (crate::xlsx::write_xlsx(&workbook).unwrap(), "a.xlsx"),
+        (crate::ods::write_ods(&workbook).unwrap(), "a.ods"),
+    ] {
+        let read = crate::xlsx::read_spreadsheet(
+            &bytes,
+            Some(name),
+            &rely_office_core::Limits::default(),
+            IT,
+        )
+        .unwrap();
+        assert_eq!(read.style(0, at(0, 0)).indent, 3, "{name}");
+    }
 }

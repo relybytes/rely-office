@@ -444,17 +444,34 @@ describe('SheetGrid', () => {
     fireEvent.change(within(panel).getByRole('combobox', { name: 'Place Regione' }), { target: { value: 'rows' } });
     fireEvent.change(within(panel).getByRole('combobox', { name: 'Place Importo' }), { target: { value: 'values' } });
     fireEvent.change(within(panel).getByRole('combobox', { name: 'Summarise by Importo' }), { target: { value: 'max' } });
+    fireEvent.change(within(panel).getByRole('combobox', { name: 'Layout' }), { target: { value: 'tabular' } });
+    fireEvent.change(within(panel).getByRole('combobox', { name: 'Subtotals' }), { target: { value: 'none' } });
+    fireEvent.click(within(panel).getByRole('checkbox', { name: 'Repeat item labels' }));
     fireEvent.click(within(panel).getByRole('button', { name: 'Create pivot table' }));
 
     const tables = sheet.pivotTables(0);
     expect(tables).toHaveLength(1);
-    expect(tables[0]).toMatchObject({ rows: [{ field: 0 }], values: [{ field: 1, function: 'max' }], fields: ['Regione', 'Importo'] });
+    expect(tables[0]).toMatchObject({
+      rows: [{ field: 0 }],
+      values: [{ field: 1, function: 'max' }],
+      fields: ['Regione', 'Importo'],
+      layout: 'tabular',
+      subtotals: 'none',
+      repeatLabels: true,
+    });
     expect(cell('D1').textContent).toBe('Regione');
     expect(cell('E2').textContent).toBe('10');
 
     sheet.setInputs(0, [[1, 1, '30']]);
     fireEvent.click(within(panel).getByRole('button', { name: 'Refresh' }));
     expect(cell('E2').textContent).toBe('30');
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Tabella pivot 1' }));
+    fireEvent.change(within(panel).getByRole('combobox', { name: 'Layout' }), { target: { value: 'compact' } });
+    expect(within(panel).queryByRole('checkbox', { name: 'Repeat item labels' })).toBeNull();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Apply' }));
+    expect(sheet.pivotTables(0)[0]?.layout).toBe('compact');
+    expect(cell('D1').textContent).toBe('Etichette di riga');
 
     fireEvent.click(within(panel).getByRole('button', { name: 'Tabella pivot 1' }));
     fireEvent.change(within(panel).getByRole('textbox', { name: 'Starts at cell' }), { target: { value: 'zz' } });

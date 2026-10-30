@@ -714,6 +714,8 @@ export interface CellStyle {
   horizontal?: 'left' | 'center' | 'right' | 'justify' | null;
   vertical?: 'top' | 'center' | 'bottom' | null;
   wrap: boolean;
+  /** The indent from the text's edge, in Excel's steps (10 points each); 0 when none. */
+  indent?: number;
   /** An Excel number format code; unset is General. */
   numberFormat?: string | null;
 }
@@ -735,6 +737,8 @@ export interface StylePatch {
   horizontal?: 'general' | 'left' | 'center' | 'right' | 'justify';
   vertical?: 'bottom' | 'center' | 'top';
   wrap?: boolean;
+  /** Steps of indent, 0 to 250; 0 removes it. */
+  indent?: number;
   /** An Excel number format code, `#,##0.00 "€"`; empty is General. */
   numberFormat?: string;
 }
@@ -886,7 +890,19 @@ export interface PivotTableDefinition {
   /** Both shown when left out. */
   rowGrandTotals?: boolean;
   columnGrandTotals?: boolean;
+  /** Excel's forms: `compact` (the default) indents the row fields in one column, `outline` and `tabular` give each its own. */
+  layout?: PivotLayout;
+  /** Where the total of each group of an outer field shows; `top` when left out. */
+  subtotals?: PivotSubtotals;
+  /** Every row shows the labels of its groups, in the outline and tabular forms. */
+  repeatLabels?: boolean;
 }
+
+/** How a pivot table lays out its row labels. */
+export type PivotLayout = 'compact' | 'outline' | 'tabular';
+
+/** Where a pivot table shows a group's total: on its row, below it, or not at all. The tabular form shows it below. */
+export type PivotSubtotals = 'top' | 'bottom' | 'none';
 
 /** A pivot table of a sheet, with the names of its source's fields. */
 export interface SheetPivotTable {
@@ -905,6 +921,9 @@ export interface SheetPivotTable {
   filters: Required<PivotFieldPlacement>[];
   rowGrandTotals: boolean;
   columnGrandTotals: boolean;
+  layout: PivotLayout;
+  subtotals: PivotSubtotals;
+  repeatLabels: boolean;
   fields: string[];
 }
 

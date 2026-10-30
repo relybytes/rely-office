@@ -20,7 +20,9 @@ use super::escape;
 use crate::address::CellRef;
 use crate::formula::number_text;
 use crate::model::Workbook;
-use crate::pivots::{Key, PivotField, PivotFunction, PivotTable, PivotValue, item_label};
+use crate::pivots::{
+    Key, PivotField, PivotFunction, PivotLayout, PivotSubtotals, PivotTable, PivotValue, item_label,
+};
 use crate::value::{Locale, Value};
 
 /// A pivot table the writer makes, numbered across the workbook, with the id of its cache.
@@ -282,9 +284,9 @@ pub(super) fn table_definition_xml(
             r#"name="{}" cacheId="{}" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" "#,
             r#"applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" "#,
             r#"dataCaption="{}" updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" "#,
-            r#"itemPrintTitles="1" createdVersion="6" indent="0" outline="1" outlineData="1" "#,
+            r#"itemPrintTitles="1" createdVersion="6" {}"#,
             r#"multipleFieldFilters="0"{}{}>"#,
-            r#"<location ref="{}" firstHeaderRow="0" firstDataRow="1" firstDataCol="{}"{}/>"#
+            r#"<location ref="{}" firstHeaderRow="1" firstDataRow="{}" firstDataCol="{}"{}/>"#
         ),
         escape(&table.name),
         cache_id,
@@ -292,6 +294,11 @@ pub(super) fn table_definition_xml(
             "Valori"
         } else {
             "Values"
+        },
+        match table.layout {
+            PivotLayout::Compact => r#"outline="1" outlineData="1" "#,
+            PivotLayout::Outline => r#"compact="0" compactData="0" outline="1" outlineData="1" "#,
+            PivotLayout::Tabular => r#"compact="0" compactData="0" "#,
         },
         if table.row_grand_totals {
             ""
@@ -304,7 +311,8 @@ pub(super) fn table_definition_xml(
             r#" colGrandTotals="0""#
         },
         range_reference(&location),
-        table.rows.len(),
+        table.header_rows(),
+        table.label_columns(),
         if table.filters.is_empty() {
             String::new()
         } else {
@@ -337,10 +345,12 @@ pub(super) fn table_definition_xml(
         match placement {
             Some((placed, axis)) => {
                 let items = items_of(records, field as usize);
+                let subtotal = table.subtotals != PivotSubtotals::Off;
                 let _ = write!(
                     xml,
-                    r#"<pivotField axis="{axis}"{data} showAll="0"><items count="{}">"#,
-                    items.len() + 1
+                    r#"<pivotField axis="{axis}"{data}{} showAll="0"><items count="{}">"#,
+                    field_layout(table),
+                    items.len() + usize::from(subtotal)
                 );
                 for (index, item) in items.iter().enumerate() {
                     let hidden = if placed.hidden.contains(&item_label(item)) {
@@ -350,7 +360,18 @@ pub(super) fn table_definition_xml(
                     };
                     let _ = write!(xml, r#"<item{hidden} x="{index}"/>"#);
                 }
-                xml.push_str(r#"<item t="default"/></items></pivotField>"#);
+                if subtotal {
+                    xml.push_str(r#"<item t="default"/>"#);
+                }
+                xml.push_str("</items>");
+                if table.repeat_labels && axis == "axisRow" {
+                    xml.push_str(concat!(
+                        r#"<extLst><ext uri="{2946ED86-A175-432a-8AC1-64E0C546D7DE}" "#,
+                        r#"xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">"#,
+                        r#"<x14:pivotField fillDownLabels="1"/></ext></extLst>"#
+                    ));
+                }
+                xml.push_str("</pivotField>");
             }
             None => {
                 let _ = write!(xml, r#"<pivotField{data} showAll="0"/>"#);
@@ -421,6 +442,40 @@ pub(super) fn table_definition_xml(
         r#"showRowStripes="0" showColStripes="0" showLastColumn="1"/></pivotTableDefinition>"#
     ));
     xml
+}
+
+/// The attributes of a placed field that set the table's form and its subtotals.
+fn field_layout(table: &PivotTable) -> &'static str {
+    match (table.layout, table.subtotals) {
+        (PivotLayout::Compact, PivotSubtotals::Top) => "",
+        (PivotLayout::Compact, PivotSubtotals::Bottom) => r#" subtotalTop="0""#,
+        (PivotLayout::Compact, PivotSubtotals::Off) => r#" defaultSubtotal="0""#,
+        (PivotLayout::Outline, PivotSubtotals::Top) => r#" compact="0""#,
+        (PivotLayout::Outline, PivotSubtotals::Bottom) => r#" compact="0" subtotalTop="0""#,
+        (PivotLayout::Outline, PivotSubtotals::Off) => r#" compact="0" defaultSubtotal="0""#,
+        (PivotLayout::Tabular, PivotSubtotals::Off) => {
+            r#" compact="0" outline="0" defaultSubtotal="0""#
+        }
+        (PivotLayout::Tabular, PivotSubtotals::Top) => r#" compact="0" outline="0""#,
+        (PivotLayout::Tabular, PivotSubtotals::Bottom) => {
+            r#" compact="0" outline="0" subtotalTop="0""#
+        }
+    }
+}
+
+/// How a placed field of a file lays out: compact, outline, subtotals at the top, shown, and
+/// its labels repeated; what Excel assumes when the file says nothing.
+#[derive(Debug, Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is one of the field's own flags in the file"
+)]
+struct FieldForm {
+    compact: bool,
+    outline: bool,
+    subtotal_top: bool,
+    subtotal: bool,
+    repeat: bool,
 }
 
 /// The attributes of an element by local name.
@@ -532,6 +587,8 @@ fn read_table(
     let mut location: Option<CellRange> = None;
     let mut row_totals = true;
     let mut column_totals = true;
+    let mut table_compact = true;
+    let mut forms: Vec<FieldForm> = Vec::new();
     let mut page_count = 0_u32;
     // Each pivot field: its axis and the indexes of its hidden items.
     let mut fields: Vec<(Option<String>, Vec<usize>)> = Vec::new();
@@ -568,6 +625,7 @@ fn read_table(
                     .clone_into(&mut name);
                 row_totals = flag("rowGrandTotals");
                 column_totals = flag("colGrandTotals");
+                table_compact = flag("compact");
             }
             "location" => {
                 location = attribute(&found, "ref").and_then(CellRange::parse);
@@ -575,8 +633,23 @@ fn read_table(
                     .and_then(|count| u32::try_from(count).ok())
                     .unwrap_or(0);
             }
+            // The extension of a field, `x14:pivotField`, inside the field it extends.
+            "pivotField" if in_field => {
+                if matches!(attribute(&found, "fillDownLabels"), Some("1" | "true"))
+                    && let Some(form) = forms.last_mut()
+                {
+                    form.repeat = true;
+                }
+            }
             "pivotField" => {
                 fields.push((attribute(&found, "axis").map(str::to_owned), Vec::new()));
+                forms.push(FieldForm {
+                    compact: flag("compact"),
+                    outline: flag("outline"),
+                    subtotal_top: flag("subtotalTop"),
+                    subtotal: flag("defaultSubtotal"),
+                    repeat: false,
+                });
                 in_field = !empty;
             }
             "item" if in_field => {
@@ -684,6 +757,33 @@ fn read_table(
         .collect();
     table.row_grand_totals = row_totals;
     table.column_grand_totals = column_totals;
+    // The first row field sets the form, else the first column field.
+    if let Some(form) = table
+        .rows
+        .first()
+        .or_else(|| table.columns.first())
+        .and_then(|field| forms.get(field.field as usize))
+    {
+        table.layout = if !form.outline {
+            PivotLayout::Tabular
+        } else if form.compact && table_compact {
+            PivotLayout::Compact
+        } else {
+            PivotLayout::Outline
+        };
+        table.subtotals = if !form.subtotal {
+            PivotSubtotals::Off
+        } else if form.subtotal_top {
+            PivotSubtotals::Top
+        } else {
+            PivotSubtotals::Bottom
+        };
+    }
+    table.repeat_labels = table.rows.iter().any(|field| {
+        forms
+            .get(field.field as usize)
+            .is_some_and(|form| form.repeat)
+    });
     table.area = Some(CellRange {
         first_row: anchor_row,
         ..location

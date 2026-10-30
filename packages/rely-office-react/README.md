@@ -137,7 +137,8 @@ charts panel inserts a chart of the selection in the type chosen, and changes th
 type, title, legend, stacking and data. A chart is chosen by a click, moved by dragging it,
 resized by its corner and removed with Delete. The pivot panel makes a pivot table of the
 selection, places each column of it on the rows, the columns, the values (with how they are
-summarised) or the filters, and refreshes and removes the tables of the sheet.
+summarised) or the filters, sets its form (compact, outline or tabular), where its subtotals go
+and whether its labels repeat, and refreshes and removes the tables of the sheet.
 
 ## A presentation
 

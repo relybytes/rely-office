@@ -27,6 +27,13 @@ pub(super) struct Closure {
     captured: Vec<Binding>,
 }
 
+impl Closure {
+    /// How many parameters the function takes.
+    pub(super) fn arity(&self) -> usize {
+        self.parameters.len()
+    }
+}
+
 /// A name a `LET` or a function binds; `None` for a parameter the call left out.
 pub(super) type Binding = (String, Option<Operand>);
 

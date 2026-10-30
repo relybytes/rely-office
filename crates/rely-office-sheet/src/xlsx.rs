@@ -939,6 +939,9 @@ fn alignment_xml(style: &CellStyle) -> String {
             HorizontalAlignment::Justify => "justify",
         };
         let _ = write!(xml, r#" horizontal="{value}""#);
+    } else if style.indent > 0 {
+        // Excel indents only text aligned to an edge.
+        xml.push_str(r#" horizontal="left""#);
     }
     if let Some(vertical) = style.vertical {
         let value = match vertical {
@@ -950,6 +953,9 @@ fn alignment_xml(style: &CellStyle) -> String {
     }
     if style.wrap {
         xml.push_str(r#" wrapText="1""#);
+    }
+    if style.indent > 0 {
+        let _ = write!(xml, r#" indent="{}""#, style.indent);
     }
     xml
 }

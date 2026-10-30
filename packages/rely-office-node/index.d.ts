@@ -63,6 +63,8 @@ import type {
   CellComment,
   CommentReply,
   PivotFunction,
+  PivotLayout,
+  PivotSubtotals,
   PivotFieldPlacement,
   PivotValueField,
   PivotTableDefinition,

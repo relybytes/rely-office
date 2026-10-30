@@ -8,8 +8,8 @@
 //! as JSON.
 
 use rely_office_sheet::{
-    CellRange, CellRef, EditError, PivotField, PivotFunction, PivotTable, PivotValue, Value,
-    item_label,
+    CellRange, CellRef, EditError, PivotField, PivotFunction, PivotLayout, PivotSubtotals,
+    PivotTable, PivotValue, Value, item_label,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -98,6 +98,14 @@ struct PivotInput {
     row_grand_totals: bool,
     #[serde(default = "shown")]
     column_grand_totals: bool,
+    /// `compact`, `outline` or `tabular`; compact when left out.
+    #[serde(default)]
+    layout: Option<String>,
+    /// `top`, `bottom` or `none`; top when left out.
+    #[serde(default)]
+    subtotals: Option<String>,
+    #[serde(default)]
+    repeat_labels: bool,
 }
 
 fn shown() -> bool {
@@ -122,6 +130,9 @@ struct PivotSummary {
     filters: Vec<FieldJson>,
     row_grand_totals: bool,
     column_grand_totals: bool,
+    layout: &'static str,
+    subtotals: &'static str,
+    repeat_labels: bool,
     fields: Vec<String>,
 }
 
@@ -209,6 +220,9 @@ impl SheetDocument {
                     filters: fields_json(&table.filters),
                     row_grand_totals: table.row_grand_totals,
                     column_grand_totals: table.column_grand_totals,
+                    layout: table.layout.name(),
+                    subtotals: table.subtotals.name(),
+                    repeat_labels: table.repeat_labels,
                     fields,
                 }
             })
@@ -313,6 +327,20 @@ impl SheetDocument {
             .collect::<Result<_, Failure>>()?;
         table.row_grand_totals = input.row_grand_totals;
         table.column_grand_totals = input.column_grand_totals;
+        if let Some(layout) = input.layout {
+            table.layout = PivotLayout::parse(&layout).ok_or_else(|| {
+                Failure::new("INVALID_INPUT", format!("unknown pivot layout {layout}"))
+            })?;
+        }
+        if let Some(subtotals) = input.subtotals {
+            table.subtotals = PivotSubtotals::parse(&subtotals).ok_or_else(|| {
+                Failure::new(
+                    "INVALID_INPUT",
+                    format!("unknown pivot subtotals {subtotals}"),
+                )
+            })?;
+        }
+        table.repeat_labels = input.repeat_labels;
         Ok(table)
     }
 }

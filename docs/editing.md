@@ -216,8 +216,8 @@ results.
 ### Styles, merges and sizes
 
 A cell can carry a `CellStyle`: font (family, size, bold, italic, underline, strike, colour),
-fill, borders per side, horizontal and vertical alignment, wrapping, and a number format code.
-Styles are kept once in the workbook and cells point at them.
+fill, borders per side, horizontal and vertical alignment, wrapping, an indent (0 to 250 steps of
+10 points, `indent` in xlsx, `fo:margin-left` in ods) and a number format code. Styles are kept once in the workbook and cells point at them.
 
 - `set_style(sheet, range, patch)` merges a `StylePatch` into every cell of a range: only the
   fields the patch names change, so making a range bold keeps its fill.
@@ -344,11 +344,19 @@ does not rename (`XOR`, `INT`) keeps its name.
   stored and is written back as it was, through edits that move its cell; typed anew it is
   `#VALUE!`.
 - **Arrays**: a formula whose result is an array spills it into the cells below and to the right
-  of its own (`=FILTER(A2:C9;B2:B9="Nord")`). `GROUPBY` and `PIVOTBY` summarise by rows, and by
-  rows and columns, with a function named (`SUM`, any function of the list) or a `LAMBDA`, field
-  headers detected or set, grand totals at the end or the start, a subtotal per first key for a
-  depth of 2, a sort by key or value column and a filter; the `relative_to` of `PIVOTBY` and the
-  field relationship of `GROUPBY` are not read. `FILTER`, `SORT`, `SORTBY`, `UNIQUE`, `SEQUENCE`,
+  of its own (`=FILTER(A2:C9;B2:B9="Nord")`). `GROUPBY` and `PIVOTBY` take every argument of
+  Excel's: the function is one named (`SUM`, any function of the list), a `LAMBDA`, or several
+  stacked with `HSTACK` or `VSTACK` (`HSTACK(SUM;AVERAGE)`, a column per function and value
+  column, function by function, captioned `Importo SUM`); a function of two arguments, `PERCENTOF`
+  or a two-parameter `LAMBDA`, also gets the values a group is measured against: the whole for
+  `GROUPBY`, and for `PIVOTBY` its `relative_to`, the column total (0, the default), the row total
+  (1), the grand total (2), or the total of the parent column (3) or row (4). Field headers are
+  detected or set (0 to 3); a total depth of 1 puts the grand total at the end, 2 and deeper add a
+  subtotal per level of key, a negative depth puts them first; the sort order is one column or an
+  array of them (`{-1;2}`), keys then summaries, negative for descending, applied level by level
+  through the hierarchy (a group ranks by its own summary), or row by row with the field
+  relationship of `GROUPBY` set to 1, which takes no subtotals; the filter keeps the rows it marks.
+  `FILTER`, `SORT`, `SORTBY`, `UNIQUE`, `SEQUENCE`,
   `TRANSPOSE`, `TAKE`, `DROP`, `CHOOSEROWS`, `CHOOSECOLS`, `VSTACK`, `HSTACK`, `TOCOL`, `TOROW`,
   `WRAPROWS`, `WRAPCOLS`, `EXPAND`, `MMULT`, `MUNIT`, `FREQUENCY` and `TEXTSPLIT` return one, and so
   does a range or an operator over ranges (`=C2:C9*2`), computed value by value with a single value
@@ -456,9 +464,24 @@ columns of the source placed on its rows, its columns and its filters (`PivotFie
 with the labels of the items it hides), and the columns it summarises (`PivotValue`, by a
 `PivotFunction`: sum, count, average, max, min, product, count numbers, standard deviation and
 variance, sample and population, with an optional caption). From its anchor the table writes its
-filters, each with `(All)`, the one item shown or `(Multiple Items)`, a blank row, a header row,
-a row per distinct row label and a grand total row, and across a column per distinct column
-label and value with a grand total column; labels are ordered numbers first, then text ignoring
+filters, each with `(All)`, the one item shown or `(Multiple Items)`, a blank row, then the table
+in one of Excel's three forms (`PivotLayout`):
+
+- **compact**, the default: the row fields share one column headed `Row Labels`, each level
+  indented one step under the one before (the cell style's `indent`), each group on its own row;
+- **outline**: a column per row field headed by its name, each group on its own row above its
+  items;
+- **tabular**: a column per row field, a group's label beside its first item.
+
+`subtotals` (`PivotSubtotals`) puts the total of each group of an outer field on the group's own
+row (`Top`, the default), on a row of its own below it, `Nord Total` (`Bottom`, and always in the
+tabular form, which has no group row), or nowhere (`Off`); the column fields nest the same way,
+with a `Feb Total` column after each group. `repeat_labels` fills every row with the labels of its
+groups in the outline and tabular forms. With column fields the header is a caption row (the value
+caption, then `Column Labels` or the column fields' names), a row of labels per column field and,
+with several values, a row of value captions; the grand total row ends the rows and the grand total
+columns (`Total Sum of Importo` for each of several values) end the columns, each switched by
+`row_grand_totals` and `column_grand_totals`. Labels are ordered numbers first, then text ignoring
 case, logical values, errors and blanks, and the captions are English or Italian (`locale`).
 
 `add_pivot_table`, `set_pivot_table` and `remove_pivot_table` make, change and remove a table,
@@ -472,11 +495,18 @@ the source or is placed twice, past 64 tables a sheet, 10,000 row labels or 256 
 
 An xlsx writes a table as a pivot cache definition, its source and the items of every placed
 field, without records and marked to refresh on load, and a pivot table definition, its location,
-fields, hidden items, page fields and data fields: Excel rebuilds the cache when it opens the file
-and LibreOffice reads the table as it is. Reading an xlsx takes each pivot table whose source is a
-range of the workbook into the model, and carries any other (a source that is a named table or
-another workbook) unchanged, as before. An ods writes and reads the tables as
-`table:data-pilot-tables`, each field named by its header.
+fields, hidden items, page fields and data fields, and its form: `compact`, `outline` and
+`compactData` on the definition, `compact`, `outline`, `subtotalTop` and `defaultSubtotal` on each
+placed field, and `fillDownLabels` in the field's `x14` extension for repeated labels. Excel
+rebuilds the cache when it opens the file and LibreOffice reads the table as it is. Reading an xlsx
+takes each pivot table whose source is a range of the workbook into the model, its form from the
+first row field (else the first column field), and carries any other (a source that is a named
+table or another workbook) unchanged, as before. An ods writes and reads the tables as
+`table:data-pilot-tables`, each field named by its header, with `table:data-pilot-layout-info`
+(`tabular-layout`, `outline-subtotals-top`, `outline-subtotals-bottom`), automatic
+`table:data-pilot-subtotals` and `calcext:repeat-item-labels`. An ods has no compact form: a
+compact table is written, and read back, in outline form, and a tabular table reads back with its
+subtotals at the top, where it draws them below all the same.
 
 ### Charts
 

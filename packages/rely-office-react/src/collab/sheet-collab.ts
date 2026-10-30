@@ -450,6 +450,9 @@ export class SheetCollaboration {
       filters: table.filters,
       rowGrandTotals: table.rowGrandTotals,
       columnGrandTotals: table.columnGrandTotals,
+      layout: table.layout,
+      subtotals: table.subtotals,
+      repeatLabels: table.repeatLabels,
     };
   }
 

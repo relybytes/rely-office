@@ -115,6 +115,7 @@ fn writes_the_look_of_a_cell_and_of_a_rule() {
         horizontal: Some(HorizontalAlignment::Center),
         vertical: Some(VerticalAlignment::Top),
         wrap: true,
+        indent: 2,
         number_format: None,
     };
     cell_style_xml(&mut xml, "ce1", &look, Some("N1"), "table-cell", false);
@@ -126,7 +127,7 @@ fn writes_the_look_of_a_cell_and_of_a_rule() {
         r#"fo:border-right="1pt dotted #000000""#,
         r#"fo:border-bottom="1pt solid #1f4e79""#,
         r#"fo:wrap-option="wrap" style:vertical-align="top" style:text-align-source="fix""#,
-        r#"<style:paragraph-properties fo:text-align="center"/>"#,
+        r#"<style:paragraph-properties fo:text-align="center" fo:margin-left="20pt"/>"#,
         r#"fo:font-family="Arial &amp; co" fo:font-size="10.5pt" fo:font-weight="bold" fo:font-style="italic""#,
         r##"style:text-line-through-style="solid" fo:color="#c00000""##,
     ] {

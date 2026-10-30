@@ -13,9 +13,27 @@ below 1.0, a minor version may change the API.
   `fontsLeftOut`.
 - `Workbook::pictures_in(sheet, locale)` draws the charts of a sheet with their numbers written as
   the locale writes them; the sheet module's `pictures` uses the document's locale.
+- Pivot tables in Excel's three forms, `PivotLayout` compact (now the default), outline and
+  tabular, with `PivotSubtotals` at the top or the bottom of each group or none, and
+  `repeat_labels`; the column fields nest with subtotal columns. They are written to and read from
+  xlsx (the definition's and each field's `compact`, `outline`, `subtotalTop`, `defaultSubtotal`
+  and `fillDownLabels`) and ods (`table:data-pilot-layout-info`, subtotals and
+  `calcext:repeat-item-labels`; compact is kept as outline). `layout`, `subtotals` and
+  `repeatLabels` on a pivot table definition from JavaScript, and in the grid's pivot panel.
+- The indent of a cell: `CellStyle::indent` and `StylePatch::indent`, read and written in xlsx
+  (`indent`) and ods (`fo:margin-left`), drawn by the renderer and the grid.
+- Every argument of `GROUPBY` and `PIVOTBY`: several functions stacked with `HSTACK` or `VSTACK`,
+  `PERCENTOF` and two-parameter `LAMBDA`s measured against the whole or, for `PIVOTBY`, its
+  `relative_to`; subtotals at every level of key, above or below; a sort order of several columns,
+  through the hierarchy or, with the field relationship of `GROUPBY`, row by row.
+
+### Changed
+
+- A pivot table lays out its header as Excel does: with column fields, a caption row then a row
+  of labels per column field, and a value caption row when there are several values; the tabular
+  form shows a subtotal row below each group of an outer row field unless subtotals are off.
 
 ### Fixed
-
 - Editing a spreadsheet together, a formula written while another client inserted or deleted rows
   or columns, renamed or removed a sheet now points where the workbook would have moved it:
   references shift, ranges grow and shrink, what was deleted becomes `#REF!`, and a renamed sheet

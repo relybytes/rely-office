@@ -133,6 +133,15 @@ export interface SheetGridLabels {
   removeReply: string;
   pivotTables: string;
   noPivotTables: string;
+  pivotLayout: string;
+  pivotLayoutCompact: string;
+  pivotLayoutOutline: string;
+  pivotLayoutTabular: string;
+  pivotSubtotals: string;
+  pivotSubtotalsTop: string;
+  pivotSubtotalsBottom: string;
+  pivotSubtotalsNone: string;
+  pivotRepeatLabels: string;
   pivotRefresh: string;
   pivotRefreshAll: string;
   pivotNew: string;
@@ -324,6 +333,15 @@ export const ENGLISH_SHEET_GRID_LABELS: SheetGridLabels = {
   removeReply: 'Remove reply',
   pivotTables: 'Pivot tables',
   noPivotTables: 'No pivot tables on this sheet',
+  pivotLayout: 'Layout',
+  pivotLayoutCompact: 'Compact',
+  pivotLayoutOutline: 'Outline',
+  pivotLayoutTabular: 'Tabular',
+  pivotSubtotals: 'Subtotals',
+  pivotSubtotalsTop: 'At the top of each group',
+  pivotSubtotalsBottom: 'At the bottom of each group',
+  pivotSubtotalsNone: 'None',
+  pivotRepeatLabels: 'Repeat item labels',
   pivotRefresh: 'Refresh',
   pivotRefreshAll: 'Refresh all',
   pivotNew: 'New from the selection',
@@ -515,6 +533,15 @@ export const ITALIAN_SHEET_GRID_LABELS: SheetGridLabels = {
   removeReply: 'Elimina risposta',
   pivotTables: 'Tabelle pivot',
   noPivotTables: 'Nessuna tabella pivot in questo foglio',
+  pivotLayout: 'Layout',
+  pivotLayoutCompact: 'Compatto',
+  pivotLayoutOutline: 'Struttura',
+  pivotLayoutTabular: 'Tabulare',
+  pivotSubtotals: 'Subtotali',
+  pivotSubtotalsTop: 'In cima a ogni gruppo',
+  pivotSubtotalsBottom: 'In fondo a ogni gruppo',
+  pivotSubtotalsNone: 'Nessuno',
+  pivotRepeatLabels: 'Ripeti le etichette',
   pivotRefresh: 'Aggiorna',
   pivotRefreshAll: 'Aggiorna tutte',
   pivotNew: 'Nuova dalla selezione',

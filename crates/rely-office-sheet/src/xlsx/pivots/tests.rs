@@ -64,7 +64,7 @@ fn writes_the_cache_and_the_table_excel_refreshes() {
     assert!(table.contains(r#"<location ref="F3:"#));
     assert!(table.contains(r#"rowPageCount="1" colPageCount="1""#));
     assert!(table.contains(
-        r#"<pivotField axis="axisRow" showAll="0"><items count="4"><item h="1" x="0"/>"#
+        r#"<pivotField axis="axisRow" compact="0" outline="0" showAll="0"><items count="4"><item h="1" x="0"/>"#
     ));
     assert!(table.contains(r#"<field x="2"/><field x="-2"/>"#));
     assert!(table.contains(r#"<pageField fld="1" item="0" hier="-1"/>"#));
@@ -202,4 +202,69 @@ fn carried_and_model_tables_take_distinct_caches() {
     assert_eq!(parts[0].cache_id, 8);
     let written = written_pivots(&workbook);
     assert_eq!(written[0].len(), 2);
+}
+
+#[test]
+fn every_form_and_subtotal_placement_reads_back() {
+    for layout in PivotLayout::ALL {
+        for subtotals in PivotSubtotals::ALL {
+            for repeat_labels in [false, true] {
+                let mut workbook = sales();
+                let mut table = by_region("F1");
+                table.rows.push(PivotField {
+                    field: 1,
+                    hidden: Vec::new(),
+                });
+                table.layout = layout;
+                table.subtotals = subtotals;
+                table.repeat_labels = repeat_labels;
+                workbook.add_pivot_table(0, table).unwrap();
+                let written = workbook.sheets()[0].pivot_tables()[0].clone();
+                let bytes = write_xlsx(&workbook).unwrap();
+                let definition = member(&bytes, "xl/pivotTables/relyPivotTable1.xml");
+                assert!(definition.contains(&format!(
+                    r#"firstHeaderRow="1" firstDataRow="1" firstDataCol="{}""#,
+                    written.label_columns()
+                )));
+                let read =
+                    read_spreadsheet(&bytes, Some("a.xlsx"), &Limits::default(), Locale::English)
+                        .unwrap();
+                let table = &read.sheets()[0].pivot_tables()[0];
+                assert_eq!(
+                    (table.layout, table.subtotals, table.repeat_labels),
+                    (layout, subtotals, repeat_labels),
+                    "{definition}"
+                );
+                assert_eq!(table.area(), written.area());
+            }
+        }
+    }
+}
+
+#[test]
+fn reads_the_forms_excel_writes() {
+    let field = |attributes: &str, extension: &str| {
+        format!(
+            r#"<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" name="T" cacheId="1" compact="0" compactData="0"><location ref="E5:F8" firstHeaderRow="1" firstDataRow="1" firstDataCol="1"/><pivotFields count="3"><pivotField axis="axisRow" showAll="0"{attributes}><items count="1"><item x="0"/></items>{extension}</pivotField><pivotField showAll="0"/><pivotField dataField="1" showAll="0"/></pivotFields><rowFields count="1"><field x="0"/></rowFields><dataFields count="1"><dataField name="Somma di Valore" fld="2"/></dataFields></pivotTableDefinition>"#
+        )
+    };
+    let cache = read_cache(CACHE).unwrap();
+    let read = |xml: &str| read_table(xml, &cache, "Riepilogo", Locale::Italian).unwrap();
+    let tabular = read(&field(
+        r#" compact="0" outline="0" defaultSubtotal="0""#,
+        r#"<extLst><ext uri="{2946ED86-A175-432a-8AC1-64E0C546D7DE}"><x14:pivotField fillDownLabels="1"/></ext></extLst>"#,
+    ));
+    assert_eq!(tabular.layout, PivotLayout::Tabular);
+    assert_eq!(tabular.subtotals, PivotSubtotals::Off);
+    assert!(tabular.repeat_labels);
+    assert_eq!(tabular.values.len(), 1);
+    let outline = read(&field(r#" compact="0" subtotalTop="0""#, ""));
+    assert_eq!(
+        (outline.layout, outline.subtotals, outline.repeat_labels),
+        (PivotLayout::Outline, PivotSubtotals::Bottom, false)
+    );
+    // A table marked not compact shows its fields in outline form even when they say compact.
+    assert_eq!(read(&field("", "")).layout, PivotLayout::Outline);
+    let compact = field("", "").replace(r#" compact="0" compactData="0""#, "");
+    assert_eq!(read(&compact).layout, PivotLayout::Compact);
 }

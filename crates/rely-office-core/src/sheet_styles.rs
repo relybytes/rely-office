@@ -95,6 +95,8 @@ pub struct CellStyle {
     pub vertical: Option<VerticalAlignment>,
     /// Long text wraps inside the cell instead of running over its neighbours.
     pub wrap: bool,
+    /// The indent of the text from its edge, in Excel's steps of about three characters.
+    pub indent: u8,
     /// The number format code; unset is General.
     pub number_format: Option<String>,
 }
@@ -159,6 +161,7 @@ struct Format {
     horizontal: Option<HorizontalAlignment>,
     vertical: Option<VerticalAlignment>,
     wrap: bool,
+    indent: u8,
 }
 
 /// The list of the styles part being read; the differential formats of conditional formatting
@@ -345,6 +348,7 @@ fn resolve(parts: &Parts) -> Vec<CellStyle> {
             horizontal: format.horizontal,
             vertical: format.vertical,
             wrap: format.wrap,
+            indent: format.indent,
             number_format: parts
                 .number_formats
                 .iter()
@@ -371,7 +375,16 @@ fn read_alignment(element: &BytesStart<'_>, format: &mut Format) {
         _ => None,
     });
     format.wrap = is_on(attribute(element, "wrapText"));
+    format.indent = attribute(element, "indent")
+        .and_then(|value| value.parse::<u8>().ok())
+        .unwrap_or(0)
+        .min(MAX_INDENT);
 }
+
+/// Excel's deepest indent.
+pub const MAX_INDENT: u8 = 250;
+/// The width of one step of indent, in points, where a format measures it by length.
+pub const INDENT_POINTS: f64 = 10.0;
 
 fn read_font(element: &BytesStart<'_>, theme: &ThemeColours, parts: &mut Parts) {
     let Some(font) = parts.fonts.last_mut() else {
