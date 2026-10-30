@@ -17,20 +17,21 @@ spreadsheet grid and a slide editor in React) are the frontend package,
 
 ## Install
 
-The package is published to GitHub Packages, which asks for a token even to install a public
-package. Point the `@relybytes` scope at it and give it a token with `read:packages`:
+```sh
+npm install @relybytes/rely-office
+```
+
+Node 18 or later. Every release goes to two registries with the same tarball: the public npm
+registry, where a plain `npm install` needs no configuration, and GitHub Packages. Until a
+release reaches the public registry, or to read it from GitHub Packages, point the `@relybytes`
+scope there with a token holding `read:packages`, which GitHub asks for even to install a public
+package:
 
 ```ini
 # .npmrc
 @relybytes:registry=https://npm.pkg.github.com
 //npm.pkg.github.com/:_authToken=${NPM_GITHUB_TOKEN}
 ```
-
-```sh
-npm install @relybytes/rely-office
-```
-
-Node 18 or later. Publishing to the public npm registry is tracked in the issues.
 
 ## Use
 
@@ -319,7 +320,13 @@ docx, a doc and an odt give the same tree; `writeDocx` writes it back as a docx.
 }
 ```
 
+## Free to use, with credit
+
+Use it in any project, open source or commercial, free or paid, at no cost. Whoever ships it, or a
+product built on it, shows "Office files powered by [rely-office](https://github.com/relybytes/rely-office),
+by [RelyBytes S.r.l.](https://relybytes.com)" where the product lists the software it uses, and keeps
+`NOTICE` with it.
+
 ## Licence
 
-Mozilla Public License 2.0, see `LICENSE` and `NOTICE` in the package. Built and maintained by
-[RelyBytes S.r.l.](https://relybytes.com).
+[Apache License 2.0](LICENSE), with the attribution of [NOTICE](NOTICE) required (section 4(d)).

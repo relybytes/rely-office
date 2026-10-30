@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="Licence: MPL-2.0" src="https://img.shields.io/badge/licence-MPL--2.0-2563eb"></a>
+  <a href="LICENSE"><img alt="Licence: Apache-2.0" src="https://img.shields.io/badge/licence-Apache--2.0-2563eb"></a>
   <a href="https://github.com/relybytes/rely-office/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/relybytes/rely-office/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/relybytes/rely-office/actions/workflows/fuzz.yml"><img alt="Fuzz" src="https://github.com/relybytes/rely-office/actions/workflows/fuzz.yml/badge.svg"></a>
   <img alt="unsafe: forbidden" src="https://img.shields.io/badge/unsafe-forbidden-15803d">
@@ -29,7 +29,7 @@ use at the same time.
 
 It is built and maintained by [RelyBytes S.r.l.](https://relybytes.com) for the Drive of the
 [Rely Platform](https://relyplatform.app), where it previews, indexes, edits and exports every
-file a team stores, and it is published under the Mozilla Public License 2.0 so that it stays open.
+file a team stores, and it is published as open source under the Apache License 2.0.
 
 ## See it
 
@@ -73,6 +73,15 @@ member, text, rows and columns, images), the spreadsheet caps sheets, cells and 
 a stranger cannot exhaust the process that opens it.
 
 ## Quick start
+
+```sh
+npm install @relybytes/rely-office        # the backend: Node 18 or later
+npm install @relybytes/rely-office-react  # the browser: the runtime and the editors
+```
+
+Both are published to the public npm registry and to GitHub Packages; the
+[backend README](packages/rely-office-node/README.md#install) says how to read them from
+GitHub Packages.
 
 ### On the backend
 
@@ -243,13 +252,32 @@ The design is in [docs/](docs/README.md): [architecture](docs/architecture.md),
 [collaboration](docs/collaboration.md), [the document tree](docs/document-tree.md) and the
 [roadmap](docs/roadmap.md).
 
+## Free to use, with credit
+
+Use rely-office in any project, open source or commercial, free or paid, at no cost. The one
+condition is the credit: whoever ships rely-office, or a product built on it, shows this line
+where the product lists the software it uses (its documentation, credits, "About" screen or
+licences page) and keeps the `NOTICE` file with it.
+
+> Office files powered by [rely-office](https://github.com/relybytes/rely-office), by
+> [RelyBytes S.r.l.](https://relybytes.com)
+
 ## Licence
 
-Mozilla Public License 2.0, see [LICENSE](LICENSE). In short: you may use rely-office in any
-software, open or closed; changes to the files of rely-office itself must be published under the
-same licence, and the copyright notices of RelyBytes S.r.l. must be kept. See [NOTICE](NOTICE)
-for the attribution and for the licences of the dependencies; the fonts in `fonts/` carry their own
-licence texts.
+rely-office is released under the [Apache License 2.0](LICENSE), a licence approved by the Open
+Source Initiative and used by projects such as Kubernetes and Android. In plain words:
+
+| You can | You must | You don't have to |
+| --- | --- | --- |
+| use it for free in any project, open source or commercial, free or paid | show the credit of [NOTICE](NOTICE) where your product lists third-party software, and keep `NOTICE` and `LICENSE` with it | publish the code of your product |
+| change it and ship it inside your product, on a server, in the browser or in an app | mark the files you changed as changed | ask for permission or pay anything |
+| combine it with code under any other licence, closed ones included | keep the copyright notices of RelyBytes S.r.l. in the files | use the Apache licence for your own code |
+
+The [LICENSE](LICENSE) file is the text that counts. One file,
+`crates/rely-office-core/src/geometry/enhanced_presets.rs`, is generated from a LibreOffice table
+and stays under the Mozilla Public License 2.0; the fonts in `fonts/` carry their own licence texts;
+[NOTICE](NOTICE) lists both. Releases before 0.10.2 were published under the Mozilla Public
+License 2.0.
 
 ## Contributing
 

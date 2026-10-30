@@ -11,7 +11,7 @@ The Drive of the Rely Platform previewed office files through a LibreOffice cont
 or not at all, and imported Word files into its editor with a JavaScript converter. A library in
 Rust, called in process from the Drive service, reads untrusted uploads with a memory-safe parser
 and gives one implementation of text extraction, sheet tables, the import tree, and later previews
-and thumbnails. It is published under MPL-2.0 so improvements to it stay public.
+and thumbnails. It is published under Apache-2.0, with an attribution every distribution must carry.
 
 The user's decision of 2026-10-25 is that the Drive depends on rely-office alone for office
 files: no LibreOffice container for previews, no JavaScript docx library for export, no third-party
@@ -158,15 +158,22 @@ match the `wasm-bindgen` crate exactly, which is why the crate is pinned with `=
 the module would abort the instance, so the same rule as everywhere holds: malformed input is an
 error, never a panic.
 
-The npm package is published to GitHub Packages by `.github/workflows/release.yml` on a `v*` tag
-that matches its version, with the workflow's own `GITHUB_TOKEN`, so no secret is needed. GitHub
-Packages has no npm provenance and asks for a token even to install; the public npm registry is
-tracked in the issues.
+Both npm packages are published by `.github/workflows/release.yml` on a `v*` tag that matches
+their version. The first job builds and tests them and publishes the tarballs to GitHub Packages
+with the workflow's own `GITHUB_TOKEN`. The second publishes the same tarballs to the public npm
+registry with `--access public --provenance`, so the package page links the release run; it
+needs the repository secret `NPM_TOKEN`, an automation token of the `@relybytes` organisation on
+npmjs, and without it says so in a notice and publishes nothing. The packages carry no
+`publishConfig`: each job names its registry, so one tarball goes to both. A consumer that maps
+the `@relybytes` scope to GitHub Packages keeps resolving from there, which is fine since both
+registries hold the same versions.
 
 ## Licence and attribution
 
-MPL-2.0: file-level copyleft. Software of any licence may use the library; a change to one of its
-files is published under MPL-2.0. Every source file carries the MPL header and the RelyBytes
-copyright line; `NOTICE` holds the attribution and is shipped in the npm package with the licence.
-Contributions come under the Developer Certificate of Origin, without a CLA, so the licence cannot
-be changed behind contributors' backs.
+Apache-2.0. Software of any licence, open or closed, free or paid, may use, change and ship the
+library; whoever distributes it keeps `LICENSE` and `NOTICE` with it and shows the attribution of
+`NOTICE` where the work shows its third-party notices (section 4(d)). Every source file starts with
+the RelyBytes copyright line and `SPDX-License-Identifier: Apache-2.0`, except
+`geometry/enhanced_presets.rs`, generated from a LibreOffice table and kept under MPL-2.0. Both npm
+packages ship `LICENSE` and `NOTICE`. Contributions come under the Developer Certificate of
+Origin, without a CLA. Releases before 0.10.2 were published under MPL-2.0.

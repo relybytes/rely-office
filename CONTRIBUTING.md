@@ -7,18 +7,15 @@ Thank you for helping. A few rules keep the project healthy and its licence stab
 Every commit carries a `Signed-off-by:` line (`git commit -s`), stating that you wrote the change or
 have the right to submit it under the project's licence, as described by the
 [Developer Certificate of Origin 1.1](https://developercertificate.org/). There is no contributor
-licence agreement: what you contribute stays under the Mozilla Public License 2.0, like the rest.
+licence agreement: what you contribute is licensed under the Apache License 2.0, like the rest.
 
 ## Every source file
 
 Starts with the licence header:
 
 ```rust
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
-//
-// Copyright (c) 2026 RelyBytes S.r.l. <https://relybytes.com>
+// Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
+// SPDX-License-Identifier: Apache-2.0
 ```
 
 A new file you write may add your own copyright line under it.

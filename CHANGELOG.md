@@ -3,6 +3,23 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## Unreleased
+
+### Changed
+
+- rely-office is licensed under the Apache License 2.0 from this release, with the attribution in
+  `NOTICE` required of every distribution (section 4(d)): whoever ships rely-office or a product
+  built on it shows "Office files powered by rely-office, by RelyBytes S.r.l." where the product
+  lists the software it uses. Every source file carries `SPDX-License-Identifier: Apache-2.0`,
+  except `geometry/enhanced_presets.rs`, generated from a LibreOffice table and kept under
+  MPL-2.0. Releases before this one were published under the Mozilla Public License 2.0.
+
+### Changed
+
+- A release publishes both npm packages to the public npm registry as well, with provenance, when
+  the repository secret `NPM_TOKEN` is set; the packages lose their `publishConfig`, so each job
+  of `release.yml` names its registry and one tarball goes to both.
+
 ## 0.10.1
 
 ### Added

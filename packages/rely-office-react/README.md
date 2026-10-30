@@ -23,7 +23,9 @@ npm install react react-dom @tiptap/core @tiptap/pm @tiptap/react @tiptap/starte
 ```
 
 React 18 or later and TipTap 3 are peer dependencies, so an application that already has them
-keeps one copy. The package is published on GitHub Packages under the `@relybytes` scope.
+keeps one copy. Each release is published to the public npm registry and to GitHub Packages
+under the `@relybytes` scope; reading it from GitHub Packages needs the `.npmrc` of the
+[backend package](../rely-office-node/README.md#install).
 
 ## Load the WebAssembly
 
@@ -255,6 +257,13 @@ npm run demo        # the three editors on a local page
 
 The `.wasm` modules come from `node scripts/build-npm.mjs` at the root of the repository.
 
+## Free to use, with credit
+
+Use it in any project, open source or commercial, free or paid, at no cost. Whoever ships it, or a
+product built on it, shows "Office files powered by [rely-office](https://github.com/relybytes/rely-office),
+by [RelyBytes S.r.l.](https://relybytes.com)" where the product lists the software it uses, and keeps
+`NOTICE` with it.
+
 ## Licence
 
-Mozilla Public License 2.0, as rely-office. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+[Apache License 2.0](LICENSE), with the attribution of [NOTICE](NOTICE) required (section 4(d)).

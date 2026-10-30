@@ -2,7 +2,7 @@
   "name": "@relybytes/rely-office",
   "version": "0.10.1",
   "description": "Office documents in Node through WebAssembly, for the backend: format detection, text for search, sheet tables, the document tree, PDF and PNG rendering through Typst, docx and pptx writing and an editable spreadsheet with formulas. The browser and the editor components are @relybytes/rely-office-react.",
-  "license": "MPL-2.0",
+  "license": "Apache-2.0",
   "author": "RelyBytes S.r.l. (https://relybytes.com)",
   "homepage": "https://github.com/relybytes/rely-office#readme",
   "repository": {
@@ -56,8 +56,5 @@
   },
   "scripts": {
     "test": "node test/smoke.cjs"
-  },
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
   }
 }
