@@ -1,5 +1,5 @@
 // Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution
 
 // The rules the side panels of the grid write: what a person picks in a form, as the
 // conditional formats and the validations of the workbook model.

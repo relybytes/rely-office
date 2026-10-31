@@ -180,6 +180,11 @@ Origin, without a CLA. Releases before 0.10.2 were published under MPL-2.0.
 
 The four React editors render `PoweredBy` (`packages/rely-office-react/src/powered-by.tsx`), a
 "Powered by RelyBytes S.r.l." line linking to relybytes.com at their bottom left, as the last row
-of their root. Each editor's `poweredBy` prop, `true` by default, hides it; the READMEs ask a host
-to agree that with RelyBytes S.r.l. through https://relybytes.com/en/contact first. The rule is a
-request, not a licence term: Apache-2.0 itself only requires the `NOTICE` attribution.
+of their root. Each editor's `poweredBy` prop, `true` by default, hides it. From 0.11.0 the React
+package is licensed under Apache-2.0 together with `LICENSE-ATTRIBUTION`, whose term makes keeping
+that line visible a condition of the licence: hiding it needs the written permission of RelyBytes
+S.r.l. (https://relybytes.com/en/contact). The package's sources carry
+`SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution`, its `package.json`
+says `SEE LICENSE IN LICENSE-ATTRIBUTION`, and `scripts/build-npm.mjs` copies `LICENSE`, `NOTICE`
+and `LICENSE-ATTRIBUTION` into it. The Rust crates and `@relybytes/rely-office` stay Apache-2.0
+alone.

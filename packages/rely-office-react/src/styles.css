@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution
  *
  * The look of the editor components. Every colour and size is a custom property, so a host
  * restyles the components by setting them on a parent rather than overriding the rules.

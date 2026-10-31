@@ -1,5 +1,5 @@
 // Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution
 
 import {
   forwardRef,
@@ -139,7 +139,7 @@ export interface SlideEditorProps {
    * others change appears as they change it, and undo takes back this client's changes.
    */
   collaboration?: SlideCollaboration;
-  /** False hides the "Powered by RelyBytes S.r.l." line at the bottom left; ask RelyBytes S.r.l. first. */
+  /** False hides the "Powered by RelyBytes S.r.l." line, which needs RelyBytes S.r.l.'s written permission. */
   poweredBy?: boolean;
   className?: string;
 }

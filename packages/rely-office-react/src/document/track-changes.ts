@@ -1,5 +1,5 @@
 // Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution
 
 import { Extension } from '@tiptap/core';
 import { Fragment, Slice, type Mark, type Node as ProseMirrorNode, type Schema } from '@tiptap/pm/model';

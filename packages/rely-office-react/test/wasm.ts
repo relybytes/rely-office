@@ -1,5 +1,5 @@
 // Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution
 
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';

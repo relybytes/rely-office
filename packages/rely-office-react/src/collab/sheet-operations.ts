@@ -1,5 +1,5 @@
 // Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution
 
 // The operations of a shared spreadsheet and how one moves past another. A room orders them,
 // and every client applies the same ones in the same order to the same file; `transformSheetOperation`

@@ -1,5 +1,5 @@
 // Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution
 
 // What the slide editor does beyond moving one shape: preset shapes drawn as paths, the guides
 // a moved shape snaps to, rotation, several shapes at once, tables and the steps of a show.

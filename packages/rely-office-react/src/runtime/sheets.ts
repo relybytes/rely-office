@@ -1,5 +1,5 @@
 // Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution
 
 // The spreadsheet in the browser: the same SheetDocument as the backend package, over the
 // WebAssembly module built for the web. `initSheets` loads the module once.

@@ -5,7 +5,10 @@ This product includes software developed by RelyBytes S.r.l.
 (https://relybytes.com) as part of the Rely Platform (https://relyplatform.app):
 rely-office, https://github.com/relybytes/rely-office
 
-Licensed under the Apache License, Version 2.0 (see LICENSE).
+Licensed under the Apache License, Version 2.0 (see LICENSE). From 0.11.0 the
+React editors, @relybytes/rely-office-react, also carry the additional term of
+LICENSE-ATTRIBUTION: their "Powered by RelyBytes S.r.l." line stays visible
+wherever they are shown, unless RelyBytes S.r.l. allows otherwise in writing.
 
 Attribution is required. Anyone who distributes rely-office, or a work that
 includes or derives from it, in source or compiled form, open source or

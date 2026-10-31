@@ -1,5 +1,5 @@
 // Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution
 
 import { CollabRoom, type CollabRoomOptions, type CollabRoomState } from '../src/collab/room.js';
 import { CollabSession, type CollabSocket, type CollabUser } from '../src/collab/session.js';

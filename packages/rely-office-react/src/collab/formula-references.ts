@@ -1,5 +1,5 @@
 // Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution
 
 // The references of a formula moved the way the workbook moves them: past inserted and deleted
 // rows and columns, a renamed sheet and a removed one. An operation made before another carries

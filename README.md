@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="Licence: Apache-2.0" src="https://img.shields.io/badge/licence-Apache--2.0-2563eb"></a>
+  <a href="#licence"><img alt="Licence: Apache-2.0, with attribution" src="https://img.shields.io/badge/licence-Apache--2.0%20%2B%20attribution-2563eb"></a>
   <a href="https://github.com/relybytes/rely-office/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/relybytes/rely-office/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/relybytes/rely-office/actions/workflows/fuzz.yml"><img alt="Fuzz" src="https://github.com/relybytes/rely-office/actions/workflows/fuzz.yml/badge.svg"></a>
   <img alt="unsafe: forbidden" src="https://img.shields.io/badge/unsafe-forbidden-15803d">
@@ -34,7 +34,8 @@ use at the same time.
 
 It is built and maintained by [RelyBytes S.r.l.](https://relybytes.com) for the Drive of the
 [Rely Platform](https://relyplatform.app), where it previews, indexes, edits and exports every
-file a team stores, and it is published as open source under the Apache License 2.0.
+file a team stores. The library is published under the Apache License 2.0; the React editors add
+one condition, a visible credit to RelyBytes S.r.l.
 
 ## For AI products
 
@@ -280,22 +281,28 @@ licences page) and keeps the `NOTICE` file with it.
 > Office files powered by [rely-office](https://github.com/relybytes/rely-office), by
 > [RelyBytes S.r.l.](https://relybytes.com)
 
-The React editors also show a small "Powered by RelyBytes S.r.l." line at their bottom left. To
-take it off your product, [contact us](https://relybytes.com/en/contact): once we have agreed it with you, the
-`poweredBy={false}` prop of each editor hides it.
+The React editors also show a small "Powered by RelyBytes S.r.l." line at their bottom left, as
+the credit to their maker. Keeping it visible is a condition of their licence: the line may follow
+your theme's colours and font, but it stays. To take it off your product,
+[contact us](https://relybytes.com/en/contact): with our written permission, the `poweredBy={false}` prop of each
+editor hides it.
 
 ## Licence
 
 rely-office is released under the [Apache License 2.0](LICENSE), a licence approved by the Open
-Source Initiative and used by projects such as Kubernetes and Android. In plain words:
+Source Initiative and used by projects such as Kubernetes and Android. The React editors,
+`@relybytes/rely-office-react` from 0.11.0, add one term to it,
+[LICENSE-ATTRIBUTION](LICENSE-ATTRIBUTION): the "Powered by RelyBytes S.r.l." line stays visible
+wherever an editor is shown. In plain words:
 
 | You can | You must | You don't have to |
 | --- | --- | --- |
 | use it for free in any project, open source or commercial, free or paid | show the credit of [NOTICE](NOTICE) where your product lists third-party software, and keep `NOTICE` and `LICENSE` with it | publish the code of your product |
+| show the React editors to your users, with your theme | keep the "Powered by RelyBytes S.r.l." line of each editor visible, unless we gave you written permission to remove it | show any credit line when you only read, convert or render files on a server |
 | change it and ship it inside your product, on a server, in the browser or in an app | mark the files you changed as changed | ask for permission or pay anything |
 | combine it with code under any other licence, closed ones included | keep the copyright notices of RelyBytes S.r.l. in the files | use the Apache licence for your own code |
 
-The [LICENSE](LICENSE) file is the text that counts. One file,
+The [LICENSE](LICENSE) and [LICENSE-ATTRIBUTION](LICENSE-ATTRIBUTION) files are the text that counts. One file,
 `crates/rely-office-core/src/geometry/enhanced_presets.rs`, is generated from a LibreOffice table
 and stays under the Mozilla Public License 2.0; the fonts in `fonts/` carry their own licence texts;
 [NOTICE](NOTICE) lists both. Releases before 0.10.2 were published under the Mozilla Public

@@ -1,0 +1,31 @@
+rely-office editors: additional attribution term
+Copyright 2026 RelyBytes S.r.l. (https://relybytes.com)
+
+From version 0.11.0, the npm package @relybytes/rely-office-react, kept in
+packages/rely-office-react of https://github.com/relybytes/rely-office, is
+licensed under the Apache License, Version 2.0 (the LICENSE file) together
+with the additional term below. Everything else in rely-office, the Rust
+crates and the @relybytes/rely-office package included, is licensed under the
+Apache License, Version 2.0 alone.
+
+Additional term: the credit line stays visible
+
+1. The editors of the package (DocumentEditor, SheetGrid, SlideEditor and
+   TextEditor, and any work derived from them) show the credit line
+   "Powered by RelyBytes S.r.l.", linked to https://relybytes.com, at their
+   bottom left. The line credits RelyBytes S.r.l. as the maker of the editors.
+
+2. Whoever shows one of these editors to other people, in a product, a
+   service, a website or an app, free or paid, must keep that credit line
+   visible and legible wherever the editor is shown, with its link. The line
+   may take the colours and the font of the host's theme.
+
+3. Removing, hiding, covering or changing the credit line, through the
+   poweredBy option, through styles, by changing the source code or in any
+   other way, needs the written permission of RelyBytes S.r.l. To ask for it:
+   https://relybytes.com/en/contact
+
+4. This term is a condition of the licence granted for the package. It adds
+   to the Apache License, Version 2.0, and where the two differ this term
+   prevails. Versions published before 0.11.0 stay under the licence they
+   were published with.

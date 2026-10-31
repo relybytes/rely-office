@@ -7,7 +7,8 @@ Thank you for helping. A few rules keep the project healthy and its licence stab
 Every commit carries a `Signed-off-by:` line (`git commit -s`), stating that you wrote the change or
 have the right to submit it under the project's licence, as described by the
 [Developer Certificate of Origin 1.1](https://developercertificate.org/). There is no contributor
-licence agreement: what you contribute is licensed under the Apache License 2.0, like the rest.
+licence agreement: what you contribute is licensed under the Apache License 2.0, like the rest, and
+what you contribute to `packages/rely-office-react` also under the term of `LICENSE-ATTRIBUTION`.
 
 ## Every source file
 
@@ -18,7 +19,9 @@ Starts with the licence header:
 // SPDX-License-Identifier: Apache-2.0
 ```
 
-A new file you write may add your own copyright line under it.
+In `packages/rely-office-react` the second line is
+`// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution`. A new file you write
+may add your own copyright line under it.
 
 ## Before opening a pull request
 

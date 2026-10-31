@@ -1,5 +1,5 @@
 // Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution
 
 import type { SlideParagraph, SlideRun, TextBody } from '../model.js';
 import { DEFAULT_PARAGRAPH, DEFAULT_RUN } from './slide-model.js';

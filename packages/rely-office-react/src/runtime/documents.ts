@@ -1,5 +1,5 @@
 // Copyright 2026 RelyBytes S.r.l. <https://relybytes.com>
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution
 
 // Documents and presentations in the browser: the reading and writing module of rely-office,
 // built for the web. `initDocuments` loads it once; every other call needs it loaded.

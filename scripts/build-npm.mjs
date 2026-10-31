@@ -140,6 +140,8 @@ for (const directory of [packageDirectory, reactDirectory]) {
     copyFileSync(join(root, file), join(directory, file));
   }
 }
+// The editors carry one more term: their credit line stays visible.
+copyFileSync(join(root, 'LICENSE-ATTRIBUTION'), join(reactDirectory, 'LICENSE-ATTRIBUTION'));
 
 const fontsDirectory = join(packageDirectory, 'fonts');
 rmSync(fontsDirectory, { recursive: true, force: true });

@@ -224,8 +224,9 @@ The words of every toolbar come in English and Italian (`ENGLISH_*_LABELS`, `ITA
 pass any of them to translate the rest.
 
 Every editor shows a small "Powered by RelyBytes S.r.l." line at its bottom left
-(`.rely-powered-by`). To take it off your product, [contact us](https://relybytes.com/en/contact): once we have agreed it
-with you, `poweredBy={false}` hides it.
+(`.rely-powered-by`), the credit to its maker. It may follow your theme's colours and font, and it
+stays visible: that is a condition of the licence. To take it off your product,
+[contact us](https://relybytes.com/en/contact); with our written permission, `poweredBy={false}` hides it.
 
 ## Fonts
 
@@ -269,9 +270,11 @@ The `.wasm` modules come from `node scripts/build-npm.mjs` at the root of the re
 Use it in any project, open source or commercial, free or paid, at no cost. Whoever ships it, or a
 product built on it, shows "Office files powered by [rely-office](https://github.com/relybytes/rely-office),
 by [RelyBytes S.r.l.](https://relybytes.com)" where the product lists the software it uses, and keeps
-`NOTICE` with it. The "Powered by RelyBytes S.r.l." line of the editors stays on unless we have
-agreed otherwise: [contact us](https://relybytes.com/en/contact).
+`NOTICE` with it. The editors also keep their "Powered by RelyBytes S.r.l." line visible wherever
+they are shown; removing it needs our written permission: [contact us](https://relybytes.com/en/contact).
 
 ## Licence
 
-[Apache License 2.0](LICENSE), with the attribution of [NOTICE](NOTICE) required (section 4(d)).
+[Apache License 2.0](LICENSE), with the attribution of [NOTICE](NOTICE) required (section 4(d)), and
+from 0.11.0 the additional term of [LICENSE-ATTRIBUTION](LICENSE-ATTRIBUTION): the "Powered by
+RelyBytes S.r.l." line of the editors stays visible.
