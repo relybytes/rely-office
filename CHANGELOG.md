@@ -3,6 +3,20 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## 0.11.0
+
+### Changed
+
+- The React editors' licence: `@relybytes/rely-office-react` is licensed under the Apache License
+  2.0 together with the additional term of `LICENSE-ATTRIBUTION`. The "Powered by RelyBytes
+  S.r.l." line of `DocumentEditor`, `SheetGrid`, `SlideEditor` and `TextEditor` stays visible
+  wherever an editor is shown; hiding it, `poweredBy={false}` included, needs the written
+  permission of RelyBytes S.r.l. The package's `license` field reads
+  `SEE LICENSE IN LICENSE-ATTRIBUTION` and its sources
+  `SPDX-License-Identifier: Apache-2.0 AND LicenseRef-RelyBytes-Attribution`. The Rust crates
+  and `@relybytes/rely-office` stay under the Apache License 2.0 alone; 0.10.3 and earlier keep
+  the licence they were published with.
+
 ## 0.10.3
 
 ### Added
