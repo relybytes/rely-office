@@ -12,6 +12,7 @@
 </p>
 
 <p align="center">
+  <a href="#for-ai-products">For AI products</a> ·
   <a href="#see-it">See it</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#quick-start">Quick start</a> ·
@@ -21,8 +22,12 @@
   <a href="#roadmap">Roadmap</a>
 </p>
 
-**rely-office** reads, draws, edits and writes Word, Excel, PowerPoint and OpenDocument files with
-no office suite anywhere: one Rust library, compiled to WebAssembly, that runs in process in Node
+**rely-office** is an Office editor to embed in AI products. An assistant or an agent reads Word,
+Excel, PowerPoint and OpenDocument files as text, tables and a document tree, writes its work back
+as a real docx, xlsx or pptx, and the person who asked for it reviews and edits the result in the
+same page, alone or with colleagues, before it goes anywhere.
+
+It reads, draws, edits and writes those files with no office suite anywhere: one Rust library, compiled to WebAssembly, that runs in process in Node
 and in the browser. A server gets previews, thumbnails, search text and conversions from it; a page
 gets four React editors, for documents, spreadsheets, slides and plain text, that several people can
 use at the same time.
@@ -30,6 +35,19 @@ use at the same time.
 It is built and maintained by [RelyBytes S.r.l.](https://relybytes.com) for the Drive of the
 [Rely Platform](https://relyplatform.app), where it previews, indexes, edits and exports every
 file a team stores, and it is published as open source under the Apache License 2.0.
+
+## For AI products
+
+- **Give the model the content**: the text of any file for a prompt or a search index, sheets as
+  tables, a document as a tree of headings, paragraphs, lists and tables, a presentation as
+  slides. No screenshots, no OCR.
+- **Let the model write real files**: it builds the tree or fills the cells, and rely-office saves
+  a docx, odt, xlsx, ods, pptx or odp that opens in Word, Excel, PowerPoint and LibreOffice, with
+  the formulas recalculated.
+- **Keep a person in the loop**: what the model wrote opens in the React editors, where people
+  correct it, comment on it and record their changes as tracked changes before it is sent.
+- **Run where the data is**: in process on your server or in the browser, with no office suite and
+  no external service, and every read bounded so an uploaded file cannot exhaust memory.
 
 ## See it
 
@@ -261,6 +279,10 @@ licences page) and keeps the `NOTICE` file with it.
 
 > Office files powered by [rely-office](https://github.com/relybytes/rely-office), by
 > [RelyBytes S.r.l.](https://relybytes.com)
+
+The React editors also show a small "Powered by RelyBytes S.r.l." line at their bottom left. To
+take it off your product, [contact us](https://relybytes.com/en/contact): once we have agreed it with you, the
+`poweredBy={false}` prop of each editor hides it.
 
 ## Licence
 

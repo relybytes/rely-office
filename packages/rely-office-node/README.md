@@ -1,5 +1,10 @@
 # @relybytes/rely-office
 
+The Office engine of an AI product, on the backend: it turns the files people upload into text,
+tables and a document tree a model can read, and turns what the model writes into a real docx,
+xlsx or pptx. The editors where people review that work are
+[`@relybytes/rely-office-react`](../rely-office-react/README.md).
+
 Office documents on the backend, in Node, without an office suite, through
 [rely-office](https://github.com/relybytes/rely-office) compiled to WebAssembly: the format of a
 file, its text for a search index, the sheets of a spreadsheet as tables, a `.docx`, `.doc`,

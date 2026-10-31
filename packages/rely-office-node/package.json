@@ -1,7 +1,7 @@
 {
   "name": "@relybytes/rely-office",
-  "version": "0.10.2",
-  "description": "Office documents in Node through WebAssembly, for the backend: format detection, text for search, sheet tables, the document tree, PDF and PNG rendering through Typst, docx and pptx writing and an editable spreadsheet with formulas. The browser and the editor components are @relybytes/rely-office-react.",
+  "version": "0.10.3",
+  "description": "The Office engine for AI products, on the backend: Word, Excel, PowerPoint and OpenDocument files read in Node through WebAssembly as text, tables and a document tree a model can use, docx, xlsx and pptx written back from what it produces, and PDF and PNG previews, with no office suite. The editors are @relybytes/rely-office-react.",
   "license": "Apache-2.0",
   "author": "RelyBytes S.r.l. (https://relybytes.com)",
   "homepage": "https://github.com/relybytes/rely-office#readme",
@@ -25,7 +25,11 @@
     "spreadsheet",
     "formulas",
     "xlsx-writer",
-    "docx-writer"
+    "docx-writer",
+    "ai",
+    "llm",
+    "ai-agents",
+    "rag"
   ],
   "type": "commonjs",
   "main": "index.js",

@@ -1,5 +1,8 @@
 # @relybytes/rely-office-react
 
+Office editors to embed in AI products: the place where what an assistant or an agent wrote
+becomes a docx, xlsx or pptx that a person reviews, corrects and comments on before it is sent.
+
 Office documents in the browser, for the frontend: a docx, doc, odt, Markdown or HTML file, a
 pptx, ppt or odp and an xlsx, xls, ods or csv read and written by [rely-office](https://github.com/relybytes/rely-office)
 compiled to WebAssembly, four React editors over them, and real-time collaboration over Yjs.
@@ -210,7 +213,7 @@ The protocol, the room's storage and save claims, and each binding are described
 
 ## The look
 
-`styles.css` styles the three components; every colour, the radius, the font and the page width
+`styles.css` styles the four components; every colour, the radius, the font and the page width
 are custom properties set on the component's root class, so a host restyles them on a parent:
 
 ```css
@@ -219,6 +222,10 @@ are custom properties set on the component's root class, so a host restyles them
 
 The words of every toolbar come in English and Italian (`ENGLISH_*_LABELS`, `ITALIAN_*_LABELS`);
 pass any of them to translate the rest.
+
+Every editor shows a small "Powered by RelyBytes S.r.l." line at its bottom left
+(`.rely-powered-by`). To take it off your product, [contact us](https://relybytes.com/en/contact): once we have agreed it
+with you, `poweredBy={false}` hides it.
 
 ## Fonts
 
@@ -262,7 +269,8 @@ The `.wasm` modules come from `node scripts/build-npm.mjs` at the root of the re
 Use it in any project, open source or commercial, free or paid, at no cost. Whoever ships it, or a
 product built on it, shows "Office files powered by [rely-office](https://github.com/relybytes/rely-office),
 by [RelyBytes S.r.l.](https://relybytes.com)" where the product lists the software it uses, and keeps
-`NOTICE` with it.
+`NOTICE` with it. The "Powered by RelyBytes S.r.l." line of the editors stays on unless we have
+agreed otherwise: [contact us](https://relybytes.com/en/contact).
 
 ## Licence
 
