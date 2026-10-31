@@ -177,3 +177,9 @@ the RelyBytes copyright line and `SPDX-License-Identifier: Apache-2.0`, except
 `geometry/enhanced_presets.rs`, generated from a LibreOffice table and kept under MPL-2.0. Both npm
 packages ship `LICENSE` and `NOTICE`. Contributions come under the Developer Certificate of
 Origin, without a CLA. Releases before 0.10.2 were published under MPL-2.0.
+
+The four React editors render `PoweredBy` (`packages/rely-office-react/src/powered-by.tsx`), a
+"Powered by RelyBytes S.r.l." line linking to relybytes.com at their bottom left, as the last row
+of their root. Each editor's `poweredBy` prop, `true` by default, hides it; the READMEs ask a host
+to agree that with RelyBytes S.r.l. through https://relybytes.com/en/contact first. The rule is a
+request, not a licence term: Apache-2.0 itself only requires the `NOTICE` attribution.

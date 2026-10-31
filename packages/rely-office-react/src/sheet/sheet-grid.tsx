@@ -53,6 +53,7 @@ import {
   type CellPosition,
 } from './geometry.js';
 import { ENGLISH_SHEET_GRID_LABELS, type SheetGridLabels } from './labels.js';
+import { PoweredBy } from '../powered-by.js';
 import { PivotPanel } from './pivot-panel.js';
 import { usePictureUrls } from './picture-urls.js';
 import {
@@ -171,6 +172,8 @@ export interface SheetGridProps {
   author?: string;
   /** Edit together: the grid redraws on the others' changes and shows where they are. */
   collaboration?: SheetGridCollaboration;
+  /** False hides the "Powered by RelyBytes S.r.l." line at the bottom left; ask RelyBytes S.r.l. first. */
+  poweredBy?: boolean;
   className?: string;
 }
 
@@ -240,7 +243,7 @@ function textWidth(text: string): number {
  * a cell to dragging its fill handle or the edge of a column.
  */
 export const SheetGrid = forwardRef(function SheetGrid(
-  { sheet, onChange, editable = true, labels, author, collaboration, className }: SheetGridProps,
+  { sheet, onChange, editable = true, labels, author, collaboration, poweredBy = true, className }: SheetGridProps,
   ref: Ref<SheetGridHandle>,
 ): ReactElement {
   const words = useMemo(() => ({ ...ENGLISH_SHEET_GRID_LABELS, ...labels }), [labels]);
@@ -1757,6 +1760,7 @@ export const SheetGrid = forwardRef(function SheetGrid(
           </>
         ) : null}
       </div>
+      {poweredBy ? <PoweredBy /> : null}
     </div>
   );
 });

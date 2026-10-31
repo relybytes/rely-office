@@ -21,6 +21,7 @@ import type { Block, Comment, DocumentTree, Inline, MediaItem, Note } from '../m
 import { saveDocument } from './document-files.js';
 import { DocumentSidePanel } from './document-side-panel.js';
 import { DocumentToolbar } from './document-toolbar.js';
+import { PoweredBy } from '../powered-by.js';
 import type { DocumentAside, EditorDocument } from './editor-document.js';
 import { editorToDocumentTree } from './editor-to-tree.js';
 import { createRelyDocumentExtensions } from './extensions.js';
@@ -141,6 +142,8 @@ export interface DocumentEditorProps {
    * session's, and `document` only seeds an empty one. Undo takes back this client's changes.
    */
   collaboration?: DocumentCollaboration;
+  /** False hides the "Powered by RelyBytes S.r.l." line at the bottom left; ask RelyBytes S.r.l. first. */
+  poweredBy?: boolean;
   className?: string;
 }
 
@@ -177,6 +180,7 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
     pageView: initialPageView = false,
     trackChanges: initialTrackChanges = false,
     collaboration,
+    poweredBy = true,
     className,
   }: DocumentEditorProps,
   ref: Ref<DocumentEditorHandle>,
@@ -477,6 +481,7 @@ export const DocumentEditor = forwardRef(function DocumentEditor(
           />
         ) : null}
       </div>
+      {poweredBy ? <PoweredBy /> : null}
     </div>
   );
 });

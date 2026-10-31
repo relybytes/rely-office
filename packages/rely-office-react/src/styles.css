@@ -2127,3 +2127,23 @@
   white-space: nowrap;
   user-select: none;
 }
+
+/* The credit line every editor keeps at its bottom left. */
+.rely-powered-by {
+  flex: none;
+  padding: 2px 12px;
+  color: var(--rely-muted);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: left;
+}
+
+.rely-powered-by a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.rely-powered-by a:hover {
+  text-decoration: underline;
+}

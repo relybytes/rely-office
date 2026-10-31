@@ -111,6 +111,14 @@ describe('TextEditor', () => {
     expect(screen.queryByRole('toolbar')).toBeNull();
   });
 
+  it('credits RelyBytes S.r.l. at the bottom unless told not to', () => {
+    const { unmount } = render(<TextEditor file={file} />);
+    expect(screen.getByRole('link', { name: 'RelyBytes S.r.l.' }).getAttribute('href')).toBe('https://relybytes.com');
+    unmount();
+    render(<TextEditor file={file} poweredBy={false} />);
+    expect(screen.queryByText(/Powered by/)).toBeNull();
+  });
+
   it('warns when a Windows-1252 file will be saved as UTF-8', () => {
     render(<TextEditor file={{ ...file, encoding: 'windows-1252', text: 'π' }} />);
     expect(screen.getByText(/saved as UTF-8/)).toBeTruthy();

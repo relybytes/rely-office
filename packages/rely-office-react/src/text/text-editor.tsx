@@ -14,6 +14,7 @@ import {
 } from 'react';
 import type * as Y from 'yjs';
 import { ENGLISH_TEXT_EDITOR_LABELS, type TextEditorLabels } from './labels.js';
+import { PoweredBy } from '../powered-by.js';
 import { lineAndColumn, textNeedsUnicode, writeTextFile, type TextFile } from './text-files.js';
 
 /** What a host can ask of a mounted text editor. */
@@ -45,6 +46,8 @@ export interface TextEditorProps {
    * write appears as they write it.
    */
   collaboration?: TextCollaboration;
+  /** False hides the "Powered by RelyBytes S.r.l." line at the bottom left; ask RelyBytes S.r.l. first. */
+  poweredBy?: boolean;
   className?: string;
 }
 
@@ -92,7 +95,7 @@ export function shiftOffset(offset: number, delta: Delta): number {
  * file are kept on save, and the status line says where the caret is.
  */
 export const TextEditor = forwardRef(function TextEditor(
-  { file, onChange, editable = true, labels, wrapLines = true, collaboration, className }: TextEditorProps,
+  { file, onChange, editable = true, labels, wrapLines = true, collaboration, poweredBy = true, className }: TextEditorProps,
   ref: Ref<TextEditorHandle>,
 ): ReactElement {
   const words = useMemo(() => ({ ...ENGLISH_TEXT_EDITOR_LABELS, ...labels }), [labels]);
@@ -198,6 +201,7 @@ export const TextEditor = forwardRef(function TextEditor(
         <span>{words.lineEnding(file.lineEnding)}</span>
         {lossy ? <span className="rely-text-warning">{words.savedAsUnicode}</span> : null}
       </div>
+      {poweredBy ? <PoweredBy /> : null}
     </div>
   );
 });

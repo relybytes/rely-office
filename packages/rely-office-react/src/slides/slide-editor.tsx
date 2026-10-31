@@ -18,6 +18,7 @@ import {
 } from 'react';
 import { mediaDataUrl, sniffImageType } from '../document/media.js';
 import type { Frame, Presentation, Slide, SlideRun, SlideShape, SlideTable, TextBody } from '../model.js';
+import { PoweredBy } from '../powered-by.js';
 import { writeOdp, writePptx } from '../runtime/documents.js';
 import { bodyFromEditedElement } from './edited-text.js';
 import { ENGLISH_SLIDE_EDITOR_LABELS, type SlideEditorLabels } from './labels.js';
@@ -138,6 +139,8 @@ export interface SlideEditorProps {
    * others change appears as they change it, and undo takes back this client's changes.
    */
   collaboration?: SlideCollaboration;
+  /** False hides the "Powered by RelyBytes S.r.l." line at the bottom left; ask RelyBytes S.r.l. first. */
+  poweredBy?: boolean;
   className?: string;
 }
 
@@ -172,7 +175,7 @@ function PresetIcon({ preset }: Readonly<{ preset: ShapePreset }>): ReactElement
  * layout shows locked, as PowerPoint shows it.
  */
 export const SlideEditor = forwardRef(function SlideEditor(
-  { presentation: initial, onChange, editable = true, labels, onImageFile = readFile, collaboration, className }: SlideEditorProps,
+  { presentation: initial, onChange, editable = true, labels, onImageFile = readFile, collaboration, poweredBy = true, className }: SlideEditorProps,
   ref: Ref<SlideEditorHandle>,
 ): ReactElement {
   const words = useMemo(() => ({ ...ENGLISH_SLIDE_EDITOR_LABELS, ...labels }), [labels]);
@@ -1015,6 +1018,7 @@ export const SlideEditor = forwardRef(function SlideEditor(
         ) : null}
       </div>
       {showing !== null ? <SlideShow presentation={presentation} start={showing} labels={words} onClose={() => setShowing(null)} /> : null}
+      {poweredBy ? <PoweredBy /> : null}
     </div>
   );
 });
