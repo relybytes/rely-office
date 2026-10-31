@@ -3,6 +3,20 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## 0.10.3
+
+### Added
+
+- The editors credit their maker: `DocumentEditor`, `SheetGrid`, `SlideEditor` and `TextEditor`
+  show a "Powered by RelyBytes S.r.l." line at their bottom left (`.rely-powered-by`). The new
+  `poweredBy` prop, `true` by default, hides it once RelyBytes S.r.l. has agreed it with the host.
+
+### Changed
+
+- The READMEs and the npm descriptions present rely-office as an Office editor to embed in AI
+  products: a model reads files as text, tables and a document tree, writes real docx, xlsx and
+  pptx, and people review its work in the editors.
+
 ## 0.10.2
 
 ### Added
