@@ -163,6 +163,7 @@ autosave, and where an inserted image goes, all through the components' props.
 | 10.11 | Licensed under Apache-2.0 with the attribution in `NOTICE` required; publishing to the public npm registry once its token is set | done (0.10.2) |
 | 10.12 | Editors framed for AI products in the READMEs and on npm; a "Powered by RelyBytes S.r.l." line in every editor, hidden by agreement | done (0.10.3) |
 | 10.13 | The React editors licensed with an added term: their "Powered by RelyBytes S.r.l." line stays visible unless RelyBytes S.r.l. allows otherwise | done (0.11.0) |
+| 10.14 | The looks of tables and paragraphs through the JSON tree and the document editor: table lines and cell margins, cell fills, edges and vertical alignment, paragraph borders and shading | done (0.12.0) |
 
 ## Next
 

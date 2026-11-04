@@ -1,6 +1,6 @@
 {
   "name": "@relybytes/rely-office",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "The Office engine for AI products, on the backend: Word, Excel, PowerPoint and OpenDocument files read in Node through WebAssembly as text, tables and a document tree a model can use, docx, xlsx and pptx written back from what it produces, and PDF and PNG previews, with no office suite. The editors are @relybytes/rely-office-react.",
   "license": "Apache-2.0",
   "author": "RelyBytes S.r.l. (https://relybytes.com)",

@@ -3,6 +3,46 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## 0.12.0
+
+### Added
+
+- The looks of tables and paragraphs cross the JSON document tree, so a document read with
+  `readDocumentTree`, edited and written with `writeDocx` keeps how its tables and boxed
+  paragraphs look. A `table` carries `borders` (`top`, `left`, `bottom`, `right`, `insideH`,
+  `insideV`) and `cellMarginsTwips` (`{ top, left, bottom, right }`) beside `columnWidthsTwips`; a
+  cell its `fill`, `borders` and `verticalAlign` (`top`, `center`, `bottom`); a paragraph, a
+  heading and a list item `borders` (with `between`) and `shading` in their `format`. A border
+  line is `{ style, widthEighths?, color? }`: `none`, `single`, `double`, `dotted` or `dashed`,
+  in eighths of a point from 2 to 96, colours as CSS colours (`#C00000`). They are read from a
+  docx (a table's own lines over its table style's, a cell's own look over what the style's
+  conditional formats give it, a paragraph's borders and shading as drawn, its style's included),
+  from an odt (its cells' fills, borders, padding and vertical alignment, its paragraph styles'
+  borders and background) and from a doc (its cells' fills, a bordered table's grid), and
+  written back as `w:tblBorders`, `w:tblCellMar`, `w:shd`, `w:tcBorders`, `w:vAlign` and
+  `w:pBdr`. What comes in is checked first: a colour that is not six hex digits is automatic, a
+  width or a margin is brought within Word's limits, an unknown line style refuses the tree.
+  The model of both packages gains `BorderLine`, `TableBorders`, `CellBorders`, `CellMargins` and
+  `ParagraphBorders`.
+- `DocumentEditor` keeps the looks: a table holds its lines and cell margins, a cell its fill,
+  edges and vertical alignment, a paragraph's `format` its borders and shading, all drawn in the
+  editor and given back by `getTree` and `saveDocx` as they came in, a cell whose text is edited
+  included. A table, a row or a column made in the editor has none of its own. The extension and
+  the table view that do it, `RelyTableLooks` and `RelyTableView`, are exported for a host that
+  builds its own editor.
+- `Borders::grid()` in `rely-office-core`: Word's Table Grid as a table's edges.
+
+### Changed
+
+- A table of the JSON tree that names its column widths, lines or cell margins is written with
+  exactly those lines and no grid style, so a table without lines stays without; one that names
+  none of them is still written with Word's grid. A tree read before 0.12.0 reads as it did.
+- A Word 97-2003 table that draws borders carries them as Word's grid in its edges, so they
+  cross the JSON tree.
+- In the editor's stylesheet, a table whose lines the document names draws them instead of the
+  editor's grey grid, with a faint dashed guide while editing; `--rely-cell-padding` sets the
+  padding of a table's cells.
+
 ## 0.11.0
 
 ### Changed
