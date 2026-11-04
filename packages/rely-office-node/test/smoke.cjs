@@ -334,6 +334,43 @@ test('writes a docx it reads back', () => {
   );
 });
 
+test('keeps the borders, fills and margins of a table and a paragraph through the tree', () => {
+  const red = { style: 'single', widthEighths: 12, color: '#C00000' };
+  const looks = [
+    {
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'Premessa' }],
+      format: { borders: { bottom: red }, shading: '#FFF2CC' },
+    },
+    {
+      type: 'table',
+      rows: [
+        {
+          header: true,
+          cells: [
+            {
+              colSpan: 1,
+              rowSpan: 1,
+              blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'Parte' }] }],
+              fill: '#1F3864',
+              borders: { bottom: { style: 'dashed', widthEighths: 8, color: '#00B050' } },
+              verticalAlign: 'center',
+            },
+          ],
+        },
+      ],
+      columnWidthsTwips: [4000],
+      borders: { top: red, bottom: red, insideH: { style: 'none' } },
+      cellMarginsTwips: { top: 57, left: 113, bottom: 57, right: 113 },
+    },
+  ];
+  const written = office.writeDocx({ blocks: looks });
+  const read = office.readDocumentTree(written);
+  assert.deepEqual(read.blocks, looks);
+  assert.deepEqual(office.readDocumentTree(office.writeDocx({ blocks: read.blocks })).blocks, looks);
+  assert.equal(office.render(written, 'modello.docx').pageCount, 1);
+});
+
 test('writes the fonts of a document and embeds their faces', () => {
   const carlito = fs.readFileSync(path.join(packagePath, 'fonts', 'Carlito-Regular.ttf'));
   const written = office.writeDocx({

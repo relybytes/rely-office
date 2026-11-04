@@ -193,11 +193,66 @@ export interface TreeOptions {
   trackedChanges?: 'accept' | 'keep';
 }
 
+/**
+ * One edge of a border in the document tree. `none` hides the line a style would draw, and has
+ * no width.
+ */
+export interface BorderLine {
+  style: 'none' | 'single' | 'double' | 'dotted' | 'dashed';
+  /** In eighths of a point, as Word stores it: 2 (a quarter point) to 96 (six points); 4 when left out. */
+  widthEighths?: number;
+  /** A CSS colour, `#C00000`; left out, the line is automatic (black). */
+  color?: string;
+}
+
+/** The edges of a paragraph; `between` is the line between it and a next paragraph with the same borders. */
+export interface ParagraphBorders {
+  top?: BorderLine;
+  left?: BorderLine;
+  bottom?: BorderLine;
+  right?: BorderLine;
+  between?: BorderLine;
+}
+
+/**
+ * The lines of a table: its outer edges, between its rows (`insideH`) and between its columns
+ * (`insideV`). A side left out draws no line.
+ */
+export interface TableBorders {
+  top?: BorderLine;
+  left?: BorderLine;
+  bottom?: BorderLine;
+  right?: BorderLine;
+  insideH?: BorderLine;
+  insideV?: BorderLine;
+}
+
+/** The edges of a cell, over the table's. */
+export interface CellBorders {
+  top?: BorderLine;
+  left?: BorderLine;
+  bottom?: BorderLine;
+  right?: BorderLine;
+}
+
+/** The space between the edges of a table's cells and their text, in twips; a side left out is Word's default. */
+export interface CellMargins {
+  top?: number;
+  left?: number;
+  bottom?: number;
+  right?: number;
+}
+
 export interface TableCell {
   colSpan: number;
   /** A cell merged with the ones below it; the covered cells are not listed. */
   rowSpan: number;
   blocks: Block[];
+  /** The cell's background, a CSS colour: `#D9E2F3`. */
+  fill?: string;
+  borders?: CellBorders;
+  /** Where the content sits in the cell's height; absent is the top. */
+  verticalAlign?: 'top' | 'center' | 'bottom';
 }
 
 export interface TableRow {
@@ -223,7 +278,9 @@ export type LineSpacing =
 
 /**
  * What a paragraph sets itself, beside what its style gives it; every field left out is the
- * style's. Lengths in twentieths of a point (twips).
+ * style's. Lengths in twentieths of a point (twips). `borders` and `shading` are the ones the
+ * paragraph is drawn with, its style's included, since a written docx keeps no style of the file
+ * it was read from.
  */
 export interface ParagraphFormat {
   style?: NamedStyle;
@@ -236,6 +293,9 @@ export interface ParagraphFormat {
   indentFirstLineTwips?: number;
   /** The paragraph starts a new page. */
   pageBreakBefore?: boolean;
+  borders?: ParagraphBorders;
+  /** The background behind the paragraph, a CSS colour: `#FFF2CC`. */
+  shading?: string;
 }
 
 export type Block =
@@ -259,8 +319,17 @@ export type Block =
       content: Inline[];
       format?: ParagraphFormat;
     }
-  /** The width of each column in twips, when the file gives them. */
-  | { type: 'table'; rows: TableRow[]; columnWidthsTwips?: number[] }
+  /**
+   * The width of each column in twips, when the file gives them; the lines the table draws and
+   * the margins of its cells. A table with none of the three is written with Word's grid.
+   */
+  | {
+      type: 'table';
+      rows: TableRow[];
+      columnWidthsTwips?: number[];
+      borders?: TableBorders;
+      cellMarginsTwips?: CellMargins;
+    }
   | { type: 'blockquote'; blocks: Block[] }
   | { type: 'codeBlock'; text: string }
   | { type: 'horizontalRule' };

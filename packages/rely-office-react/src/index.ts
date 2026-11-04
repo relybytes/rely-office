@@ -48,6 +48,7 @@ export {
 } from './document/fonts.js';
 export { RelyPagination, pageBreaks, type PaginationOptions } from './document/pagination.js';
 export { RelySearch, findMatches, type SearchMatch, type SearchState } from './document/search.js';
+export { RelyTableLooks, RelyTableView } from './document/table-looks.js';
 export { RelyTrackRecording, TRACK_SKIP } from './document/track-changes.js';
 export {
   ENGLISH_DOCUMENT_EDITOR_LABELS,

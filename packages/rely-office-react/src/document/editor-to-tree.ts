@@ -18,6 +18,7 @@ import type { EditorDocument } from './editor-document.js';
 import { cleanFormat } from './formatting.js';
 import { mapBlockImages } from './media.js';
 import { compactComments, compactNotes } from './references.js';
+import { cellLooks, cleanCellMargins, cleanTableBorders } from './table-looks.js';
 
 const ALIGNMENTS: ReadonlySet<string> = new Set(['left', 'center', 'right', 'justify']);
 const SAFE_LINK = /^(https?:|mailto:)/i;
@@ -159,11 +160,15 @@ function mapNode(node: JSONContent, context: WalkContext): Block[] {
       return [{ type: 'horizontalRule' }];
     case 'table': {
       const columnWidthsTwips = tableWidths(node);
+      const borders = cleanTableBorders(node.attrs?.borders);
+      const cellMarginsTwips = cleanCellMargins(node.attrs?.cellMarginsTwips);
       return [
         {
           type: 'table',
           rows: (node.content ?? []).map((row) => mapRow(row, context)),
           ...(columnWidthsTwips === null ? {} : { columnWidthsTwips }),
+          ...(borders === null ? {} : { borders }),
+          ...(cellMarginsTwips === null ? {} : { cellMarginsTwips }),
         },
       ];
     }
@@ -259,6 +264,7 @@ function mapRow(row: JSONContent, context: WalkContext): TableRow {
       colSpan: Math.max(1, Math.round(Number(cell.attrs?.colspan ?? 1))),
       rowSpan: Math.max(1, Math.round(Number(cell.attrs?.rowspan ?? 1))),
       blocks: mapNodes(cell.content, context),
+      ...cellLooks(cell.attrs),
     })),
   };
 }

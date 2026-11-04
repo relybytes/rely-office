@@ -11,6 +11,8 @@ mod fonts;
 mod format;
 mod html;
 mod look;
+#[cfg(feature = "serde")]
+mod look_json;
 mod markdown;
 mod media;
 mod notes;
@@ -286,8 +288,8 @@ pub enum Block {
             serde(
                 rename = "format",
                 default,
-                skip_serializing_if = "format::look_as_format::is_empty",
-                with = "format::look_as_format"
+                skip_serializing_if = "look_json::look_as_format::is_empty",
+                with = "look_json::look_as_format"
             )
         )]
         look: ParagraphLook,
@@ -302,8 +304,8 @@ pub enum Block {
             serde(
                 rename = "format",
                 default,
-                skip_serializing_if = "format::look_as_format::is_empty",
-                with = "format::look_as_format"
+                skip_serializing_if = "look_json::look_as_format::is_empty",
+                with = "look_json::look_as_format"
             )
         )]
         look: ParagraphLook,
@@ -320,23 +322,17 @@ pub enum Block {
             serde(
                 rename = "format",
                 default,
-                skip_serializing_if = "format::look_as_format::is_empty",
-                with = "format::look_as_format"
+                skip_serializing_if = "look_json::look_as_format::is_empty",
+                with = "look_json::look_as_format"
             )
         )]
         look: ParagraphLook,
     },
     Table {
         rows: Vec<TableRow>,
-        #[cfg_attr(
-            feature = "serde",
-            serde(
-                rename = "columnWidthsTwips",
-                default,
-                skip_serializing_if = "format::table_widths::is_empty",
-                with = "format::table_widths"
-            )
-        )]
+        /// In JSON the look is `columnWidthsTwips`, `borders` and `cellMarginsTwips` beside the
+        /// rows.
+        #[cfg_attr(feature = "serde", serde(flatten, with = "look_json::table_look"))]
         look: TableLook,
     },
     /// Consecutive quote paragraphs, together.
@@ -374,7 +370,8 @@ pub struct TableCell {
     pub col_span: u32,
     pub row_span: u32,
     pub blocks: Vec<Block>,
-    #[cfg_attr(feature = "serde", serde(skip))]
+    /// In JSON the look is `fill`, `borders` and `verticalAlign` beside the blocks.
+    #[cfg_attr(feature = "serde", serde(flatten, with = "look_json::cell_look"))]
     pub look: CellLook,
 }
 

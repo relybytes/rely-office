@@ -68,3 +68,56 @@ test('a Markdown file and an HTML page open in the editor and are saved in their
   expect(writeMarkdown({ blocks: BLOCKS, media: [PNG] })).toContain('| Voce | Importo |');
   expect(writeHtml({ blocks: BLOCKS, media: [PNG] }, 'Offerta')).toContain('colspan="2"');
 });
+
+const RED = { style: 'single', widthEighths: 12, color: '#C00000' } as const;
+const LOOKS: Block[] = [
+  {
+    type: 'paragraph',
+    content: [{ type: 'text', text: 'Premessa' }],
+    format: { borders: { bottom: { style: 'double', widthEighths: 6 } }, shading: '#FFF2CC' },
+  },
+  {
+    type: 'table',
+    columnWidthsTwips: [3000, 6000],
+    borders: { top: RED, bottom: RED, insideH: { style: 'single', widthEighths: 4, color: '#808080' }, insideV: { style: 'none' } },
+    cellMarginsTwips: { top: 57, left: 113, bottom: 57, right: 113 },
+    rows: [
+      {
+        header: true,
+        cells: [
+          { colSpan: 1, rowSpan: 1, fill: '#1F3864', verticalAlign: 'center', blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'Parte' }] }] },
+          { colSpan: 1, rowSpan: 1, fill: '#1F3864', verticalAlign: 'center', blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'Dati' }] }] },
+        ],
+      },
+      {
+        header: false,
+        cells: [
+          { colSpan: 1, rowSpan: 1, borders: { bottom: { style: 'dashed', widthEighths: 12, color: '#00B050' } }, blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'Fornitore' }] }] },
+          { colSpan: 1, rowSpan: 1, fill: '#F2F2F2', blocks: [{ type: 'paragraph', content: [{ type: 'text', text: '{{controparte.nome}}' }] }] },
+        ],
+      },
+    ],
+  },
+  // A table made in an editor: written with Word's grid, read back with the grid's lines.
+  {
+    type: 'table',
+    rows: [{ header: false, cells: [{ colSpan: 1, rowSpan: 1, blocks: [{ type: 'paragraph', content: [{ type: 'text', text: 'Firma' }] }] }] }],
+  },
+];
+
+test('a docx with bordered and filled tables, opened in the editor and saved unchanged, keeps its looks', () => {
+  const original = writeDocx({ blocks: LOOKS, media: [] });
+  const read = readDocumentTree(original).blocks;
+  expect(read[0]).toMatchObject({ format: LOOKS[0].type === 'paragraph' ? LOOKS[0].format : {} });
+  expect(read[1]).toEqual(LOOKS[1]);
+  expect(read[2]).toMatchObject({
+    borders: { top: { style: 'single', widthEighths: 4 }, insideV: { style: 'single', widthEighths: 4 } },
+  });
+
+  const { document } = openDocument(original);
+  const editor = new Editor({ extensions: createRelyDocumentExtensions(), content: document.content });
+  const saved = saveDocument({ ...document, content: editor.getJSON() });
+  editor.destroy();
+
+  expect(readDocumentTree(saved).blocks).toEqual(read);
+});

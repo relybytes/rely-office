@@ -73,7 +73,7 @@ structures.
 | `heading` | `level` 1 to 6, `content`, `align`, `format` | a `heading N` or `Title` style, else the outline level of the style or the paragraph; levels past 6 become 6 |
 | `paragraph` | `content`, `align`, `format` | any other paragraph, an empty one included |
 | `listItem` | `ordered`, `level` (0 outermost), `listId`, `content`, `format` | a paragraph with numbering, from the paragraph or its style; `numFmt` `bullet` is unordered, any other format ordered, `none` is no list |
-| `table` | `rows`: `{ header, cells: { colSpan, rowSpan, blocks }[] }[]`, `columnWidthsTwips` | `w:tbl`; `tblHeader` marks a header row, `gridSpan` the columns, a `vMerge` continuation folds into the cell above |
+| `table` | `rows`: `{ header, cells: { colSpan, rowSpan, blocks, fill?, borders?, verticalAlign? }[] }[]`, `columnWidthsTwips`, `borders`, `cellMarginsTwips` | `w:tbl`; `tblHeader` marks a header row, `gridSpan` the columns, a `vMerge` continuation folds into the cell above; the looks are [below](#the-looks-of-tables-and-paragraphs) |
 | `blockquote` | `blocks` | quote styles; consecutive quote paragraphs share one blockquote |
 | `codeBlock` | `text` | code styles; consecutive code paragraphs are the lines of one block |
 | `horizontalRule` | | an empty paragraph with a VML rule, a bottom border, or a horizontal line style |
@@ -82,21 +82,80 @@ structures.
 when neither sets one.
 
 `format` is what the paragraph sets itself, beside what its style gives it, and absent when it
-sets nothing: `style`, one of Word's named styles (`title`, `subtitle`, `intenseQuote`, `caption`,
+sets nothing and draws no border or shading: `style`, one of Word's named styles (`title`, `subtitle`, `intenseQuote`, `caption`,
 `noSpacing`, known by the style's name in English or Italian), `spaceBeforeTwips`,
 `spaceAfterTwips`, `lineSpacing` (`{ rule: 'auto' | 'exact' | 'atLeast', value }`, `auto` in
 240ths of a line, the others in twips), `indentLeftTwips`, `indentRightTwips`,
-`indentFirstLineTwips` (negative hangs) and `pageBreakBefore`. `writeDocx` writes it back, the
-named styles with their definitions. `columnWidthsTwips` is the grid of a table, when the file
-gives one.
+`indentFirstLineTwips` (negative hangs) and `pageBreakBefore`; beside them `borders` and
+`shading`, which are the ones the paragraph is drawn with, its style's included
+([below](#the-looks-of-tables-and-paragraphs)). `writeDocx` writes it back, the named styles with
+their definitions. `columnWidthsTwips` is the grid of a table, when the file gives one.
 
 In Rust, paragraphs, headings, list items, tables and text runs also carry a `look`: spacing,
-line spacing, indents, page breaks, fonts, sizes and colours, column widths, cell margins and
-borders, and the tree has a `layout` with the page size, margins and body font, and the blocks of
-a floating text box a `frame` with its anchor, the box's fill and outline and the preset shape it
-is drawn as. The renderer lays the document out from them; they are not serialized, since an
-editor has its own styles. The tree also deserializes from the same JSON, which is how
-`writeDocx` reads it.
+line spacing, indents, page breaks, tabs, fonts, sizes and colours, column widths, cell margins
+and borders, and the tree has a `layout` with the page size, margins and body font, and the
+blocks of a floating text box a `frame` with its anchor, the box's fill and outline and the
+preset shape it is drawn as. The renderer lays the document out from them. The JSON carries the
+part an editor keeps and a save needs: a paragraph's `format` with its borders and shading, a
+table's column widths, lines and cell margins, a cell's fill, edges and vertical alignment, and a
+run's page field. What a style gives a paragraph beside its borders and shading (spacing, fonts,
+tabs) is not serialized, since an editor has its own styles. The tree also deserializes from the
+same JSON, which is how `writeDocx` reads it.
+
+### The looks of tables and paragraphs
+
+So a document read, edited and written keeps how its tables and boxed paragraphs look, the tree
+carries their lines, fills and margins in the units Word stores: lengths in twips (twentieths of
+a point), border widths in eighths of a point, colours as CSS colours (`#C00000`).
+
+```json
+{ "type": "table", "rows": [{ "header": true, "cells": [{
+    "colSpan": 1, "rowSpan": 1, "blocks": [...],
+    "fill": "#1F3864",
+    "borders": { "bottom": { "style": "dashed", "widthEighths": 12, "color": "#00B050" } },
+    "verticalAlign": "center" }] }],
+  "columnWidthsTwips": [3000, 6000],
+  "borders": {
+    "top": { "style": "single", "widthEighths": 12, "color": "#C00000" },
+    "bottom": { "style": "single", "widthEighths": 12, "color": "#C00000" },
+    "insideH": { "style": "single", "widthEighths": 4, "color": "#808080" },
+    "insideV": { "style": "none" } },
+  "cellMarginsTwips": { "top": 57, "left": 113, "bottom": 57, "right": 113 } }
+
+{ "type": "paragraph", "content": [...], "format": {
+    "spaceAfterTwips": 0,
+    "borders": { "top": { "style": "single", "widthEighths": 8, "color": "#C00000" } },
+    "shading": "#FFF2CC" } }
+```
+
+- A **border line** is `{ style, widthEighths?, color? }`: `style` is `single`, `double`,
+  `dotted`, `dashed`, or `none`, which hides a line a style would draw and has no width;
+  `widthEighths` goes from 2 (a quarter point) to 96 (six points), 4 when left out; `color` left
+  out is automatic, black. Word's other line styles are read as the nearest of these.
+- A **table's** `borders` are its outer edges (`top`, `left`, `bottom`, `right`) and the lines
+  between its rows (`insideH`) and its columns (`insideV`): its own over those of its table
+  style. A side left out draws no line. `cellMarginsTwips` is the space between a cell's edges
+  and its text, `{ top, left, bottom, right }`, a side left out Word's default (none above and
+  below, 108 twips beside).
+- A **cell's** `fill`, `borders` (four sides) and `verticalAlign` (`top`, `center`, `bottom`) are
+  its own over what the table style's conditional formats give it (header row, banded rows, first
+  column), so a table keeps its colours without the style.
+- A **paragraph's** `borders` (`top`, `left`, `bottom`, `right`, and `between`, the line between
+  it and a next paragraph with the same borders) and `shading` (its background) are the ones it
+  is drawn with, its style's included: a written docx keeps no style of the file it was read from,
+  so a heading whose style draws a rule under it keeps the rule as its own.
+- A table with no `columnWidthsTwips`, `borders` or `cellMarginsTwips` is one an editor made:
+  `writeDocx` gives it Word's grid (`Table Grid`) over the width of the text. A table with any of
+  them is written with exactly those: its lines as `w:tblBorders` and no grid style, so a table
+  without lines stays without.
+- What comes in is checked before it reaches the file: a colour that is not six hex digits (the
+  `#` may be left out) is automatic, a width or a margin is brought within Word's limits, and an
+  unknown line style refuses the tree (`INVALID_TREE`).
+- An odt gives the same: its cells' fills, borders, padding and vertical alignment, the padding of
+  the first cell as the table's margins (an odt draws its lines on its cells, so its tables have
+  no `borders` of their own), and the borders and background of its paragraph styles. A doc
+  gives its cells' fills, and a table that draws borders Word's grid as its `borders`.
+- A tree written before 0.12.0, without any of these, reads as it did.
 
 A floating image does cross the JSON: its `anchor` says where it stands and how the text goes
 around it, so an editor keeps it floating and a save writes it back where it was:
@@ -306,7 +365,7 @@ toggles them.
 | `heading` | a paragraph whose style is the built-in heading 1 to 9, or whose outline level is set |
 | `paragraph` | a run of text up to its paragraph mark, with alignment, indents, spacing, line spacing, page breaks, shading and borders; contextual spacing drops the space between paragraphs of one style |
 | `listItem` | a paragraph naming a list override, its label counted in the level's number format and template, a start override restarting it |
-| `table` | the paragraphs in a table, a cell ending at its cell mark and a row at its row mark, whose cell layout (`sprmTDefTable`) gives the grid, the merges going across and down, the header rows, the cell fills and borders; a nested table, whose cells end at paragraph marks flagged as inner cell ends, becomes a table in the cell that holds it |
+| `table` | the paragraphs in a table, a cell ending at its cell mark and a row at its row mark, whose cell layout (`sprmTDefTable`) gives the grid, the merges going across and down, the header rows, the cell fills, and whether the table draws borders, which it then carries as Word's grid; a nested table, whose cells end at paragraph marks flagged as inner cell ends, becomes a table in the cell that holds it |
 
 Inline pictures are read from the Data stream (`PICF` and the drawing records that hold their
 bytes); floating pictures and text boxes from the drawings the main text anchors, their position

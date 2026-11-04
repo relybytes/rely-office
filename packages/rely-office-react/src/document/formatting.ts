@@ -3,6 +3,7 @@
 
 import { Extension } from '@tiptap/core';
 import type { LineSpacing, NamedStyle, ParagraphFormat } from '../model.js';
+import { borderCss, cleanColor } from './table-looks.js';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -73,6 +74,12 @@ export function formatHtml(format: ParagraphFormat | null): Record<string, strin
   if (format.indentLeftTwips !== undefined) style.push(`margin-left: ${points(format.indentLeftTwips)}`);
   if (format.indentRightTwips !== undefined) style.push(`margin-right: ${points(format.indentRightTwips)}`);
   if (format.indentFirstLineTwips !== undefined) style.push(`text-indent: ${points(format.indentFirstLineTwips)}`);
+  const shading = cleanColor(format.shading);
+  if (shading !== null) style.push(`background-color: ${shading}`);
+  for (const side of ['top', 'left', 'bottom', 'right'] as const) {
+    const border = borderCss(format.borders?.[side]);
+    if (border !== null) style.push(`border-${side}: ${border}`);
+  }
   const classes = [
     format.style ? `rely-style-${format.style}` : '',
     format.pageBreakBefore ? 'rely-page-break-before' : '',
@@ -84,7 +91,11 @@ export function formatHtml(format: ParagraphFormat | null): Record<string, strin
   };
 }
 
-/** What a paragraph and a heading set themselves, kept whole for the tree and drawn as CSS. */
+/**
+ * What a paragraph and a heading set themselves, kept whole for the tree and drawn as CSS, with
+ * the borders and shading they are drawn with. A paragraph made by Enter takes the format of the
+ * one it splits, its borders and shading included, as Word does with direct formatting.
+ */
 export const RelyParagraphFormat = Extension.create({
   name: 'relyParagraphFormat',
   addGlobalAttributes() {

@@ -29,7 +29,9 @@ this crate read the file the same way:
 | `heading` 1 to 6 | paragraph styles `Heading1` to `Heading6` (`heading 1` ...), with the look of Word's default template |
 | `paragraph` with `align` | a paragraph with `w:jc` |
 | `listItem` | `List Paragraph` with `w:numPr`; one numbering instance per `listId`, so each list counts from one; bullets and numbers by level (`1.`, `a.`, `i.`) |
-| `table` | `Table Grid`, equal columns over the text width, `w:gridSpan` for column spans, `w:vMerge` with continuation cells for row spans, `w:tblHeader` for header rows |
+| `table` | `w:gridSpan` for column spans, `w:vMerge` with continuation cells for row spans, `w:tblHeader` for header rows; a table with no looks in `Table Grid` with equal columns over the text width, one with `columnWidthsTwips`, `borders` or `cellMarginsTwips` with its grid, `w:tblBorders` and `w:tblCellMar` and no grid style |
+| a cell's `fill`, `borders` and `verticalAlign` | `w:shd`, `w:tcBorders` and `w:vAlign` in its `w:tcPr` |
+| a paragraph's `format.borders` and `format.shading` | `w:pBdr` (`between` as `w:between`) and `w:shd` in its `w:pPr` |
 | `blockquote` | its paragraphs in the `Quote` style |
 | `codeBlock` | one `Code` paragraph per line |
 | `horizontalRule` | an empty paragraph with a bottom border |
@@ -46,7 +48,7 @@ this crate read the file the same way:
 | `formatChange` marks | `w:rPrChange` inside the run's `w:rPr`, with its author, date and the `previous` marks as the old `w:rPr` |
 | `noteReference` and `notes` | `w:footnoteReference` and `w:endnoteReference`, the notes in `footnotes.xml` and `endnotes.xml` with their separators |
 | `headersFooters` | header and footer parts with their own relationships, `w:titlePg` for a first page, `w:evenAndOddHeaders` in `settings.xml` for even pages |
-| the looks (Rust) | paragraph borders, shading, tabs, spacing and indents; table widths, borders and cell margins; cell fills, borders and vertical alignment; a numbered heading keeps its label as text |
+| the looks (Rust) | paragraph tabs, spacing and indents and the fonts the styles give; a numbered heading keeps its label as text (the borders, shading and table looks above cross the JSON as well) |
 | the layout's page | `w:sectPr` with the page size, orientation, margins, columns and the default tab stop |
 | `sections` | a `w:sectPr` in the paragraph that ends each section, with its own page, headers and footers and `w:type` `continuous` when it goes on on the same page |
 | a floating image's `anchor` | a `wp:anchor` with its position, size and wrapping, instead of `wp:inline`; a tight wrap with its outline as `wp:wrapPolygon` |
@@ -75,8 +77,22 @@ A paragraph, a heading and a list item carry `format`, what they set themselves 
 style gives them: one of the named styles of Word (`title`, `subtitle`, `intenseQuote`, `caption`,
 `noSpacing`, read from the style's name in English or Italian and written with the style
 definition), the space before and after, the line spacing (a multiple, exact or at least), the
-indents and a page break before. A paragraph that sets nothing has no `format`, so a tree read
-before stays the same. A table carries `columnWidthsTwips` when the file gives its grid.
+indents and a page break before, and the borders and shading it is drawn with. A paragraph that
+sets nothing and draws no box has no `format`, so a tree read before stays the same.
+
+A table carries `columnWidthsTwips` when the file gives its grid, its lines as `borders` and the
+margins of its cells as `cellMarginsTwips`, and each cell its `fill`, `borders` and
+`verticalAlign`, the ones its table style gives it included, so a contract template whose table
+has a coloured header row and ruled lines is written back with them: read, edited and saved, the
+file Word opens shows the same table ([document-tree.md](document-tree.md#the-looks-of-tables-and-paragraphs)).
+
+The React `DocumentEditor` keeps them: a table node holds `borders` and `cellMarginsTwips`, a cell
+`fill`, `borders` and `verticalAlign`, and a paragraph's `format` its borders and shading, each
+drawn in the editor (`RelyTableLooks`) and given back by `getTree` and `saveDocx` as they came in.
+Editing a cell's text keeps its looks. A table, a row or a column made in the editor has no looks
+of its own: a new table is written with Word's grid, and a new row draws the lines of its table
+but no fill or edge of a cell. A paragraph made by Enter takes the format of the one it splits,
+its borders and shading included, as Word does with direct formatting.
 
 ## Writing an odt
 

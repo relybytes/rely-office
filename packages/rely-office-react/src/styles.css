@@ -431,9 +431,10 @@
   display: block;
 }
 
+/* Over the lines a document gives its table and its cells, which a cell carries inline. */
 .rely-page-break-row > td,
 .rely-page-break-row > th {
-  border-top: var(--rely-page-break) solid var(--rely-canvas);
+  border-top: var(--rely-page-break) solid var(--rely-canvas) !important;
 }
 
 .rely-page-gap {
@@ -475,12 +476,58 @@
   table-layout: fixed;
 }
 
+.rely-document-content table {
+  --rely-cell-padding: 4px 8px;
+  --rely-table-top: none;
+  --rely-table-left: none;
+  --rely-table-bottom: none;
+  --rely-table-right: none;
+  --rely-table-inside-h: none;
+  --rely-table-inside-v: none;
+}
+
 .rely-document-content th,
 .rely-document-content td {
   position: relative;
-  padding: 4px 8px;
+  padding: var(--rely-cell-padding);
   border: 1px solid var(--rely-border);
   vertical-align: top;
+}
+
+/* A table whose lines the document names draws those and no others; a cell's own win. */
+.rely-document-content table.rely-table-lines > tbody > tr > td,
+.rely-document-content table.rely-table-lines > tbody > tr > th {
+  border-top: var(--rely-table-inside-h);
+  border-right: var(--rely-table-inside-v);
+  border-bottom: var(--rely-table-inside-h);
+  border-left: var(--rely-table-inside-v);
+}
+
+.rely-document-content table.rely-table-lines > tbody > tr:first-child > td,
+.rely-document-content table.rely-table-lines > tbody > tr:first-child > th {
+  border-top: var(--rely-table-top);
+}
+
+.rely-document-content table.rely-table-lines > tbody > tr:last-child > td,
+.rely-document-content table.rely-table-lines > tbody > tr:last-child > th {
+  border-bottom: var(--rely-table-bottom);
+}
+
+.rely-document-content table.rely-table-lines > tbody > tr > td:first-child,
+.rely-document-content table.rely-table-lines > tbody > tr > th:first-child {
+  border-left: var(--rely-table-left);
+}
+
+.rely-document-content table.rely-table-lines > tbody > tr > td:last-child,
+.rely-document-content table.rely-table-lines > tbody > tr > th:last-child {
+  border-right: var(--rely-table-right);
+}
+
+/* While editing, a faint guide shows the cells where the document draws no line, as Word's gridlines. */
+.rely-document-content[contenteditable='true'] table.rely-table-lines > tbody > tr > td,
+.rely-document-content[contenteditable='true'] table.rely-table-lines > tbody > tr > th {
+  outline: 1px dashed var(--rely-border);
+  outline-offset: -1px;
 }
 
 .rely-document-content th {

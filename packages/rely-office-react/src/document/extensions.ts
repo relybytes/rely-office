@@ -13,6 +13,7 @@ import { RelyParagraphFormat } from './formatting.js';
 import { imageNodeView } from './image-view.js';
 import { RelyPagination } from './pagination.js';
 import { RelySearch } from './search.js';
+import { RelyTableLooks, RelyTableView } from './table-looks.js';
 import { RelyTrackRecording, TRACK_SKIP, restoreFormatting } from './track-changes.js';
 import { fontStack, stackFamily } from './fonts.js';
 
@@ -542,7 +543,8 @@ export function createRelyDocumentExtensions(options: RelyDocumentExtensionOptio
     RelyAlignment,
     RelyListIdentity,
     RelyImage,
-    TableKit.configure({ table: { resizable: true, cellMinWidth: 30 } }),
+    TableKit.configure({ table: { resizable: true, cellMinWidth: 30, View: RelyTableView } }),
+    RelyTableLooks,
     RelySuperscript,
     RelySubscript,
     RelyTextStyle,

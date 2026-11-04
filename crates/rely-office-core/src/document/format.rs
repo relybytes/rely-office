@@ -7,7 +7,8 @@
 //! The look of a paragraph mixes what the paragraph sets with what its style chain gives it,
 //! which is right for drawing it and wrong for editing it: an editor that wrote every inherited
 //! value back would pin the style's spacing on every paragraph. [`ParagraphFormat`] is the part
-//! the paragraph itself sets, the only one the JSON tree carries.
+//! the paragraph itself sets, the part of the look the JSON tree carries beside the borders and
+//! shading the paragraph is drawn with (`look_json`).
 
 use super::look::{LineSpacing, ParagraphLook};
 use crate::xml_tree::{Element, Namespace};
@@ -160,35 +161,6 @@ impl ParagraphFormat {
     }
 }
 
-/// The `format` of a block's look in the JSON tree: written from the format, read into a look.
-#[cfg(feature = "serde")]
-pub(crate) mod look_as_format {
-    use super::{ParagraphFormat, ParagraphLook};
-
-    #[allow(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "the signature serde asks for"
-    )]
-    pub fn serialize<S: serde::Serializer>(
-        look: &ParagraphLook,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serde::Serialize::serialize(&look.format, serializer)
-    }
-
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<ParagraphLook, D::Error> {
-        let format: ParagraphFormat = serde::Deserialize::deserialize(deserializer)?;
-        Ok(format.to_look())
-    }
-
-    #[must_use]
-    pub fn is_empty(look: &ParagraphLook) -> bool {
-        look.format.is_empty()
-    }
-}
-
 /// The page field of a run's look in the JSON tree.
 #[cfg(feature = "serde")]
 pub(crate) mod look_field {
@@ -215,34 +187,6 @@ pub(crate) mod look_field {
     #[must_use]
     pub fn is_empty(look: &RunLook) -> bool {
         look.field.is_none()
-    }
-}
-
-/// The column widths of a table's look in the JSON tree.
-#[cfg(feature = "serde")]
-pub(crate) mod table_widths {
-    use super::super::look::TableLook;
-
-    pub fn serialize<S: serde::Serializer>(
-        look: &TableLook,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serde::Serialize::serialize(&look.column_widths_twips, serializer)
-    }
-
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<TableLook, D::Error> {
-        let column_widths_twips: Vec<u32> = serde::Deserialize::deserialize(deserializer)?;
-        Ok(TableLook {
-            column_widths_twips,
-            ..TableLook::default()
-        })
-    }
-
-    #[must_use]
-    pub fn is_empty(look: &TableLook) -> bool {
-        look.column_widths_twips.is_empty()
     }
 }
 

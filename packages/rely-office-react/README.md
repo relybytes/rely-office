@@ -90,6 +90,10 @@ An image is resized by dragging its corner, its proportions kept, and a table co
 its edge; both sizes are saved. A floating image stands beside the text on its side; chosen, the
 toolbar sets how the text goes around it (in line, square, top and bottom, behind or in front of
 the text) and its side, and it is saved where it was placed.
+A table keeps the look the document gives it, drawn as it is and saved as it was: its lines, the
+margins of its cells, and each cell's fill, edges and vertical alignment, as do the borders and
+shading of a paragraph. A cell whose text is edited keeps its look; a table, a row or a column
+added in the editor has none of its own, and a new table is saved with Word's grid.
 
 What the editor does not show rides along and is written back untouched: the page, the sections
 and the embedded objects. `report` counts what the mapping had to leave out: marks a code run

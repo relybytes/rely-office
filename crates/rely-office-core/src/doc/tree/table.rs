@@ -4,7 +4,7 @@
 //! A Word 97 table put together from its cell paragraphs and the cell layout each row ends with.
 
 use super::super::properties::Row;
-use crate::document::{Block, CellLook, TableCell, TableLook, TableRow};
+use crate::document::{Block, Borders, CellLook, TableCell, TableLook, TableRow};
 
 /// The width a table without a cell layout spreads over, in twips: a Letter page's text.
 const DEFAULT_TABLE_TWIPS: u32 = 8_640;
@@ -124,9 +124,16 @@ impl TableBuilder {
         }
         Some(Block::Table {
             rows,
+            // The lines a bordered table draws are not read one by one: they are Word's grid,
+            // named as the table's edges so they cross the JSON tree.
             look: TableLook {
                 column_widths_twips,
                 borders: bordered,
+                edges: if bordered {
+                    Borders::grid()
+                } else {
+                    Borders::default()
+                },
                 ..TableLook::default()
             },
         })

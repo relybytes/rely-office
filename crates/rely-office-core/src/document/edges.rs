@@ -122,6 +122,25 @@ impl Borders {
         }
     }
 
+    /// Word's Table Grid: a single line of half a point on every edge and between every row and
+    /// column.
+    #[must_use]
+    pub fn grid() -> Self {
+        let line = Some(Border {
+            style: BorderStyle::Single,
+            width_eighths: DEFAULT_BORDER_EIGHTHS,
+            colour: None,
+        });
+        Self {
+            top: line.clone(),
+            left: line.clone(),
+            bottom: line.clone(),
+            right: line.clone(),
+            inside_horizontal: line.clone(),
+            inside_vertical: line,
+        }
+    }
+
     /// Whether any edge draws a line.
     #[must_use]
     pub fn any_visible(&self) -> bool {

@@ -110,9 +110,12 @@ its own way; [rendering.md](rendering.md) measures how close), running macros (t
   Italian export.
 - **The document tree is neutral.** It names blocks and marks, not HTML or one editor's schema, so
   the caller maps it onto its own; its shape is in [document-tree.md](document-tree.md).
-- **Looks stay out of the editor's JSON.** Spacing, fonts and table geometry are read for the
-  renderer into `look` fields that `serde` skips, so the tree an editor receives keeps its shape
-  and its size. A floating image's anchor is the exception: an editor shows it, so it crosses.
+- **Looks stay out of the editor's JSON, but for what a save needs.** Spacing, fonts and tabs
+  are read for the renderer into `look` fields that `serde` skips, so the tree an editor receives
+  keeps its shape and its size. What an editor cannot rebuild from its own styles crosses: a
+  floating image's anchor, what a paragraph sets itself (`format`), and the lines, fills and
+  margins of tables and boxed paragraphs (`look_json`), so a document saved from an editor looks
+  as it did.
 - **The renderer writes Typst source, never Typst code from input.** Document text enters the
   source only as string literals, so a crafted document cannot become markup.
 - **Formulas are trees.** A formula is parsed once into an expression tree and printed back for

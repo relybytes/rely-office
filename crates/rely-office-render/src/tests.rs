@@ -488,6 +488,89 @@ fn typesets_headers_footers_notes_tabs_labels_and_cell_looks() {
 }
 
 #[test]
+fn draws_the_looks_of_a_tree_an_editor_sends_back() {
+    use rely_office_core::{
+        Block, Border, BorderStyle, Borders, CellLook, DocumentTree, Inline, ParagraphLook,
+        RunLook, TableCell, TableLook, TableRow, VerticalAlignment, write_docx,
+    };
+    let paragraph = |value: &str, look: ParagraphLook| Block::Paragraph {
+        content: vec![Inline::Text {
+            text: value.to_owned(),
+            marks: Vec::new(),
+            look: RunLook::default(),
+        }],
+        align: None,
+        look,
+    };
+    let red = Some(Border {
+        style: BorderStyle::Single,
+        width_eighths: 12,
+        colour: Some("C00000".to_owned()),
+    });
+    // The looks as the JSON tree gives them: the table's lines named, no grid of its own.
+    let tree = DocumentTree {
+        blocks: vec![
+            paragraph(
+                "Premessa",
+                ParagraphLook {
+                    shading: Some("FFF2CC".to_owned()),
+                    borders: Borders {
+                        bottom: red.clone(),
+                        ..Borders::default()
+                    },
+                    ..ParagraphLook::default()
+                },
+            ),
+            Block::Table {
+                rows: vec![TableRow {
+                    header: false,
+                    cells: vec![TableCell {
+                        col_span: 1,
+                        row_span: 1,
+                        blocks: vec![paragraph("Parte", ParagraphLook::default())],
+                        look: CellLook {
+                            fill: Some("1F3864".to_owned()),
+                            borders: Borders::default(),
+                            vertical: Some(VerticalAlignment::Center),
+                        },
+                    }],
+                }],
+                look: TableLook {
+                    column_widths_twips: vec![4_000],
+                    borders: false,
+                    cell_margins_twips: [Some(57), Some(113), Some(57), Some(113)],
+                    edges: Borders {
+                        top: red.clone(),
+                        bottom: red,
+                        ..Borders::default()
+                    },
+                    frame: None,
+                },
+            },
+        ],
+        ..DocumentTree::default()
+    };
+    let bytes = write_docx(&tree).unwrap();
+
+    let source = typst_source(&bytes, Some("modello.docx"), &render_limits())
+        .unwrap()
+        .source;
+    for drawn in [
+        r##"fill: rgb("#FFF2CC")"##,
+        r##"fill: rgb("#1F3864")"##,
+        r##"paint: rgb("#C00000"), thickness: 1.5pt"##,
+        "align: horizon",
+        "inset: (top: 2.85pt, left: 5.65pt, bottom: 2.85pt, right: 5.65pt)",
+    ] {
+        assert!(source.contains(drawn), "{drawn} in {source}");
+    }
+    let rendered = RENDERER
+        .render(&bytes, Some("modello.docx"), &thumbnail_request(200))
+        .unwrap();
+    assert_eq!(rendered.page_count, 1);
+}
+
+#[test]
 fn draws_the_slides_of_a_presentation() {
     const NS: &str = concat!(
         r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,

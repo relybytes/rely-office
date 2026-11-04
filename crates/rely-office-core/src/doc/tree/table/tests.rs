@@ -78,6 +78,7 @@ fn builds_a_table_on_the_grid_of_its_cell_edges() {
     };
     assert_eq!(look.column_widths_twips, vec![2_000, 1_000, 1_000]);
     assert!(look.borders);
+    assert_eq!(look.edges, crate::document::Borders::grid());
     assert!(rows[0].header && !rows[1].header);
     assert_eq!(rows[1].cells.len(), 2);
     assert_eq!(

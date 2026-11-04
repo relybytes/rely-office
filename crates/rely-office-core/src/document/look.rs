@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! How paragraphs, runs and tables look on the page: spacing, indents, fonts, column widths and
-//! borders. A renderer needs them and an editor does not, so they never reach the JSON of the tree.
+//! borders. A renderer needs them all; the JSON of the tree carries only what an editor keeps and
+//! a save needs: what a paragraph sets itself, and the lines, fills and margins of tables and
+//! boxed paragraphs (`look_json`).
 
 use super::anchor::TextFrame;
 use super::edges::{
@@ -283,7 +285,8 @@ impl ParagraphLook {
 pub struct TableLook {
     /// The widths of the grid columns, `w:tblGrid`, in twentieths of a point.
     pub column_widths_twips: Vec<u32>,
-    /// Whether the table draws its cell borders.
+    /// Whether the table draws its cell borders, `edges` or not; a table from JSON names its
+    /// lines in `edges` and leaves this off.
     pub borders: bool,
     /// The default cell margins, `w:tblCellMar`: top, left, bottom, right, in twentieths of a
     /// point; unset means Word's defaults.

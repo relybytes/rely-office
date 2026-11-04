@@ -145,9 +145,14 @@ function mapBlock(block: Block, context: MappingContext): JSONContent[] {
       return [{ type: 'horizontalRule' }];
     case 'table': {
       const widths = block.columnWidthsTwips ?? [];
+      const looks = {
+        ...(block.borders === undefined ? {} : { borders: block.borders }),
+        ...(block.cellMarginsTwips === undefined ? {} : { cellMarginsTwips: block.cellMarginsTwips }),
+      };
       return [
         {
           type: 'table',
+          ...(Object.keys(looks).length > 0 ? { attrs: looks } : {}),
           content: block.rows.map((row) => {
             let column = 0;
             return {
@@ -158,7 +163,14 @@ function mapBlock(block: Block, context: MappingContext): JSONContent[] {
                 const colwidth = span.length === cell.colSpan ? span.map(twipsToPixels) : null;
                 return {
                   type: row.header ? 'tableHeader' : 'tableCell',
-                  attrs: { colspan: cell.colSpan, rowspan: cell.rowSpan, colwidth },
+                  attrs: {
+                    colspan: cell.colSpan,
+                    rowspan: cell.rowSpan,
+                    colwidth,
+                    ...(cell.fill === undefined ? {} : { fill: cell.fill }),
+                    ...(cell.borders === undefined ? {} : { borders: cell.borders }),
+                    ...(cell.verticalAlign === undefined ? {} : { verticalAlign: cell.verticalAlign }),
+                  },
                   content: mapBlocks(cell.blocks, context),
                 };
               }),
