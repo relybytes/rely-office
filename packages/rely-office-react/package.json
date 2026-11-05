@@ -1,6 +1,6 @@
 {
   "name": "@relybytes/rely-office-react",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Office editors to embed in AI products: React editors for documents, spreadsheets, slides and text where people review, correct and comment on what an AI wrote, over docx, xlsx, pptx, OpenDocument, Markdown and csv read and written through WebAssembly, with real-time collaboration over Yjs.",
   "license": "SEE LICENSE IN LICENSE-ATTRIBUTION",
   "author": "RelyBytes S.r.l. (https://relybytes.com)",

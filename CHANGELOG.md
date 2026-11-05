@@ -3,6 +3,26 @@
 All notable changes to rely-office. The project follows [Semantic Versioning](https://semver.org);
 below 1.0, a minor version may change the API.
 
+## 0.12.1
+
+### Fixed
+
+- A table laid out as PDF or as a picture draws its double borders as two lines and the gap
+  between them, as Word does, on rows of any height and in either direction; they were a single
+  line twice as wide.
+- An edge two table cells share is decided once for both, as Word decides it: a cell's own
+  border wins over the table's inside line, and between two own borders the heavier, its width
+  times the number of its style (single 1, double 3, dotted 4, dashed 5). A cell's own bottom
+  border was lost to the next row's inside line, and a solid line could take the dash of a
+  dotted line beside it; every stroke now names its dash, sheets included.
+
+### Security
+
+- `calamine` 0.38.0 (RUSTSEC-2026-0436): its CFB/OLE2 reader could panic or allocate without
+  bound on a malformed `.xls`.
+- `pulldown-cmark` 0.13.6 (RUSTSEC-2026-0433): quadratic parsing of nested image wikilinks, an
+  option rely-office does not enable.
+
 ## 0.12.0
 
 ### Added

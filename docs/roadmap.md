@@ -164,6 +164,7 @@ autosave, and where an inserted image goes, all through the components' props.
 | 10.12 | Editors framed for AI products in the READMEs and on npm; a "Powered by RelyBytes S.r.l." line in every editor, hidden by agreement | done (0.10.3) |
 | 10.13 | The React editors licensed with an added term: their "Powered by RelyBytes S.r.l." line stays visible unless RelyBytes S.r.l. allows otherwise | done (0.11.0) |
 | 10.14 | The looks of tables and paragraphs through the JSON tree and the document editor: table lines and cell margins, cell fills, edges and vertical alignment, paragraph borders and shading | done (0.12.0) |
+| 10.15 | Double table borders laid out as two lines, and the edge two cells share decided as Word decides it | done (0.12.1) |
 
 ## Next
 
