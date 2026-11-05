@@ -801,12 +801,17 @@ fn border_stroke(border: &Border) -> String {
         } else {
             1.0
         };
+    // Named on a solid line too: Typst folds a cell's stroke over its neighbour's on the edge
+    // they share, and a stroke without a dash would take a dotted neighbour's.
     let dash = match border.style {
-        BorderStyle::Dotted => ", dash: \"dotted\"",
-        BorderStyle::Dashed => ", dash: \"dashed\"",
-        _ => "",
+        BorderStyle::Dotted => "dotted",
+        BorderStyle::Dashed => "dashed",
+        _ => "solid",
     };
-    format!("(paint: {paint}, thickness: {}{dash})", points(width))
+    format!(
+        "(paint: {paint}, thickness: {}, dash: \"{dash}\")",
+        points(width)
+    )
 }
 
 /// The width of each of the first `columns` columns in points, from the sheet's layout; a
@@ -1218,7 +1223,7 @@ mod tests {
         assert!(!source.contains("nascosta"), "a hidden row is left out");
         assert!(source.contains(concat!(
             r##"table.cell(colspan: 3, align: center + horizon, fill: rgb("#4472C4"), "##,
-            r##"stroke: (top: none, bottom: (paint: rgb("#FF0000"), thickness: 1pt), "##,
+            r##"stroke: (top: none, bottom: (paint: rgb("#FF0000"), thickness: 1pt, dash: "solid"), "##,
             r##"left: (paint: black, thickness: 0.25pt, dash: "dotted"), ), "##,
             r##"strike(underline(text(font: ("Arial", "Liberation Sans", "Carlito", ), size: 14pt, "##,
             r##"weight: "bold", style: "italic", fill: rgb("#FFFFFF"), "Titolo"))))"##

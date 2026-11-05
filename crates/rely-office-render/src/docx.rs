@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use rely_office_core::{
-    Alignment, Block, Border, BorderStyle, Borders, CellLook, DocumentTree, HeadersFooters, Inline,
+    Alignment, Block, Border, BorderStyle, Borders, DocumentTree, HeadersFooters, Inline,
     LabelSuffix, LineSpacing, ListLabel, Mark, Media, Note, NoteKind, PageField, PageLayout,
     ParagraphLook, RunLook, Section, TabKind, TabLeader, TabStop, TableLook, TableRow,
     VerticalAlignment,
@@ -1027,18 +1027,19 @@ impl Writer<'_> {
         if columns == 0 {
             return "[]".to_owned();
         }
-        let row_count = rows.len();
         let header_rows = header_row_count(rows);
         let draws_edges = look.edges.any_visible()
             || rows
                 .iter()
                 .any(|row| row.cells.iter().any(|cell| cell.look.borders.any_visible()));
+        let sides = cell_sides(rows, &placement, &look.edges);
+        let default_lines = look.borders && !look.edges.any_visible();
         let mut header = Vec::new();
         let mut body = Vec::new();
         for (row_index, row) in rows.iter().enumerate() {
             let in_header = row_index < header_rows;
             for (cell_index, cell) in row.cells.iter().enumerate() {
-                let (x, col_span, row_span) = placement.cells[row_index][cell_index];
+                let (_, col_span, row_span) = placement.cells[row_index][cell_index];
                 let content = self.blocks(&cell.blocks);
                 let mut arguments = Vec::new();
                 if col_span > 1 {
@@ -1061,15 +1062,9 @@ impl Writer<'_> {
                     );
                 }
                 if draws_edges {
-                    let edges = CellEdges {
-                        first_row: row_index == 0,
-                        last_row: row_index + row_span >= row_count,
-                        first_column: x == 0,
-                        last_column: x + col_span >= columns,
-                    };
                     arguments.push(format!(
                         "stroke: {}",
-                        cell_stroke(&cell.look, &look.edges, edges, look.borders)
+                        cell_stroke(&sides[row_index][cell_index], default_lines)
                     ));
                 }
                 let cell = if arguments.is_empty() {
@@ -1191,72 +1186,190 @@ fn twips_of(points: f64) -> i32 {
     }
 }
 
-/// Which outer edges of its table a cell touches.
-#[derive(Debug, Clone, Copy)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "one flag per side of the cell, each decided on its own"
-)]
-struct CellEdges {
-    first_row: bool,
-    last_row: bool,
-    first_column: bool,
-    last_column: bool,
+/// The borders of a cell's sides, top, bottom, left and right, each edge it shares decided once
+/// for both of its cells.
+type CellSides = [Option<Border>; 4];
+
+const TOP: usize = 0;
+const BOTTOM: usize = 1;
+const LEFT: usize = 2;
+const RIGHT: usize = 3;
+
+/// The cells of a table that touch a run of grid slots, each once, in the order met.
+fn cells_at(
+    owners: &[Vec<Option<(usize, usize)>>],
+    slots: impl Iterator<Item = (usize, usize)>,
+) -> Vec<(usize, usize)> {
+    let mut found: Vec<(usize, usize)> = Vec::new();
+    for (row, column) in slots {
+        if let Some(owner) = owners
+            .get(row)
+            .and_then(|row| row.get(column))
+            .copied()
+            .flatten()
+            && !found.contains(&owner)
+        {
+            found.push(owner);
+        }
+    }
+    found
 }
 
-/// The stroke of each side of a cell: its own border, else the table's outer edge or its inside
-/// line, else the default line of a table that draws borders without naming them.
-fn cell_stroke(cell: &CellLook, table: &Borders, edges: CellEdges, borders: bool) -> String {
-    let pick =
-        |own: Option<&Border>, outer: Option<&Border>, inner: Option<&Border>, is_outer: bool| {
-            own.or(if is_outer { outer } else { inner }).cloned()
-        };
-    let sides = [
-        (
-            "top",
-            pick(
-                cell.borders.top.as_ref(),
-                table.top.as_ref(),
-                table.inside_horizontal.as_ref(),
-                edges.first_row,
-            ),
-        ),
-        (
-            "bottom",
-            pick(
-                cell.borders.bottom.as_ref(),
-                table.bottom.as_ref(),
-                table.inside_horizontal.as_ref(),
-                edges.last_row,
-            ),
-        ),
-        (
-            "left",
-            pick(
-                cell.borders.left.as_ref(),
-                table.left.as_ref(),
-                table.inside_vertical.as_ref(),
-                edges.first_column,
-            ),
-        ),
-        (
-            "right",
-            pick(
-                cell.borders.right.as_ref(),
-                table.right.as_ref(),
-                table.inside_vertical.as_ref(),
-                edges.last_column,
-            ),
-        ),
-    ];
+/// The sides of every cell as Word draws them. An outer side is the cell's own border, else the
+/// table's edge. A side two cells share is the heavier of their own borders, else the table's
+/// inside line, so both cells hold the same answer and Typst's precedence between them, the
+/// later cell's stroke over the earlier one's, cannot change what is drawn.
+fn cell_sides(rows: &[TableRow], placement: &Placement, table: &Borders) -> Vec<Vec<CellSides>> {
+    let row_count = rows.len();
+    let columns = placement.columns;
+    let mut owners: Vec<Vec<Option<(usize, usize)>>> = vec![vec![None; columns]; row_count];
+    for (row_index, placed_row) in placement.cells.iter().enumerate() {
+        for (cell_index, &(x, col_span, row_span)) in placed_row.iter().enumerate() {
+            for covered in owners.iter_mut().skip(row_index).take(row_span) {
+                for slot in covered.iter_mut().skip(x).take(col_span) {
+                    *slot = Some((row_index, cell_index));
+                }
+            }
+        }
+    }
+    let own = |(row_index, cell_index): (usize, usize), side: usize| -> Option<&Border> {
+        let borders = &rows[row_index].cells[cell_index].look.borders;
+        match side {
+            TOP => borders.top.as_ref(),
+            BOTTOM => borders.bottom.as_ref(),
+            LEFT => borders.left.as_ref(),
+            _ => borders.right.as_ref(),
+        }
+    };
+    let mut sides = Vec::with_capacity(row_count);
+    for (row_index, placed_row) in placement.cells.iter().enumerate() {
+        let mut row_sides = Vec::with_capacity(placed_row.len());
+        for (cell_index, &(x, col_span, row_span)) in placed_row.iter().enumerate() {
+            let cell = (row_index, cell_index);
+            let below = row_index + row_span;
+            let after = x + col_span;
+            let above_cells = if row_index == 0 {
+                Vec::new()
+            } else {
+                cells_at(&owners, (x..after).map(|column| (row_index - 1, column)))
+            };
+            let below_cells = cells_at(&owners, (x..after).map(|column| (below, column)));
+            let left_cells = if x == 0 {
+                Vec::new()
+            } else {
+                cells_at(&owners, (row_index..below).map(|row| (row, x - 1)))
+            };
+            let right_cells = cells_at(&owners, (row_index..below).map(|row| (row, after)));
+            let edge = |own_side: usize,
+                        facing_side: usize,
+                        facing_cells: &[(usize, usize)],
+                        outer: Option<Option<&Border>>,
+                        inside: Option<&Border>| {
+                if let Some(outer) = outer {
+                    return own(cell, own_side).or(outer).cloned();
+                }
+                let facing: Vec<Option<&Border>> = facing_cells
+                    .iter()
+                    .map(|&other| own(other, facing_side))
+                    .collect();
+                shared_edge(own(cell, own_side), &facing, inside)
+            };
+            let last_row = below >= row_count;
+            let last_column = after >= columns;
+            let horizontal = table.inside_horizontal.as_ref();
+            let vertical = table.inside_vertical.as_ref();
+            row_sides.push([
+                edge(
+                    TOP,
+                    BOTTOM,
+                    &above_cells,
+                    (row_index == 0).then_some(table.top.as_ref()),
+                    horizontal,
+                ),
+                edge(
+                    BOTTOM,
+                    TOP,
+                    &below_cells,
+                    last_row.then_some(table.bottom.as_ref()),
+                    horizontal,
+                ),
+                edge(
+                    LEFT,
+                    RIGHT,
+                    &left_cells,
+                    (x == 0).then_some(table.left.as_ref()),
+                    vertical,
+                ),
+                edge(
+                    RIGHT,
+                    LEFT,
+                    &right_cells,
+                    last_column.then_some(table.right.as_ref()),
+                    vertical,
+                ),
+            ]);
+        }
+        sides.push(row_sides);
+    }
+    sides
+}
+
+/// The border of an edge two cells share: the heaviest line they declare, the first on a tie;
+/// no line when they declare only none; the table's inside line when they declare nothing.
+fn shared_edge(
+    own: Option<&Border>,
+    facing: &[Option<&Border>],
+    inside: Option<&Border>,
+) -> Option<Border> {
+    let declared: Vec<&Border> = own
+        .into_iter()
+        .chain(facing.iter().flatten().copied())
+        .collect();
+    let mut heaviest: Option<&Border> = None;
+    for border in declared.iter().copied() {
+        if border.style == BorderStyle::None {
+            continue;
+        }
+        if heaviest.is_none_or(|kept| border_weight(border) > border_weight(kept)) {
+            heaviest = Some(border);
+        }
+    }
+    heaviest
+        .or_else(|| declared.first().copied())
+        .or(inside)
+        .cloned()
+}
+
+/// How Word weighs two borders that meet: the width times the style's number in its list of
+/// border types (single 1, double 3, dotted 4, dashed 5).
+fn border_weight(border: &Border) -> u64 {
+    let number = match border.style {
+        BorderStyle::None => 0,
+        BorderStyle::Single => 1,
+        BorderStyle::Double => 3,
+        BorderStyle::Dotted => 4,
+        BorderStyle::Dashed => 5,
+    };
+    u64::from(border.width_eighths) * number
+}
+
+/// The Typst stroke of each side of a cell: its border, else the default line of a table that
+/// draws borders without naming them.
+fn cell_stroke(sides: &CellSides, default_lines: bool) -> String {
     let mut stroke = String::from("(");
-    for (side, border) in sides {
+    let names = [
+        ("top", LineDirection::Across),
+        ("bottom", LineDirection::Across),
+        ("left", LineDirection::Down),
+        ("right", LineDirection::Down),
+    ];
+    for ((name, direction), border) in names.iter().zip(sides) {
         let value = match border {
-            Some(border) => border_stroke(&border),
-            None if borders && !table.any_visible() => DEFAULT_STROKE.to_owned(),
+            Some(border) => border_stroke(border, *direction),
+            None if default_lines => DEFAULT_STROKE.to_owned(),
             None => "none".to_owned(),
         };
-        let _ = write!(stroke, "{side}: {value}, ");
+        let _ = write!(stroke, "{name}: {value}, ");
     }
     stroke.push(')');
     stroke
@@ -1278,27 +1391,71 @@ fn double_rule(rows: &[TableRow], table: &Borders) -> f64 {
         .fold(0.0, f64::max)
 }
 
-/// A Typst stroke for a border edge.
-fn border_stroke(border: &Border) -> String {
+/// The way a border's line runs: across the page, as a top or bottom edge, or down it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineDirection {
+    Across,
+    Down,
+}
+
+/// A Typst stroke for a border edge. A double border is a stroke three times its width painted
+/// with two bands of its colour and the gap between them, as Word draws it: Typst strokes are
+/// single lines, and a tiling relative to the stroke itself keeps the bands on any length.
+fn border_stroke(border: &Border, direction: LineDirection) -> String {
     if border.style == BorderStyle::None {
         return "none".to_owned();
     }
     let width = f64::from(border.width_eighths) / 8.0;
-    let width = if border.style == BorderStyle::Double {
-        width * 2.0
-    } else {
-        width
+    // The dash is always named: Typst folds the stroke of a cell over its neighbour's on the
+    // edge they share, so a solid line left without one would take a dotted neighbour's dash.
+    let dash = match border.style {
+        BorderStyle::Dotted => "dotted",
+        BorderStyle::Dashed => "dashed",
+        _ => "solid",
     };
-    let paint = border.colour.as_ref().map_or_else(
+    if border.style == BorderStyle::Double {
+        return format!(
+            "(paint: {}, thickness: {}, dash: \"solid\", cap: \"butt\")",
+            double_paint(border, width, direction),
+            points(width * 3.0)
+        );
+    }
+    format!(
+        "(paint: {}, thickness: {}, dash: \"{dash}\")",
+        border_paint(border),
+        points(width)
+    )
+}
+
+/// The paint of a double line: a tiling of two bands of the border's colour a band apart,
+/// stacked across the line, the space between them left clear. The tiling starts on the line's
+/// centre, so one period three bands wide holds the far half of one band, the gap and the near
+/// half of the other: colour from half a band to two and a half.
+fn double_paint(border: &Border, width: f64, direction: LineDirection) -> String {
+    let paint = border_paint(border);
+    let (size, band, offset) = match direction {
+        LineDirection::Across => (
+            format!("(1pt, {})", points(width * 3.0)),
+            format!("width: 1pt, height: {}", points(width * 2.0)),
+            format!("dy: {}", points(width / 2.0)),
+        ),
+        LineDirection::Down => (
+            format!("({}, 1pt)", points(width * 3.0)),
+            format!("width: {}, height: 1pt", points(width * 2.0)),
+            format!("dx: {}", points(width / 2.0)),
+        ),
+    };
+    format!(
+        "tiling(size: {size}, relative: \"self\")[#place({offset}, rect({band}, fill: {paint}, stroke: none))]"
+    )
+}
+
+/// The paint of a border: its colour, black when automatic.
+fn border_paint(border: &Border) -> String {
+    border.colour.as_ref().map_or_else(
         || "black".to_owned(),
         |colour| format!("rgb(\"#{colour}\")"),
-    );
-    let dash = match border.style {
-        BorderStyle::Dotted => ", dash: \"dotted\"",
-        BorderStyle::Dashed => ", dash: \"dashed\"",
-        _ => "",
-    };
-    format!("(paint: {paint}, thickness: {}{dash})", points(width))
+    )
 }
 
 /// A paragraph's shading and borders drawn around it, outside its text as Word draws them.
@@ -1313,18 +1470,19 @@ fn framed(look: &ParagraphLook, expression: String) -> String {
         let _ = write!(arguments, ", fill: rgb(\"#{fill}\")");
     }
     if visible {
-        let side = |border: &Option<Border>| {
-            border
-                .as_ref()
-                .map_or_else(|| "none".to_owned(), border_stroke)
+        let side = |border: &Option<Border>, direction: LineDirection| {
+            border.as_ref().map_or_else(
+                || "none".to_owned(),
+                |border| border_stroke(border, direction),
+            )
         };
         let _ = write!(
             arguments,
             ", stroke: (top: {}, right: {}, bottom: {}, left: {})",
-            side(&borders.top),
-            side(&borders.right),
-            side(&borders.bottom),
-            side(&borders.left)
+            side(&borders.top, LineDirection::Across),
+            side(&borders.right, LineDirection::Down),
+            side(&borders.bottom, LineDirection::Across),
+            side(&borders.left, LineDirection::Down)
         );
     }
     let [top, right, bottom, left] = PARAGRAPH_BORDER_SPACE;

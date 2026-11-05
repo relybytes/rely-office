@@ -3,7 +3,7 @@
 
 //! Headers, footers, notes, tabs, labels, borders and shading written as Typst source.
 
-use rely_office_core::{HeadersFooters, PageLayout, TableCell};
+use rely_office_core::{CellLook, HeadersFooters, PageLayout, TableCell};
 
 use super::*;
 
@@ -295,7 +295,7 @@ fn frames_shaded_and_bordered_paragraphs_and_highlights_runs() {
     let framed_expression = framed(&look, "x".to_owned());
     assert_eq!(
         framed_expression,
-        r##"block(width: 100%, fill: rgb("#DEEAF6"), stroke: (top: (paint: rgb("#2F5496"), thickness: 1pt), right: none, bottom: none, left: none), outset: (top: 1pt, right: 4pt, bottom: 1pt, left: 4pt), x)"##
+        r##"block(width: 100%, fill: rgb("#DEEAF6"), stroke: (top: (paint: rgb("#2F5496"), thickness: 1pt, dash: "solid"), right: none, bottom: none, left: none), outset: (top: 1pt, right: 4pt, bottom: 1pt, left: 4pt), x)"##
     );
     let shaded_only = ParagraphLook {
         shading: Some("FFFF00".to_owned()),
@@ -338,44 +338,169 @@ fn frames_shaded_and_bordered_paragraphs_and_highlights_runs() {
 }
 
 #[test]
-fn strokes_each_cell_edge_from_the_cell_the_table_or_its_default() {
-    let table = Borders {
-        top: Some(border(BorderStyle::Double, Some("FF0000"))),
-        inside_horizontal: Some(border(BorderStyle::Dotted, None)),
-        inside_vertical: Some(border(BorderStyle::Dashed, None)),
-        ..Borders::default()
-    };
-    let cell = CellLook {
-        borders: Borders {
-            left: Some(border(BorderStyle::None, None)),
-            ..Borders::default()
-        },
-        ..CellLook::default()
-    };
-    let corner = CellEdges {
-        first_row: true,
-        last_row: false,
-        first_column: true,
-        last_column: false,
-    };
+fn strokes_each_cell_side_naming_its_dash_or_the_default_line() {
+    let sides: CellSides = [
+        Some(border(BorderStyle::Single, Some("FF0000"))),
+        Some(border(BorderStyle::Dotted, None)),
+        Some(border(BorderStyle::None, None)),
+        None,
+    ];
     assert_eq!(
-        cell_stroke(&cell, &table, corner, true),
-        r##"(top: (paint: rgb("#FF0000"), thickness: 2pt), bottom: (paint: black, thickness: 1pt, dash: "dotted"), left: none, right: (paint: black, thickness: 1pt, dash: "dashed"), )"##
+        cell_stroke(&sides, false),
+        r##"(top: (paint: rgb("#FF0000"), thickness: 1pt, dash: "solid"), bottom: (paint: black, thickness: 1pt, dash: "dotted"), left: none, right: none, )"##
     );
-    let inner = CellEdges {
-        first_row: false,
-        last_row: true,
-        first_column: false,
-        last_column: true,
-    };
     assert_eq!(
-        cell_stroke(&CellLook::default(), &Borders::default(), inner, true),
+        cell_stroke(&[None, None, None, None], true),
         "(top: 0.5pt, bottom: 0.5pt, left: 0.5pt, right: 0.5pt, )"
     );
     assert_eq!(
-        cell_stroke(&CellLook::default(), &Borders::default(), inner, false),
+        cell_stroke(&[None, None, None, None], false),
         "(top: none, bottom: none, left: none, right: none, )"
     );
+}
+
+#[test]
+fn draws_a_double_border_as_two_bands_three_widths_wide() {
+    let double = border(BorderStyle::Double, Some("C00000"));
+    assert_eq!(
+        border_stroke(&double, LineDirection::Across),
+        r##"(paint: tiling(size: (1pt, 3pt), relative: "self")[#place(dy: 0.5pt, rect(width: 1pt, height: 2pt, fill: rgb("#C00000"), stroke: none))], thickness: 3pt, dash: "solid", cap: "butt")"##
+    );
+    assert_eq!(
+        border_stroke(&double, LineDirection::Down),
+        r##"(paint: tiling(size: (3pt, 1pt), relative: "self")[#place(dx: 0.5pt, rect(width: 2pt, height: 1pt, fill: rgb("#C00000"), stroke: none))], thickness: 3pt, dash: "solid", cap: "butt")"##
+    );
+    assert_eq!(
+        border_stroke(&border(BorderStyle::Dashed, None), LineDirection::Down),
+        r#"(paint: black, thickness: 1pt, dash: "dashed")"#
+    );
+    assert_eq!(
+        border_stroke(&border(BorderStyle::None, None), LineDirection::Across),
+        "none"
+    );
+}
+
+#[test]
+fn decides_a_shared_edge_as_word_does() {
+    let single = border(BorderStyle::Single, Some("000000"));
+    let heavy_single = Border {
+        width_eighths: 24,
+        ..border(BorderStyle::Single, Some("111111"))
+    };
+    let double = border(BorderStyle::Double, Some("C00000"));
+    let none = border(BorderStyle::None, None);
+    let inside = border(BorderStyle::Dashed, Some("808080"));
+    assert_eq!(
+        shared_edge(None, &[], Some(&inside)),
+        Some(inside.clone()),
+        "nothing declared: the table's inside line"
+    );
+    assert_eq!(
+        shared_edge(None, &[Some(&double)], Some(&inside)),
+        Some(double.clone()),
+        "a neighbour's own border beats the inside line"
+    );
+    assert_eq!(
+        shared_edge(Some(&single), &[Some(&double)], Some(&inside)),
+        Some(double.clone()),
+        "the heavier of two own borders"
+    );
+    assert_eq!(
+        shared_edge(Some(&heavy_single), &[Some(&double)], None),
+        Some(heavy_single.clone()),
+        "weight is width times the style's number"
+    );
+    assert_eq!(
+        shared_edge(Some(&single), &[Some(&single.clone())], None),
+        Some(single.clone()),
+        "a tie keeps the cell's own"
+    );
+    assert_eq!(
+        shared_edge(Some(&none), &[Some(&double)], Some(&inside)),
+        Some(double.clone()),
+        "none on one side does not hide the other's line"
+    );
+    assert_eq!(
+        shared_edge(Some(&none), &[None], Some(&inside)),
+        Some(none.clone()),
+        "only none declared: no line, not the inside one"
+    );
+    assert_eq!(border_weight(&none), 0);
+    assert_eq!(border_weight(&single), 8);
+    assert_eq!(border_weight(&double), 24);
+    assert_eq!(border_weight(&border(BorderStyle::Dotted, None)), 32);
+    assert_eq!(border_weight(&border(BorderStyle::Dashed, None)), 40);
+}
+
+#[test]
+fn gives_both_cells_of_an_edge_the_same_border() {
+    let cell = |borders: Borders| TableCell {
+        col_span: 1,
+        row_span: 1,
+        blocks: Vec::new(),
+        look: CellLook {
+            borders,
+            ..CellLook::default()
+        },
+    };
+    let double = border(BorderStyle::Double, Some("C00000"));
+    let rows = vec![
+        TableRow {
+            header: false,
+            cells: vec![cell(Borders::default()), cell(Borders::default())],
+        },
+        TableRow {
+            header: false,
+            cells: vec![
+                cell(Borders::default()),
+                cell(Borders {
+                    top: Some(double.clone()),
+                    bottom: Some(double.clone()),
+                    ..Borders::default()
+                }),
+            ],
+        },
+        TableRow {
+            header: false,
+            cells: vec![TableCell {
+                col_span: 2,
+                ..cell(Borders::default())
+            }],
+        },
+    ];
+    let edge = border(BorderStyle::Single, Some("1F4E79"));
+    let inside = border(BorderStyle::Dashed, Some("808080"));
+    let table = Borders {
+        top: Some(edge.clone()),
+        left: Some(edge.clone()),
+        bottom: Some(edge.clone()),
+        right: Some(edge.clone()),
+        inside_horizontal: Some(inside.clone()),
+        inside_vertical: Some(inside.clone()),
+    };
+    let sides = cell_sides(&rows, &place_cells(&rows), &table);
+    assert_eq!(
+        sides[0][1][BOTTOM],
+        Some(double.clone()),
+        "the cell above takes the cell's top"
+    );
+    assert_eq!(sides[1][1][TOP], Some(double.clone()));
+    assert_eq!(sides[1][1][BOTTOM], Some(double.clone()));
+    assert_eq!(
+        sides[2][0][TOP],
+        Some(double.clone()),
+        "a spanning cell takes the heaviest of the cells above it"
+    );
+    assert_eq!(sides[0][0][BOTTOM], Some(inside.clone()));
+    assert_eq!(
+        sides[0][0][TOP],
+        Some(edge.clone()),
+        "an outer side is the table's edge"
+    );
+    assert_eq!(sides[0][0][LEFT], Some(edge.clone()));
+    assert_eq!(sides[0][0][RIGHT], Some(inside.clone()));
+    assert_eq!(sides[0][1][RIGHT], Some(edge.clone()));
+    assert_eq!(sides[2][0][BOTTOM], Some(edge.clone()));
 }
 
 #[test]
@@ -427,7 +552,7 @@ fn writes_the_fill_alignment_and_edges_of_table_cells() {
         ..DocumentTree::default()
     };
     let source = source(&tree);
-    assert!(source.contains(r##"table.cell(fill: rgb("#4472C4"), align: horizon, stroke: (top: (paint: black, thickness: 1pt), bottom: none, left: none, right: none, ))"##), "{source}");
+    assert!(source.contains(r##"table.cell(fill: rgb("#4472C4"), align: horizon, stroke: (top: (paint: black, thickness: 1pt, dash: "solid"), bottom: none, left: none, right: none, ))"##), "{source}");
     assert!(source.contains("table.cell(align: bottom, stroke:"));
     assert!(source.contains("table.cell(align: top, stroke:"));
     assert!(source.contains("stroke: none, inset:"));
